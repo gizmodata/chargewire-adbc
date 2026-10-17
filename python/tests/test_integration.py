@@ -728,7 +728,6 @@ class TestTransactions:
                 cur.execute(operation="SELECT v FROM test_tx")
                 assert cur.fetchall() == [(2,)]
 
-
     def test_a_partitioned_ingest_belongs_to_the_open_transaction(self, warp_server):
         # In a transaction, a partitioned ingest's rows commit and roll back with it.
         table = pa.Table.from_batches(
