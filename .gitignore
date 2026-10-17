@@ -1,14 +1,15 @@
-# Go
-/go/build/
-*.so
-*.dylib
-*.dll
+# Build output
+go/build/
+python/build/
+python/dist/
+python/src/adbc_driver_warpsql/libadbc_driver_warpsql.*
+*.egg-info/
 # Python
 __pycache__/
-*.egg-info/
 .venv/
-dist/
-# Editors
+.pytest_cache/
+.ruff_cache/
+# Editors and OS
 .idea/
 .vscode/
 .DS_Store
