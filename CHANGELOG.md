@@ -73,3 +73,11 @@ All notable changes to this project are documented here. The format follows
   - SQLSTATEs `42P01` and `42P07` are ADBC NotFound and AlreadyExists.
   - Removed workarounds the server no longer needs: growing long-poll waits (back to a
     fixed 15 s) and precision/scale taken from Arrow decimal types.
+
+### Release engineering
+
+- `.github/workflows/release.yml`: on a `vX.Y.Z` tag, every suite on the tagged commit (ci.yml,
+  and the Go and Python live-server suites against `hardcharger-server` from Hardcharger's
+  releases), then the library and a wheel for Linux amd64/arm64 (manylinux_2_17, glibc
+  checked, installed and loaded on Oracle Linux 8), macOS arm64/amd64 and Windows amd64/arm64,
+  a GitHub Release, and PyPI through the `pypi` environment (trusted publishing, approval).

@@ -210,6 +210,19 @@ Without the variable they fail; they never skip, and a run in which no integrati
 ran fails too. See [docs/testing.md](docs/testing.md) for what is tested and what was not
 ported from gizmosql-adbc.
 
+## 🚢 Releasing
+
+Pushing a `vX.Y.Z` tag runs [release.yml](.github/workflows/release.yml): every suite on the
+tagged commit (ci.yml, plus the Go and Python live suites against `hardcharger-server` from
+Hardcharger's GitHub Releases), then the library and a wheel for six platforms. The Linux
+wheels are `manylinux_2_17` (the library is built with `zig cc` against glibc 2.17, checked
+with `scripts/check_glibc.sh`, and installed and loaded on Oracle Linux 8). Then a GitHub
+Release with the tag's CHANGELOG section, and PyPI from the `pypi` environment (trusted
+publishing, after an approval). Before tagging: set the version in `python/pyproject.toml`
+and `python/src/adbc_driver_warpsql/_version.py`, move `[Unreleased]` into a dated section,
+and make sure the workflow's `HARDCHARGER_SERVER_VERSION` is a release whose server splits
+results. The live suites read Hardcharger's releases with the `GIZMODATA_READ_TOKEN` secret.
+
 ## 📦 Dependencies
 
 - [`apache/arrow-adbc/go/adbc`](https://github.com/apache/arrow-adbc) 1.12 and

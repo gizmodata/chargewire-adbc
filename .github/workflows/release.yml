@@ -1,0 +1,287 @@
+name: warp-sql-adbc-release
+
+# On a vX.Y.Z tag: every test suite on the tagged commit (ci.yml's unit tests and library
+# builds, plus the live-server suites below), then the shared library and a platform wheel for
+# each of six platforms, a GitHub Release, and PyPI. PyPI's trusted publisher for
+# adbc-driver-warpsql names this repository, this file (release.yml) and the `pypi`
+# environment, which requires an approval and accepts only v* tags.
+#
+# workflow_dispatch runs the tests and the builds only: the release and publish jobs need a tag.
+#
+# The live suites run against hardcharger-server from gizmodata/hardcharger's GitHub Releases,
+# read with the GIZMODATA_READ_TOKEN secret (a fine-grained token, resource owner gizmodata,
+# Contents: read-only on gizmodata/hardcharger); this repository's GITHUB_TOKEN can't read
+# another repository. HARDCHARGER_SERVER_VERSION must be a release whose server splits results
+# (--max-result-partitions; 0.2.0 does not, so the split-result tests fail against it).
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [feature/vanity-drivers]  # TEMPORARY: proof run of the builds; removed before merge
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Its own group: ci.yml, called below, takes `${{ github.workflow }}-${{ github.ref }}`, and in a
+# called workflow github.workflow is this workflow's name, so the same group would deadlock.
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  HARDCHARGER_SERVER_VERSION: "0.2.0"
+
+jobs:
+  tests:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+    secrets: inherit
+
+  live-tests:
+    name: live-server suites (Go and Python, against hardcharger-server)
+    runs-on: ubuntu-24.04
+    env:
+      WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV: HARDCHARGER_ADMIN_PASSWORD
+      WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG: --mtls-ca-cert
+      WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG: --admin-username
+      WARP_SQL_ADBC_TEST_SERVER_NAME: Hardcharger
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download hardcharger-server ${{ env.HARDCHARGER_SERVER_VERSION }}
+        env:
+          GH_TOKEN: ${{ secrets.GIZMODATA_READ_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::the GIZMODATA_READ_TOKEN secret is not set: a fine-grained token, resource owner gizmodata, Contents: read-only on gizmodata/hardcharger"
+            exit 1
+          fi
+          gh release download "v$HARDCHARGER_SERVER_VERSION" -R gizmodata/hardcharger \
+            -p hardcharger-linux-amd64.tar.gz -D "$RUNNER_TEMP"
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/hardcharger-linux-amd64.tar.gz"
+          binary="$RUNNER_TEMP/hardcharger-linux-amd64/bin/hardcharger-server"
+          test "$("$binary" --version)" = "Hardcharger $HARDCHARGER_SERVER_VERSION"
+          echo "WARP_SQL_ADBC_TEST_SERVER_BINARY=$binary" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      # The race detector and a checked Arrow allocator; fails when no integration test ran.
+      - name: Go live suite
+        run: make -C go integration-test
+
+      - name: Build the shared library
+        run: scripts/build_lib.sh
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Python suite (unit and live)
+        working-directory: python
+        run: |
+          pip install -e ".[test]"
+          python -m pytest -v tests
+
+  build:
+    needs: tests
+    name: wheel (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux_amd64
+            ext: so
+          - os: ubuntu-24.04-arm
+            platform: linux_arm64
+            ext: so
+          - os: macos-15
+            platform: macos_arm64
+            ext: dylib
+          - os: macos-15
+            platform: macos_amd64
+            ext: dylib
+            goarch: amd64
+          - os: windows-latest
+            platform: windows_amd64
+            ext: dll
+          - os: windows-11-arm
+            platform: windows_arm64
+            ext: dll
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The tag matches the package version, and CHANGELOG.md has its section
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' python/src/adbc_driver_warpsql/_version.py)
+          project=$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml)
+          [ -n "$version" ] && [ "$version" = "$project" ] || { echo "::error::_version.py ($version) and pyproject.toml ($project) disagree"; exit 1; }
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME != v$version"; exit 1; }
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::no CHANGELOG.md section for $version"; exit 1; }
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: mlugg/setup-zig@v2
+        if: runner.os == 'Linux'
+        with:
+          version: 0.17.0
+      - name: Install llvm-mingw (the aarch64 C toolchain for cgo)
+        if: matrix.os == 'windows-11-arm'
+        shell: bash
+        run: |
+          # The runner's gcc is x86_64 MinGW, which can't build the aarch64 cgo runtime.
+          curl -sSL -o "$RUNNER_TEMP/llvm-mingw.zip" \
+            https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-aarch64.zip
+          unzip -q "$RUNNER_TEMP/llvm-mingw.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/llvm-mingw-20260616-ucrt-aarch64/bin" >> "$GITHUB_PATH"
+          echo "CC=aarch64-w64-mingw32-gcc" >> "$GITHUB_ENV"
+
+      - name: Build the shared library
+        shell: bash
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"  # explicit: it defaults to 0 when GOARCH isn't the host's
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          VERSION: ${{ github.ref_name }}
+        run: scripts/build_lib.sh
+
+      - name: Check the glibc ceiling (2.17; the requirement is 2.28 or older)
+        if: runner.os == 'Linux'
+        run: scripts/check_glibc.sh go/build/libadbc_driver_warpsql.so
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Build the platform wheel
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          # Set only on the macOS amd64 cross build: an empty value blanks the platform tag.
+          if [ "${{ matrix.goarch }}" = "amd64" ] && [ "$RUNNER_OS" = "macOS" ]; then
+            export _PYTHON_HOST_PLATFORM="macosx-11.0-x86_64"
+          fi
+          cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} python/src/adbc_driver_warpsql/
+          pip install build
+          cd python && python -m build --wheel
+
+      - name: Repair the wheel to manylinux
+        if: runner.os == 'Linux'
+        run: |
+          pip install auditwheel patchelf
+          auditwheel repair python/dist/*.whl -w python/dist-repaired
+          rm python/dist/*.whl
+          mv python/dist-repaired/*.whl python/dist/
+          ls python/dist/
+          # The library inside the wheel, as shipped, keeps the ceiling too.
+          mkdir -p "$RUNNER_TEMP/wheel" && unzip -q -o python/dist/*.whl -d "$RUNNER_TEMP/wheel"
+          scripts/check_glibc.sh "$RUNNER_TEMP/wheel/adbc_driver_warpsql/libadbc_driver_warpsql.so"
+          case "$(ls python/dist/)" in *manylinux_2_17*) ;; *) echo "::error::not a manylinux_2_17 wheel"; exit 1 ;; esac
+
+      # The installed wheel (its own library, not the build tree's) through the C API, from
+      # outside the source tree. Not on the macOS amd64 cross build, which this runner can't load.
+      - name: Test the installed wheel
+        if: matrix.goarch == ''
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          if [ "$RUNNER_OS" = "Windows" ]; then py="$RUNNER_TEMP/venv/Scripts/python"; else py="$RUNNER_TEMP/venv/bin/python"; fi
+          "$py" -m pip install -q python/dist/*.whl pytest
+          cp -r python/tests "$RUNNER_TEMP/wheel-tests"
+          cd "$RUNNER_TEMP"
+          "$py" -m pytest -q -p no:cacheprovider wheel-tests/test_c_abi_unit.py wheel-tests/test_connect_unit.py
+          "$py" -c "import adbc_driver_warpsql._driver as d, sys; p = d._driver_path(); print(p); sys.exit('site-packages' not in p)"
+
+      # glibc 2.28 (RHEL/Oracle Linux 8): pip must find the wheel installable and the library
+      # must load there.
+      - name: Install and load the wheel on Oracle Linux 8
+        if: matrix.platform == 'linux_amd64'
+        run: |
+          docker run --rm -v "$PWD/python/dist:/dist:ro" -v "$PWD/python/tests:/tests:ro" oraclelinux:8 bash -euc '
+            dnf -y -q install python3.12 python3.12-pip >/dev/null
+            python3.12 -m venv /venv
+            /venv/bin/pip install -q /dist/*.whl pytest
+            cd / && /venv/bin/python -m pytest -q -p no:cacheprovider /tests/test_c_abi_unit.py'
+
+      - name: Package the library
+        shell: bash
+        run: |
+          PKG="libadbc_driver_warpsql-${GITHUB_REF_NAME}-${{ matrix.platform }}"
+          mkdir -p "dist/$PKG"
+          cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} packaging/warpsql.toml.in LICENSE "dist/$PKG/"
+          tar -C dist -czf "dist/$PKG.tar.gz" "$PKG"
+          cp python/dist/*.whl dist/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, live-tests]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          [ -s release-notes.md ] || { echo "::error::no CHANGELOG.md section for $version"; exit 1; }
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: release-notes.md
+          files: |
+            dist/*.tar.gz
+            dist/*.whl
+
+  pypi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, live-tests]
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/adbc-driver-warpsql
+    permissions:
+      id-token: write  # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: artifacts
+          merge-multiple: true
+      - name: Collect the six wheels
+        run: |
+          mkdir -p dist
+          cp artifacts/*.whl dist/
+          ls -la dist/
+          test "$(find dist -name '*.whl' | wc -l)" -eq 6
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
