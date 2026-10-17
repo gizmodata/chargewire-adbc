@@ -76,6 +76,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Release engineering
 
+- The release's live suites pull `hardcharger-server` from the private image
+  `ghcr.io/gizmodata/hardcharger` with `GITHUB_TOKEN` instead of a personal token.
 - `.github/workflows/release.yml`: on a `vX.Y.Z` tag, every suite on the tagged commit (ci.yml,
   and the Go and Python live-server suites against `hardcharger-server` from Hardcharger's
   releases), then the library and a wheel for Linux amd64/arm64 (manylinux, glibc
