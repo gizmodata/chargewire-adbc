@@ -3,6 +3,7 @@
 package warpsql
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -71,11 +72,18 @@ func stringColumn(rec arrow.RecordBatch, name string) (*array.String, error) {
 	return column, nil
 }
 
+// stringAt copies a value out of a metadata column. Values from Arrow alias
+// the record's buffers, which are freed (and, with the C library's malloc
+// allocator, reused) once the stream is released.
+func stringAt(column *array.String, i int) string {
+	return strings.Clone(column.Value(i))
+}
+
 func stringValue(column *array.String, i int) *string {
 	if column.IsNull(i) {
 		return nil
 	}
-	return new(column.Value(i))
+	return new(stringAt(column, i))
 }
 
 // ListTableTypes implements driverbase.TableTypeLister.
@@ -87,7 +95,7 @@ func (c *connectionImpl) ListTableTypes(ctx context.Context) ([]string, error) {
 			return err
 		}
 		for i := range column.Len() {
-			types = append(types, column.Value(i))
+			types = append(types, stringAt(column, i))
 		}
 		return nil
 	})
@@ -178,10 +186,10 @@ func (c *connectionImpl) listTables(ctx context.Context, query url.Values, withS
 			}
 		}
 		for i := range int(rec.NumRows()) {
-			row := tableRow{catalog: stringValue(catalogs, i), schema: stringValue(schemas, i), name: names.Value(i), kind: kinds.Value(i)}
+			row := tableRow{catalog: stringValue(catalogs, i), schema: stringValue(schemas, i), name: stringAt(names, i), kind: stringAt(kinds, i)}
 			if tableSchemas != nil {
 				// table_schema is a serialized schema message (§10).
-				schema, err := readSchema(tableSchemas.Value(i), c.Alloc)
+				schema, err := readSchema(bytes.Clone(tableSchemas.Value(i)), c.Alloc)
 				if err != nil {
 					return adbc.Error{Code: adbc.StatusInternal, Msg: fmt.Sprintf("[%s] decoding the schema of %s: %v", driverName, row.name, err)}
 				}
@@ -212,7 +220,7 @@ func (c *connectionImpl) GetObjects(ctx context.Context, depth adbc.ObjectDepth,
 			return err
 		}
 		for i := range names.Len() {
-			if name := names.Value(i); catalogPattern.match(name) {
+			if name := stringAt(names, i); catalogPattern.match(name) {
 				index[name] = len(infos)
 				infos = append(infos, driverbase.GetObjectsInfo{CatalogName: new(name)})
 			}
@@ -264,7 +272,7 @@ func (c *connectionImpl) addSchemas(ctx context.Context, infos []driverbase.GetO
 				continue
 			}
 			if at, ok := index[catalogs.Value(i)]; ok {
-				infos[at].CatalogDbSchemas = append(infos[at].CatalogDbSchemas, driverbase.DBSchemaInfo{DbSchemaName: new(schemas.Value(i))})
+				infos[at].CatalogDbSchemas = append(infos[at].CatalogDbSchemas, driverbase.DBSchemaInfo{DbSchemaName: new(stringAt(schemas, i))})
 			}
 		}
 		return nil

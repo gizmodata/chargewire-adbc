@@ -60,19 +60,6 @@ type boundData struct {
 	stream array.RecordReader // BindStream: read by the next execution
 }
 
-// rows returns a reader over the bound data and a function that releases it.
-func (b *boundData) rows() (array.RecordReader, error) {
-	if b.record != nil {
-		return array.NewRecordReader(b.record.Schema(), []arrow.RecordBatch{b.record})
-	}
-	if b.stream == nil {
-		return nil, adbc.Error{Code: adbc.StatusInvalidState, Msg: fmt.Sprintf("[%s] the bound stream was already read by an earlier execution; bind again", driverName)}
-	}
-	stream := b.stream
-	b.stream = nil
-	return stream, nil
-}
-
 func (b *boundData) release() {
 	if b.record != nil {
 		b.record.Release()
@@ -80,6 +67,18 @@ func (b *boundData) release() {
 	if b.stream != nil {
 		b.stream.Release()
 	}
+}
+
+// boundRows returns a reader over the bound data, which the caller releases.
+// A bound record serves every execution; a bound stream is read once, so the
+// statement is unbound after it.
+func (st *statementImpl) boundRows() (array.RecordReader, error) {
+	if st.params.record != nil {
+		return array.NewRecordReader(st.params.record.Schema(), []arrow.RecordBatch{st.params.record})
+	}
+	stream := st.params.stream
+	st.params = nil
+	return stream, nil
 }
 
 // execution is one statement while it runs and while its result is open.
@@ -190,10 +189,13 @@ func (st *statementImpl) GetOption(ctx context.Context, key string) (string, err
 	return st.StatementImplBase.GetOption(ctx, key)
 }
 
+// SetSqlQuery sets the query. Parameters bound for an earlier query are
+// dropped: they belong to it.
 func (st *statementImpl) SetSqlQuery(ctx context.Context, query string) error {
 	if st.prepared != nil && st.prepared.sql != query {
 		st.dropPrepared()
 	}
+	st.unbind()
 	st.query = query
 	st.ingest.table = ""
 	return nil
@@ -327,7 +329,7 @@ func (st *statementImpl) newSubmission(ctx context.Context, arrowResult bool) (*
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err := st.params.rows()
+	rows, err := st.boundRows()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -471,7 +473,11 @@ func (st *statementImpl) Cancel(ctx context.Context) error {
 		}
 		exec.setRef(ref)
 	}
-	return wrapError(st.session().Cancel(ctx, ref), "Cancel")
+	err := st.session().Cancel(ctx, ref)
+	if protocol.HasCode(err, protocol.CodeStatementNotFound) {
+		return nil // already ended and freed: nothing left to stop
+	}
+	return wrapError(err, "Cancel")
 }
 
 func (st *statementImpl) Close(ctx context.Context) error {
@@ -673,7 +679,7 @@ func (st *statementImpl) executeIngest(ctx context.Context) (int64, error) {
 	if st.params == nil {
 		return -1, st.ErrorHelper.InvalidState("bulk ingest needs data: Bind or BindStream the rows")
 	}
-	rows, err := st.params.rows()
+	rows, err := st.boundRows()
 	if err != nil {
 		return -1, err
 	}

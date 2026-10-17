@@ -207,7 +207,8 @@ func (s *testServer) options() map[string]string {
 	}
 }
 
-// openDB opens a database on server with extra options.
+// openDB opens a database on server with extra options. Its Arrow memory is
+// checked: whatever the test leaves allocated when it ends fails it.
 func openDB(t *testing.T, server *testServer, extra map[string]string) adbc.DatabaseWithContext {
 	t.Helper()
 	integrationTests.Add(1)
@@ -215,7 +216,9 @@ func openDB(t *testing.T, server *testServer, extra map[string]string) adbc.Data
 	for key, value := range extra {
 		options[key] = value
 	}
-	db, err := NewDriver(memory.DefaultAllocator).NewDatabaseWithContext(context.Background(), options)
+	alloc := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	t.Cleanup(func() { alloc.AssertSize(t, 0) })
+	db, err := NewDriver(alloc).NewDatabaseWithContext(context.Background(), options)
 	if err != nil {
 		t.Fatalf("NewDatabase: %v", err)
 	}

@@ -96,7 +96,7 @@ func TestIntegrationInterruptedUnretainedResultFails(t *testing.T) {
 // and the server does not run it twice (§6.7).
 func TestIntegrationLostSubmitAnswerRunsOnce(t *testing.T) {
 	proxy, cnxn := viaProxy(t, nil)
-	execUpdate(t, cnxn, "CREATE TABLE once (v INTEGER)")
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE once (v INTEGER)")
 	proxy.add(&faultRule{match: isPost("/statements"), times: 1})
 	if n := execUpdate(t, cnxn, "INSERT INTO once VALUES (1)"); n != 1 {
 		t.Fatalf("rows affected %d", n)
@@ -118,6 +118,7 @@ func TestIntegrationLostSubmitAnswerRunsOnce(t *testing.T) {
 // The same holds for a bulk upload kept in memory.
 func TestIntegrationLostIngestAnswerRunsOnce(t *testing.T) {
 	proxy, cnxn := viaProxy(t, nil)
+	execUpdate(t, cnxn, "DROP TABLE IF EXISTS ing_retry")
 	proxy.add(&faultRule{match: isPost("/ingest"), times: 1})
 	rec := keyValueBatch([]int64{1, 2, 3}, []string{"a", "b", "c"})
 	defer rec.Release()
@@ -238,7 +239,7 @@ func TestIntegrationLostSessionTemporaryStateIsReported(t *testing.T) {
 // commit half a transaction. The connection is usable afterwards.
 func TestIntegrationLostSessionInTransaction(t *testing.T) {
 	cnxn := openConn(t)
-	execUpdate(t, cnxn, "CREATE TABLE lost_tx (v INTEGER)")
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE lost_tx (v INTEGER)")
 	if err := cnxn.(optionConn).SetOption(context.Background(), adbc.OptionKeyAutoCommit, adbc.OptionValueDisabled); err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +345,7 @@ func TestIntegrationPartitions(t *testing.T) {
 		checkBig(t, readAll(t, reader))
 	}
 	// A statement without rows has no partitions, only a count.
-	execUpdate(t, first, "CREATE TABLE part_rows (v INTEGER)")
+	execUpdate(t, first, "CREATE OR REPLACE TABLE part_rows (v INTEGER)")
 	_, partitions, rows, err = executePartitions(t, newStmt(t, first), "INSERT INTO part_rows VALUES (1), (2)")
 	if err != nil || partitions.NumPartitions != 0 || rows != 2 {
 		t.Fatalf("%d partitions, %d rows, %v", partitions.NumPartitions, rows, err)

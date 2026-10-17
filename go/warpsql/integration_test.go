@@ -80,7 +80,7 @@ func TestIntegrationTypesRoundTrip(t *testing.T) {
 // rows affected, and the change is there without reading anything.
 func TestIntegrationDDLDMLThroughExecuteQuery(t *testing.T) {
 	cnxn := openConn(t)
-	for _, sql := range []string{"CREATE TABLE ddl_q (id INTEGER)", "INSERT INTO ddl_q VALUES (1), (2), (3)"} {
+	for _, sql := range []string{"CREATE OR REPLACE TABLE ddl_q (id INTEGER)", "INSERT INTO ddl_q VALUES (1), (2), (3)"} {
 		stmt := newStmt(t, cnxn)
 		if err := stmt.SetSqlQuery(context.Background(), sql); err != nil {
 			t.Fatal(err)
@@ -105,7 +105,7 @@ func TestIntegrationDDLDMLThroughExecuteQuery(t *testing.T) {
 func TestIntegrationExecuteUpdateRowsAffected(t *testing.T) {
 	cnxn := openConn(t)
 	// The server reports no row count for DDL: unknown, -1.
-	if n := execUpdate(t, cnxn, "CREATE TABLE eu (v INTEGER)"); n != -1 {
+	if n := execUpdate(t, cnxn, "CREATE OR REPLACE TABLE eu (v INTEGER)"); n != -1 {
 		t.Errorf("CREATE TABLE affected %d rows, want -1", n)
 	}
 	if n := execUpdate(t, cnxn, "INSERT INTO eu SELECT * FROM range(5)"); n != 5 {
@@ -121,7 +121,7 @@ func TestIntegrationExecuteUpdateRowsAffected(t *testing.T) {
 
 func TestIntegrationReturningYieldsRowsAndPersists(t *testing.T) {
 	cnxn := openConn(t)
-	execUpdate(t, cnxn, "CREATE SEQUENCE ret_seq; CREATE TABLE ret (id INTEGER DEFAULT nextval('ret_seq') PRIMARY KEY, name VARCHAR)")
+	execUpdate(t, cnxn, "DROP TABLE IF EXISTS ret; CREATE OR REPLACE SEQUENCE ret_seq; CREATE TABLE ret (id INTEGER DEFAULT nextval('ret_seq') PRIMARY KEY, name VARCHAR)")
 	returned := queryTable(t, cnxn, "INSERT INTO ret (name) VALUES ('alice'), ('bob') RETURNING id, name")
 	if returned.NumRows() != 2 {
 		t.Fatalf("RETURNING gave %d rows, want 2", returned.NumRows())
@@ -142,10 +142,34 @@ func TestIntegrationReturningYieldsRowsAndPersists(t *testing.T) {
 	}
 }
 
+// DML with RETURNING has run by the time ExecuteQuery returns (the result
+// starts only after the rows are written), so it persists even when the
+// returned rows are never read and the result is released, which cancels it.
+func TestIntegrationReturningPersistsWithoutFetch(t *testing.T) {
+	cnxn := openConn(t)
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE ret_unread (id INTEGER)")
+	for i, sql := range []string{
+		"INSERT INTO ret_unread SELECT * FROM range(100000) RETURNING id",
+		"INSERT INTO ret_unread VALUES (-1) RETURNING id",
+	} {
+		stmt := newStmt(t, cnxn)
+		setQuery(t, stmt, sql)
+		reader, _, err := stmt.ExecuteQuery(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader.Release() // never read
+		want := []int64{100000, 100001}[i]
+		if got := scalarInt(t, cnxn, "SELECT count(*) FROM ret_unread"); got != want {
+			t.Fatalf("after %q: %d rows, want %d", sql, got, want)
+		}
+	}
+}
+
 // A string literal that contains RETURNING is just a value.
 func TestIntegrationStringLiteralReturning(t *testing.T) {
 	cnxn := openConn(t)
-	execUpdate(t, cnxn, "CREATE TABLE lit_ret (msg VARCHAR)")
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE lit_ret (msg VARCHAR)")
 	if n := execUpdate(t, cnxn, "INSERT INTO lit_ret VALUES ('RETURNING soon')"); n != 1 {
 		t.Fatalf("rows affected %d", n)
 	}
@@ -156,14 +180,14 @@ func TestIntegrationStringLiteralReturning(t *testing.T) {
 
 func TestIntegrationMultipleStatementsInOneQuery(t *testing.T) {
 	cnxn := openConn(t)
-	if n := execUpdate(t, cnxn, "CREATE TABLE multi (a INTEGER); INSERT INTO multi VALUES (1), (2)"); n != 2 {
+	if n := execUpdate(t, cnxn, "CREATE OR REPLACE TABLE multi (a INTEGER); INSERT INTO multi VALUES (1), (2)"); n != 2 {
 		t.Fatalf("rows affected %d, want 2 (the last statement's)", n)
 	}
 }
 
 func TestIntegrationBindWithoutPrepareQuery(t *testing.T) {
 	cnxn := openConn(t)
-	execUpdate(t, cnxn, "CREATE TABLE autoprep_q (id INTEGER); INSERT INTO autoprep_q VALUES (1), (2), (3)")
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE autoprep_q (id INTEGER); INSERT INTO autoprep_q VALUES (1), (2), (3)")
 	stmt := newStmt(t, cnxn)
 	if err := stmt.SetSqlQuery(context.Background(), "SELECT id FROM autoprep_q WHERE id = ?"); err != nil {
 		t.Fatal(err)
@@ -191,7 +215,7 @@ func bindInt32(t *testing.T, stmt *statementImpl, values ...int32) {
 // rows in one request, and ExecuteUpdate reports all of them.
 func TestIntegrationBindWithoutPrepareUpdate(t *testing.T) {
 	cnxn := openConn(t)
-	execUpdate(t, cnxn, "CREATE TABLE autoprep_u (id INTEGER)")
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE autoprep_u (id INTEGER)")
 	stmt := newStmt(t, cnxn)
 	if err := stmt.SetSqlQuery(context.Background(), "INSERT INTO autoprep_u VALUES (?)"); err != nil {
 		t.Fatal(err)
@@ -235,6 +259,27 @@ func TestIntegrationExplicitPrepareThenBindPreparesOnce(t *testing.T) {
 		} else if stmt.prepared.ref.PreparedID != first {
 			t.Errorf("prepared again: %s, then %s", first, stmt.prepared.ref.PreparedID)
 		}
+	}
+}
+
+// A new query drops the parameters bound for the old one.
+func TestIntegrationNewQueryDropsParameters(t *testing.T) {
+	cnxn := openConn(t)
+	stmt := newStmt(t, cnxn)
+	setQuery(t, stmt, "SELECT ? + 1")
+	bindInt32(t, stmt, 1)
+	reader, _, err := stmt.ExecuteQuery(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	readAll(t, reader)
+	setQuery(t, stmt, "SELECT 5")
+	reader, _, err = stmt.ExecuteQuery(context.Background())
+	if err != nil {
+		t.Fatalf("a query without parameters after a parameterized one: %v", err)
+	}
+	if got := int64s(t, readAll(t, reader), 0); got[0] != 5 {
+		t.Fatalf("got %d", got[0])
 	}
 }
 
@@ -283,16 +328,16 @@ func TestIntegrationBindStreamConcatenatesResults(t *testing.T) {
 	if got := int64s(t, readAll(t, reader), 0); len(got) != 3 || got[0] != 1 || got[2] != 3 {
 		t.Fatalf("rows = %v, want [1 2 3]", got)
 	}
-	// A stream is read once: executing again without binding is an error.
+	// A stream is read once: executing again runs without parameters.
 	_, _, err = stmt.ExecuteQuery(context.Background())
-	assertStatus(t, err, adbc.StatusInvalidState, "")
+	assertStatus(t, err, adbc.StatusInvalidArgument, "sql_error")
 }
 
 // Bound DML persists without reading anything, and a bound SELECT streams.
 func TestIntegrationBoundDMLAndSelect(t *testing.T) {
 	cnxn := openConn(t)
 	const uuid = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
-	execUpdate(t, cnxn, "CREATE TABLE bound_dml (id UUID, v INTEGER); INSERT INTO bound_dml VALUES ('"+uuid+"', 1)")
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE bound_dml (id UUID, v INTEGER); INSERT INTO bound_dml VALUES ('"+uuid+"', 1)")
 	stmt := newStmt(t, cnxn)
 	if err := stmt.SetSqlQuery(context.Background(), "DELETE FROM bound_dml WHERE id = ?"); err != nil {
 		t.Fatal(err)

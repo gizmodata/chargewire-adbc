@@ -41,9 +41,10 @@ func getObjects(t *testing.T, cnxn adbc.ConnectionWithContext, depth adbc.Object
 	}
 	var infos []driverbase.GetObjectsInfo
 	for reader.Next() {
-		rec := reader.RecordBatch()
-		for i := range int(rec.NumRows()) {
-			data, err := json.Marshal(array.RecordToStructArray(rec).GetOneForMarshal(i))
+		rows := array.RecordToStructArray(reader.RecordBatch())
+		defer rows.Release()
+		for i := range rows.Len() {
+			data, err := json.Marshal(rows.GetOneForMarshal(i))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -201,7 +202,7 @@ func TestIntegrationGetTableSchema(t *testing.T) {
 		assertStatus(t, err, adbc.StatusNotFound, "")
 	}
 	// Without catalog and schema, the name resolves in the current ones.
-	execUpdate(t, cnxn, "CREATE TABLE orders (only_in_main INTEGER)")
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE orders (only_in_main INTEGER)")
 	schema, err = cnxn.GetTableSchema(context.Background(), nil, nil, "orders")
 	if err != nil {
 		t.Fatal(err)
@@ -300,7 +301,7 @@ func TestIntegrationUnsupportedConnectionOptions(t *testing.T) {
 func TestIntegrationTransactions(t *testing.T) {
 	cnxn := openConn(t)
 	options := cnxn.(optionConn)
-	execUpdate(t, cnxn, "CREATE TABLE tx (v INTEGER)")
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE tx (v INTEGER)")
 	// Commit and rollback need autocommit off.
 	assertStatus(t, cnxn.Commit(context.Background()), adbc.StatusInvalidState, "")
 

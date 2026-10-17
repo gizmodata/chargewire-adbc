@@ -138,7 +138,7 @@ func TestIntegrationCancelQueryInterruptsRunningStatement(t *testing.T) {
 func TestIntegrationCancelUpdateWithUnknownStatementID(t *testing.T) {
 	cnxn := openConn(t)
 	stmt := newStmt(t, cnxn)
-	setQuery(t, stmt, "CREATE TABLE cancelled_update AS "+longQuery)
+	setQuery(t, stmt, "CREATE OR REPLACE TABLE cancelled_update AS "+longQuery)
 	done := runUpdateInBackground(stmt)
 	waitRunning(t, stmt)
 	if _, known := stmt.active.statementRef(); known {
@@ -150,7 +150,7 @@ func TestIntegrationCancelUpdateWithUnknownStatementID(t *testing.T) {
 	assertStatus(t, waitErr(t, done, 30*time.Second), adbc.StatusCancelled, "")
 	assertSessionUsable(t, cnxn)
 	if got := scalarInt(t, cnxn, "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cancelled_update'"); got != 0 {
-		t.Fatalf("the cancelled CREATE TABLE AS left %d table(s) behind", got)
+		t.Fatalf("the cancelled CREATE OR REPLACE TABLE AS left %d table(s) behind", got)
 	}
 }
 
@@ -225,7 +225,7 @@ func TestIntegrationAbandonedResultCancelsRunningQuery(t *testing.T) {
 func TestIntegrationCloseWhileUpdateExecutingCancelsOnServer(t *testing.T) {
 	cnxn := openConn(t)
 	stmt := newStmt(t, cnxn)
-	setQuery(t, stmt, "CREATE TABLE cancelled_ctas AS "+longQuery)
+	setQuery(t, stmt, "CREATE OR REPLACE TABLE cancelled_ctas AS "+longQuery)
 	done := runUpdateInBackground(stmt)
 	waitRunning(t, stmt)
 	if err := stmt.Close(context.Background()); err != nil {

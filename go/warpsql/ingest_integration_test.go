@@ -52,6 +52,7 @@ func keyValueBatch(keys []int64, values []string) arrow.RecordBatch {
 
 func TestIntegrationIngestModes(t *testing.T) {
 	cnxn := openConn(t)
+	execUpdate(t, cnxn, "DROP TABLE IF EXISTS ing_modes; DROP TABLE IF EXISTS ing_ca_new")
 	rec := keyValueBatch([]int64{1, 2, 3}, []string{"alice", "bob", "carol"})
 	defer rec.Release()
 
@@ -88,6 +89,7 @@ func TestIntegrationIngestModes(t *testing.T) {
 // failed upload leaves the table as it was.
 func TestIntegrationIngestCreateRefusesExistingTable(t *testing.T) {
 	cnxn := openConn(t)
+	execUpdate(t, cnxn, "DROP TABLE IF EXISTS ing_once")
 	rec := keyValueBatch([]int64{1}, []string{"a"})
 	defer rec.Release()
 	if _, err := ingest(t, cnxn, "ing_once", adbc.OptionValueIngestModeCreate, rec, nil); err != nil {
@@ -110,7 +112,7 @@ func TestIntegrationIngestAppendNeedsTable(t *testing.T) {
 
 func TestIntegrationIngestTargetCatalogSchemaAndTemporary(t *testing.T) {
 	cnxn := openConn(t)
-	execUpdate(t, cnxn, "ATTACH ':memory:' AS ing_cat; CREATE SCHEMA ing_cat.s")
+	execUpdate(t, cnxn, "ATTACH IF NOT EXISTS ':memory:' AS ing_cat; CREATE SCHEMA IF NOT EXISTS ing_cat.s; DROP TABLE IF EXISTS ing_cat.s.t")
 	rec := keyValueBatch([]int64{1, 2}, []string{"a", "b"})
 	defer rec.Release()
 	if _, err := ingest(t, cnxn, "t", adbc.OptionValueIngestModeCreate, rec, map[string]string{
@@ -143,6 +145,7 @@ func TestIntegrationIngestLargeStreamedUpload(t *testing.T) {
 	for _, compression := range []string{"none", "zstd"} {
 		t.Run(compression, func(t *testing.T) {
 			cnxn := openConn(t)
+			execUpdate(t, cnxn, "DROP TABLE IF EXISTS ing_big_"+compression)
 			const batches, rowsPerBatch = 40, 50_000 // 2M rows, ~32 MB of int64s: over the in-memory limit
 			schema := arrow.NewSchema([]arrow.Field{{Name: "i", Type: arrow.PrimitiveTypes.Int64}, {Name: "j", Type: arrow.PrimitiveTypes.Int64}}, nil)
 			var records []arrow.RecordBatch
