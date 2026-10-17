@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/gizmodata/warp-sql-adbc/go/internal/protocol"
@@ -19,6 +20,10 @@ import (
 // partitionBuffer is how many batches each partition's download may hold
 // ahead of the reader.
 const partitionBuffer = 2
+
+// causeWait is how long a cancellation the application did not ask for
+// waits for the partition that caused it to report its own error.
+const causeWait = 2 * time.Second
 
 // splitHeaders reads how a streamed result was split (§6.10): the partition
 // count and order, and whether there is more than one partition.
@@ -41,7 +46,11 @@ func splitHeaders(resp *http.Response) (int, string, bool) {
 // robin, which is the result's order; "any" partitions in whatever order
 // their batches arrive. The result is complete only when every partition
 // ended with its end-of-stream marker; the first partition that fails fails
-// the whole result and stops the others.
+// the whole result and stops the others. One exception: a cancellation the
+// application did not ask for is usually the server's reaction to another
+// partition's failure (its connection broke, so the server stopped the
+// statement). The other partitions then keep reading, dropping rows, for up
+// to causeWait, and the error of the one that caused it wins.
 type partitionedReader struct {
 	refs   atomic.Int64
 	schema *arrow.Schema
@@ -55,8 +64,10 @@ type partitionedReader struct {
 	merged chan arrow.RecordBatch   // all partitions (any)
 	wg     sync.WaitGroup
 
-	failOnce sync.Once
-	failure  error
+	failMu    sync.Mutex
+	failure   error
+	stopped   bool
+	cancelled func() bool // the application cancelled the statement
 
 	next int // interleaved: the partition the next batch comes from
 	rec  arrow.RecordBatch
@@ -71,7 +82,8 @@ type partitionedReader struct {
 // when set, is the body that already carries partition 0 (the streamed path).
 func newPartitionedReader(cfg resultReaderConfig, order string, first io.ReadCloser) (*partitionedReader, error) {
 	ctx, cancel := context.WithCancel(cfg.ctx)
-	p := &partitionedReader{order: order, ctx: ctx, cancel: cancel, first: first, onEnd: cfg.onEnd}
+	p := &partitionedReader{order: order, ctx: ctx, cancel: cancel, first: first, onEnd: cfg.onEnd,
+		cancelled: cfg.cancelled}
 	p.refs.Store(1)
 	sub := cfg
 	sub.ctx, sub.onEnd = ctx, nil
@@ -158,15 +170,53 @@ func (p *partitionedReader) closeFeed(i int) {
 	}
 }
 
-// fail records the first failure and stops every partition.
+// fail records the first failure and stops every partition, unless it is a
+// consequential cancellation, which waits for its cause (see the type).
 func (p *partitionedReader) fail(err error) {
-	p.failOnce.Do(func() {
+	p.failMu.Lock()
+	stop := false
+	switch {
+	case p.failure == nil:
 		p.failure = err
-		p.cancel()
-		if p.first != nil {
-			p.first.Close() // partition 0's body belongs to the submit's request
+		if p.consequential(err) {
+			time.AfterFunc(causeWait, p.stopAll)
+		} else {
+			stop = true
 		}
-	})
+	case p.consequential(p.failure) && !protocol.HasCode(err, protocol.CodeStatementCancelled):
+		p.failure = err
+		stop = true
+	}
+	p.failMu.Unlock()
+	if stop {
+		p.stopAll()
+	}
+}
+
+// consequential reports a cancellation the application did not ask for.
+func (p *partitionedReader) consequential(err error) bool {
+	return protocol.HasCode(err, protocol.CodeStatementCancelled) && (p.cancelled == nil || !p.cancelled())
+}
+
+func (p *partitionedReader) currentFailure() error {
+	p.failMu.Lock()
+	defer p.failMu.Unlock()
+	return p.failure
+}
+
+// stopAll stops every partition's download.
+func (p *partitionedReader) stopAll() {
+	p.failMu.Lock()
+	already := p.stopped
+	p.stopped = true
+	p.failMu.Unlock()
+	if already {
+		return
+	}
+	p.cancel()
+	if p.first != nil {
+		p.first.Close() // partition 0's body belongs to the submit's request
+	}
 }
 
 func (p *partitionedReader) Schema() *arrow.Schema { return p.schema }
@@ -198,6 +248,9 @@ func (p *partitionedReader) Next() bool {
 			p.next = (p.next + 1) % len(p.feeds)
 			return true
 		}
+		if p.currentFailure() != nil {
+			return p.finish() // that partition failed: the result ends with the failure
+		}
 		// Round robin: once a partition has no next batch, none has (§6.10).
 		for _, feed := range p.feeds {
 			for rec := range feed {
@@ -213,13 +266,37 @@ func (p *partitionedReader) Next() bool {
 
 // finish ends a result whose merge ran out: complete only if no partition failed.
 func (p *partitionedReader) finish() bool {
+	if p.currentFailure() != nil {
+		// The other partitions may still be reading (a consequential cancellation waits
+		// for its cause): drop what they send until they end.
+		p.drainAll()
+	}
 	p.wg.Wait()
-	if p.failure != nil {
-		return p.stop(p.failure)
+	if err := p.currentFailure(); err != nil {
+		return p.stop(err)
 	}
 	p.done = true
 	p.end(true)
 	return false
+}
+
+// drainAll releases every batch the partitions send until each has ended.
+func (p *partitionedReader) drainAll() {
+	var drained sync.WaitGroup
+	drain := func(feed chan arrow.RecordBatch) {
+		drained.Go(func() {
+			for rec := range feed {
+				rec.Release()
+			}
+		})
+	}
+	if p.merged != nil {
+		drain(p.merged)
+	}
+	for _, feed := range p.feeds {
+		drain(feed)
+	}
+	drained.Wait()
 }
 
 // stop ends the result as failed: with err, or with the error of the
@@ -228,7 +305,7 @@ func (p *partitionedReader) finish() bool {
 func (p *partitionedReader) stop(err error) bool {
 	p.shutdown()
 	if err == nil {
-		err = p.failure
+		err = p.currentFailure()
 	}
 	if err == nil {
 		err = wrapError(context.Canceled, "reading the result")
@@ -240,21 +317,8 @@ func (p *partitionedReader) stop(err error) bool {
 
 // shutdown stops every download and waits for them.
 func (p *partitionedReader) shutdown() {
-	p.cancel()
-	if p.first != nil {
-		p.first.Close()
-	}
-	drain := func(feed chan arrow.RecordBatch) {
-		for rec := range feed {
-			rec.Release()
-		}
-	}
-	if p.merged != nil {
-		drain(p.merged)
-	}
-	for _, feed := range p.feeds {
-		drain(feed)
-	}
+	p.stopAll()
+	p.drainAll()
 	p.wg.Wait()
 }
 

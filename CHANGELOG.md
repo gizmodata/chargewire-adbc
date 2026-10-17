@@ -24,6 +24,13 @@ All notable changes to this project are documented here. The format follows
   two batches still comes as one stream, and a server without `result_partitions` never
   sees the request. Set it to 1 for one stream.
 
+### Fixed
+
+- A split result whose partition's connection broke could fail with "the statement was
+  cancelled" (the server's reaction) instead of the broken connection and its advice to
+  retain results, whenever another partition saw the cancellation first. A cancellation
+  the application didn't ask for now waits (up to 2 s) for the partition that caused it.
+
 ### Added (earlier)
 
 - Split results (Warp SQL spec §6.10): `adbc.warp.statement.result_partitions` (most
