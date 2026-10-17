@@ -30,6 +30,17 @@ const (
 	CapabilityLongPoll           = "long_poll"
 	CapabilityIPCCompressionZstd = "ipc_compression_zstd"
 	CapabilityPartitionedResults = "partitioned_results"
+	CapabilityResultPartitions   = "result_partitions"
+)
+
+// How a result split into partitions spreads its batches over them (§6.10).
+const (
+	// PartitionOrderInterleaved: batch j of the result is batch j div k of
+	// partition j mod k, so reading the partitions round robin rebuilds the
+	// result's order.
+	PartitionOrderInterleaved = "interleaved"
+	// PartitionOrderAny: the rows' order means nothing.
+	PartitionOrderAny = "any"
 )
 
 // Grant types for POST /warp/v1/auth/token (§4.1).
@@ -117,12 +128,15 @@ const (
 
 // Result is a succeeded statement's result (§6.2).
 type Result struct {
-	Kind         string      `json:"kind"`
-	Schema       string      `json:"schema"`
-	Partitions   []Partition `json:"partitions"`
-	Retained     bool        `json:"retained"`
-	ExpiresAt    string      `json:"expires_at"`
-	RowsAffected *int64      `json:"rows_affected"`
+	Kind       string      `json:"kind"`
+	Schema     string      `json:"schema"`
+	Partitions []Partition `json:"partitions"`
+	// PartitionOrder is "interleaved" or "any" for a result split into
+	// several partitions on this server (§6.10), empty otherwise.
+	PartitionOrder string `json:"partition_order"`
+	Retained       bool   `json:"retained"`
+	ExpiresAt      string `json:"expires_at"`
+	RowsAffected   *int64 `json:"rows_affected"`
 }
 
 // SchemaBytes decodes the base64 Arrow schema (§2.2).

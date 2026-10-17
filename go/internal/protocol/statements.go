@@ -60,6 +60,11 @@ type Submission struct {
 	QueryTag string
 	// Zstd accepts Arrow buffer compression (§8.2).
 	Zstd bool
+	// Partitions, when more than 1, lets the server split the result into up
+	// to that many partitions, read at once (§6.10); AnyOrder says the rows'
+	// order doesn't matter.
+	Partitions int
+	AnyOrder   bool
 
 	key       string
 	sessionID string
@@ -103,6 +108,12 @@ func (s *Submission) request(arrow, async bool) *Request {
 	}
 	if s.Zstd {
 		header.Set("Warp-IPC-Compression", "zstd")
+	}
+	if s.Partitions > 1 {
+		header.Set("Warp-Result-Partitions", strconv.Itoa(s.Partitions))
+		if s.AnyOrder {
+			header.Set("Warp-Result-Order", "any")
+		}
 	}
 	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
 		if info.Err == nil {

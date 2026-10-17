@@ -687,6 +687,49 @@ class TestPartitionsAndOptions:
                     total += cur.fetch_arrow_table().num_rows
                 assert total == 100_000
 
+    @pytest.mark.parametrize("order", ["preserve", "any"])
+    @pytest.mark.parametrize("asynchronous", ["false", "true"])
+    def test_split_result(self, warp_server, order, asynchronous):
+        # A result split into partitions read at once (spec §6.10): every row once, in
+        # order unless the client said order doesn't matter, NULLs and types intact.
+        sql = (
+            "SELECT i, CASE WHEN i % 7 = 0 THEN NULL ELSE 'row ' || i END AS s, "
+            "(i % 1000)::DECIMAL(18, 3) AS d FROM range(1000000) t(i) ORDER BY i DESC"
+        )
+        with connect(server=warp_server) as plain:
+            with plain.cursor() as cur:
+                cur.execute(operation=sql)
+                whole = cur.fetch_arrow_table()
+        with connect(
+            server=warp_server,
+            db_kwargs={
+                StatementOptions.RESULT_PARTITIONS.value: "4",
+                StatementOptions.RESULT_ORDER.value: order,
+                StatementOptions.ASYNC.value: asynchronous,
+            },
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(operation=sql)
+                split = cur.fetch_arrow_table()
+        assert split.num_rows == 1_000_000
+        if order == "preserve":
+            assert split.equals(whole)
+        else:
+            assert split.sort_by(sorting="i").equals(whole.sort_by(sorting="i"))
+
+    def test_split_result_failure_fails_the_query(self, warp_server):
+        with connect(
+            server=warp_server, db_kwargs={StatementOptions.RESULT_PARTITIONS.value: "4"}
+        ) as conn:
+            with conn.cursor() as cur:
+                with pytest.raises(adbc_driver_manager.Error) as caught:
+                    cur.execute(
+                        operation="SELECT CASE WHEN i < 30000000 THEN i ELSE error('boom') END "
+                        "AS v FROM range(100000000) t(i)"
+                    )
+                    cur.fetch_arrow_table()
+                assert "boom" in str(caught.value)
+
     def test_async_and_zstd(self, warp_server):
         with connect(
             server=warp_server,

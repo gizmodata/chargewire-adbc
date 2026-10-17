@@ -228,7 +228,8 @@ func (d *databaseImpl) grantType() string {
 
 func (d *databaseImpl) newTransport(base *url.URL) (*http.Transport, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConnsPerHost = 16
+	// A split result is read over one connection per partition (§6.10).
+	transport.MaxIdleConnsPerHost = maxResultPartitions
 	if base.Scheme == "http" {
 		if d.tls != (tlsOptions{}) {
 			return nil, d.ErrorHelper.InvalidArgument("TLS options were given, but the uri %s is plain HTTP", base.Redacted())

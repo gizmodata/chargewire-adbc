@@ -124,6 +124,8 @@ Statement options; set on the database or connection they are defaults for its s
 | `adbc.warp.statement.timeout_seconds` | none | The server cancels the statement after this long |
 | `adbc.warp.statement.query_tag` | | JSON object recorded with every statement |
 | `adbc.warp.ipc_compression` | `none` | `zstd`: Arrow buffer compression for results and uploads |
+| `adbc.warp.statement.result_partitions` | `1` | Let the server split a large result into up to this many partitions, read at once over separate connections |
+| `adbc.warp.statement.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
 
 Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connection),
 `adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
@@ -135,6 +137,15 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
   DML) answer with their document, so `ExecuteQuery` returns an empty schema and the rows
   affected. With `async`, the driver submits, long-polls the status, and reads the result
   with `from_batch` resumption: use it for long queries behind proxies with idle timeouts.
+- **Split results** (`result_partitions` above 1, on a server with the
+  `result_partitions` capability, spec §6.10): the server may split a large result into
+  partitions, and the driver downloads every partition at once, each over its own
+  connection, into one RecordBatchReader. One TCP connection carries what one network flow
+  allows, and decoding then spreads over several cores. With `result_order=preserve` the
+  batches come back in the server's order (round robin over the partitions), so `ORDER BY`
+  holds; with `any`, as they arrive. Every partition must end with its end-of-stream
+  marker: if one fails or is cut off (and can't be resumed), the whole result fails with
+  the statement's error. `ExecutePartitions` returns the server's partitions.
 - **Broken downloads** of a retained result resume from the next batch (up to five times).
   An unretained result cannot be resumed; the error says so and names the options that
   make it resumable. A stream that ends without its end-of-stream marker is never taken

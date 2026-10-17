@@ -50,5 +50,12 @@ class StatementOptions(enum.Enum):
     QUERY_TAG = "adbc.warp.statement.query_tag"
     #: Arrow buffer compression for results and uploads: "zstd" or "none".
     IPC_COMPRESSION = "adbc.warp.ipc_compression"
+    #: The most partitions a result may be split into ("1", the default: never). A server
+    #: that offers it splits a large result, and the driver reads every partition at once,
+    #: each over its own connection.
+    RESULT_PARTITIONS = "adbc.warp.statement.result_partitions"
+    #: "preserve" (the default): a split result comes back in order; "any": in whatever
+    #: order its batches arrive.
+    RESULT_ORDER = "adbc.warp.statement.result_order"
     #: The id of the statement's last execution (read-only).
     STATEMENT_ID = "adbc.warp.statement.id"

@@ -79,6 +79,16 @@ const (
 	// OptionIPCCompression is "zstd" or "none" (default): Arrow buffer
 	// compression for results and uploads, used when the server offers it.
 	OptionIPCCompression = "adbc.warp.ipc_compression"
+	// OptionResultPartitions is the most partitions a query's result may be
+	// split into (default 1: never). With more, a server that offers it
+	// splits a large result, and the driver reads the partitions at once,
+	// each over its own connection (§6.10): one TCP connection carries what
+	// one network flow allows, and decoding spreads over several cores.
+	OptionResultPartitions = "adbc.warp.statement.result_partitions"
+	// OptionResultOrder is "preserve" (default) or "any". With "preserve" a
+	// split result comes back in the server's order (round robin over the
+	// partitions); with "any" batches come in whichever order they arrive.
+	OptionResultOrder = "adbc.warp.statement.result_order"
 )
 
 // Statement options, read-only.
@@ -86,6 +96,9 @@ const (
 	// OptionStatementID is the id of the statement's last execution.
 	OptionStatementID = "adbc.warp.statement.id"
 )
+
+// maxResultPartitions is the most partitions a client may ask for (§6.10).
+const maxResultPartitions = 256
 
 // optionBindByName is the standard ADBC option the Python DB-API sets for
 // parameters given as a dict. Arrow parameters carry their names, so it
@@ -100,6 +113,8 @@ type execOptions struct {
 	timeout     time.Duration
 	queryTag    string
 	compression string
+	partitions  int  // 0 or 1: one partition
+	anyOrder    bool // the rows' order doesn't matter
 }
 
 // set applies one statement option; it reports false for keys it does not
@@ -135,6 +150,21 @@ func (o *execOptions) set(key, value string) (bool, error) {
 			}
 		}
 		o.queryTag = value
+	case OptionResultPartitions:
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > maxResultPartitions {
+			return true, invalidOption(key, value, fmt.Sprintf("a whole number from 1 to %d", maxResultPartitions))
+		}
+		o.partitions = n
+	case OptionResultOrder:
+		switch strings.ToLower(value) {
+		case "", "preserve":
+			o.anyOrder = false
+		case "any":
+			o.anyOrder = true
+		default:
+			return true, invalidOption(key, value, `"preserve" or "any"`)
+		}
 	case OptionIPCCompression:
 		switch strings.ToLower(value) {
 		case "", "none":
@@ -164,6 +194,13 @@ func (o *execOptions) get(key string) (string, bool) {
 		return strconv.FormatFloat(o.timeout.Seconds(), 'f', -1, 64), true
 	case OptionQueryTag:
 		return o.queryTag, true
+	case OptionResultPartitions:
+		return strconv.Itoa(max(o.partitions, 1)), true
+	case OptionResultOrder:
+		if o.anyOrder {
+			return "any", true
+		}
+		return "preserve", true
 	case OptionIPCCompression:
 		if o.compression == "" {
 			return "none", true

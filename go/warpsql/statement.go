@@ -333,6 +333,9 @@ func (st *statementImpl) newSubmission(ctx context.Context, arrowResult bool) (*
 		Arrow: arrowResult, Wait: longPoll, Retain: st.opts.retain, Timeout: st.opts.timeout,
 		QueryTag: st.opts.queryTag, Zstd: st.zstd(),
 	}
+	if st.opts.partitions > 1 && st.cnxn.discovery.Has(protocol.CapabilityResultPartitions) {
+		sub.Partitions, sub.AnyOrder = st.opts.partitions, st.opts.anyOrder
+	}
 	if st.params == nil {
 		body, err := protocol.SubmitDocument(st.query, nil)
 		if err != nil {
@@ -570,6 +573,19 @@ func (st *statementImpl) ExecuteQuery(ctx context.Context) (rdr array.RecordRead
 		return st.queryResult(execCtx, exec, doc)
 	}
 	exec.setRef(protocol.StatementRef{SessionID: sub.SessionID(), StatementID: resp.Header.Get("Warp-Statement-Id")})
+	if k, order, split := splitHeaders(resp); split {
+		// A split result (§6.10): this body is partition 0; the others are read
+		// at once, each over its own connection.
+		parts := make([]resultPart, k)
+		for i := range parts {
+			parts[i] = resultPart{index: i}
+		}
+		reader, err := newPartitionedReader(st.readerConfig(execCtx, exec, parts), order, resp.Body)
+		if err != nil {
+			return nil, -1, err
+		}
+		return reader, -1, nil
+	}
 	reader, err := newResultReader(st.readerConfig(execCtx, exec, []resultPart{{index: 0}}), resp.Body)
 	if err != nil {
 		return nil, -1, err
@@ -624,6 +640,16 @@ func (st *statementImpl) queryResult(ctx context.Context, exec *execution, doc *
 	parts, err := resultParts(doc.Result)
 	if err != nil {
 		return nil, -1, st.fail(exec, err, "ExecuteQuery")
+	}
+	if order := doc.Result.PartitionOrder; len(parts) > 1 &&
+		(order == protocol.PartitionOrderInterleaved || order == protocol.PartitionOrderAny) {
+		// A result split on this server is read all at once (§6.10).
+		// Partitions on other servers (§6.2) are still read one after another.
+		reader, err := newPartitionedReader(st.readerConfig(ctx, exec, parts), order, nil)
+		if err != nil {
+			return nil, -1, err
+		}
+		return reader, partitionRows(doc.Result), nil
 	}
 	reader, err := newResultReader(st.readerConfig(ctx, exec, parts), nil)
 	if err != nil {

@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Split results (Warp SQL spec §6.10): `adbc.warp.statement.result_partitions` (most
+  partitions, default 1) and `adbc.warp.statement.result_order` (`preserve` or `any`).
+  The driver reads every partition of a split result at once, one connection each, and
+  merges them into one reader: round robin for `interleaved` results (the server's order),
+  as they arrive for `any`. A failed or cut-off partition fails the whole result. Python:
+  `StatementOptions.RESULT_PARTITIONS` and `RESULT_ORDER`.
+- The HTTP transport keeps up to 256 idle connections per host (one per partition).
+
 - Repository created: README with the driver's scope, planned layout and the
   mapping from ADBC calls to Warp SQL operations.
 - **Go ADBC driver** (`go/warpsql`) for any Warp SQL server (spec draft 0.1.0), on
