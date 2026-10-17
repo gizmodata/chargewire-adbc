@@ -44,6 +44,7 @@ type Session struct {
 	id           string
 	options      map[string]any // the options set through this Session, replayed on a replacement
 	replacements int
+	closed       bool // Close was called: never replace it
 }
 
 // OpenSession creates a session (§5.1). With reconnect, a session the server
@@ -168,6 +169,9 @@ func lost(err error) bool {
 func (s *Session) replace(ctx context.Context, failedID string, cause error) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return "", errSessionClosed
+	}
 	if s.id != failedID {
 		return s.id, nil
 	}
@@ -306,10 +310,16 @@ func (s *Session) SetOptions(ctx context.Context, options map[string]any) error 
 	return &OptionError{Key: keys[0], Problem: &problem}
 }
 
+// errSessionClosed is a request on a session the driver already closed.
+var errSessionClosed = errors.New("the connection is closed")
+
 // Close ends the session (§5.4). A session the server no longer has counts as
-// closed.
+// closed. A closed session is never replaced.
 func (s *Session) Close(ctx context.Context) error {
-	id := s.ID()
+	s.mu.Lock()
+	s.closed = true
+	id := s.id
+	s.mu.Unlock()
 	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: sessionPath(id), Idempotent: true}, nil)
 	if HasCode(err, CodeSessionNotFound) {
 		return nil

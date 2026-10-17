@@ -4,7 +4,6 @@ package warpsql
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -156,6 +155,6 @@ func (c *connectionImpl) requireCapability(capability, what string) error {
 	if c.discovery.Has(capability) {
 		return nil
 	}
-	return c.ErrorHelper.NotImplemented("%s needs the server capability %q, which %s does not list",
-		what, capability, fmt.Sprintf("%s %s", c.discovery.Server.Name, c.discovery.Server.Version))
+	return c.ErrorHelper.NotImplemented("%s needs the server capability %q, which %s %s does not offer",
+		what, capability, c.discovery.Server.Name, c.discovery.Server.Version)
 }

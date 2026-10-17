@@ -377,8 +377,3 @@ func (c *Client) renewToken(ctx context.Context, stale string) error {
 	}
 	return nil
 }
-
-// BaseURL is the protocol base path this client talks to.
-func (c *Client) BaseURL() *url.URL {
-	return c.base
-}

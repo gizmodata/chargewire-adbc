@@ -213,3 +213,21 @@ func TestRecallNeedsASentReplayableRequest(t *testing.T) {
 		t.Fatalf("Recall: %+v, %v", ref, err)
 	}
 }
+
+// A session the driver closed is never replaced, even when a request still
+// uses it.
+func TestClosedSessionIsNotReplaced(t *testing.T) {
+	f := newFake(t).withSessions()
+	f.mux.HandleFunc("DELETE /warp/v1/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	session := openTestSession(t, f, true)
+	if err := session.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.evict()
+	err := submitUpdate(t, session)
+	if !errors.Is(err, errSessionClosed) || len(f.created) != 1 {
+		t.Fatalf("error %v, %d sessions created", err, len(f.created))
+	}
+}
