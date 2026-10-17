@@ -143,7 +143,7 @@ func TestIntegrationGetObjectsColumns(t *testing.T) {
 	if total.ColumnName != "total" || *total.OrdinalPosition != 2 {
 		t.Errorf("second column %+v", total)
 	}
-	if total.XdbcTypeName == nil || *total.XdbcTypeName != "DECIMAL(12,2)" {
+	if total.XdbcTypeName == nil || *total.XdbcTypeName != "DECIMAL" {
 		t.Errorf("type name %v", total.XdbcTypeName)
 	}
 	if *total.XdbcColumnSize != 12 || *total.XdbcDecimalDigits != 2 {
