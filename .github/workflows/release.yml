@@ -231,7 +231,8 @@ jobs:
       - name: Package the library
         shell: bash
         run: |
-          PKG="libadbc_driver_warpsql-${GITHUB_REF_NAME}-${{ matrix.platform }}"
+          ref="${GITHUB_REF_NAME//\//-}"  # a branch name may hold slashes
+          PKG="libadbc_driver_warpsql-${ref}-${{ matrix.platform }}"
           mkdir -p "dist/$PKG"
           cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} packaging/warpsql.toml.in LICENSE "dist/$PKG/"
           tar -C dist -czf "dist/$PKG.tar.gz" "$PKG"
@@ -240,6 +241,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.platform }}
+          if-no-files-found: error
           path: |
             dist/*.tar.gz
             dist/*.whl
@@ -266,6 +268,10 @@ jobs:
             found { print }
           ' CHANGELOG.md > release-notes.md
           [ -s release-notes.md ] || { echo "::error::no CHANGELOG.md section for $version"; exit 1; }
+      - name: Six library tarballs and five wheels
+        run: |
+          test "$(find dist -name 'libadbc_driver_warpsql-*.tar.gz' | wc -l)" -eq 6
+          test "$(find dist -name '*.whl' | wc -l)" -eq 5
       - uses: softprops/action-gh-release@v3
         with:
           body_path: release-notes.md
