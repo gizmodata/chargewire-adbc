@@ -16,12 +16,13 @@ nothing is collected. The Go live tests run with the race detector (`make integr
 and on a checked Arrow allocator: a test that leaks Arrow memory fails.
 
 Any Warp SQL server with warp-duckdb's flags works. For Hardcharger, name its password
-variable, client-CA flag and vendor name:
+variable, client-CA flag, user-name flag and vendor name:
 
 ```bash
 export WARP_SQL_ADBC_TEST_SERVER_BINARY=/path/to/hardcharger
-export WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV=HARDCHARGER_PASSWORD
+export WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV=HARDCHARGER_ADMIN_PASSWORD
 export WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG=--mtls-ca-cert
+export WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG=--admin-username
 export WARP_SQL_ADBC_TEST_SERVER_NAME=Hardcharger
 make -C go integration-test && pytest python/tests
 ```

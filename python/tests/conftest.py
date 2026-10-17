@@ -5,7 +5,9 @@ Integration tests (marked ``integration``) run against a live server started fro
 ``--port``, ``--username``, ``--tls-cert``/``--tls-key``, password in ``WARP_DUCKDB_PASSWORD``)
 on a free port. Without it they fail; they never skip. Unit tests need no server. For another
 server, name its password variable in ``WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV`` (Hardcharger:
-``HARDCHARGER_PASSWORD``), and its name (for GetInfo) in ``WARP_SQL_ADBC_TEST_SERVER_NAME``.
+``HARDCHARGER_ADMIN_PASSWORD``), its user-name flag in
+``WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG`` (Hardcharger: ``--admin-username``), and its name
+(for GetInfo) in ``WARP_SQL_ADBC_TEST_SERVER_NAME``.
 """
 
 from __future__ import annotations
@@ -125,7 +127,7 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
                 "127.0.0.1",
                 "--port",
                 str(port),
-                "--username",
+                os.environ.get("WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG") or "--username",
                 USERNAME,
                 *extra_args,
             ],

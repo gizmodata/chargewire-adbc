@@ -8,9 +8,10 @@
 // a free port. Without it they fail; they never skip, and a run in which no
 // integration test ran fails too. For another server, name its password
 // variable in WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV and its client-CA flag in
-// WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG, and its name in
-// WARP_SQL_ADBC_TEST_SERVER_NAME (Hardcharger: HARDCHARGER_PASSWORD,
-// --mtls-ca-cert, Hardcharger).
+// WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG, its user-name flag in
+// WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG, and its name in
+// WARP_SQL_ADBC_TEST_SERVER_NAME (Hardcharger: HARDCHARGER_ADMIN_PASSWORD,
+// --mtls-ca-cert, --admin-username, Hardcharger).
 //
 //	WARP_SQL_ADBC_TEST_SERVER_BINARY=/path/to/warp-duckdb go test -tags integration ./...
 
@@ -42,6 +43,7 @@ const (
 	serverBinaryEnv      = "WARP_SQL_ADBC_TEST_SERVER_BINARY"
 	serverPasswordEnvEnv = "WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV"
 	serverMTLSFlagEnv    = "WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG"
+	serverUserFlagEnv    = "WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG"
 	testUsername         = "warp_test"
 )
 
@@ -132,7 +134,7 @@ func launchServer(binary string, extraArgs []string) (*testServer, error) {
 		scheme:   "http",
 		log:      &syncBuffer{},
 	}
-	args := []string{"--host", "127.0.0.1", "--port", fmt.Sprint(port), "--username", testUsername}
+	args := []string{"--host", "127.0.0.1", "--port", fmt.Sprint(port), envOr(serverUserFlagEnv, "--username"), testUsername}
 	for _, arg := range extraArgs {
 		switch arg {
 		case "--tls-cert":
