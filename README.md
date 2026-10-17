@@ -124,8 +124,9 @@ Statement options; set on the database or connection they are defaults for its s
 | `adbc.warp.statement.timeout_seconds` | none | The server cancels the statement after this long |
 | `adbc.warp.statement.query_tag` | | JSON object recorded with every statement |
 | `adbc.warp.ipc_compression` | `none` | `zstd`: Arrow buffer compression for results and uploads |
-| `adbc.warp.statement.result_partitions` | `1` | Let the server split a large result into up to this many partitions, read at once over separate connections |
+| `adbc.warp.statement.result_partitions` | `8` | Let the server split a large result into up to this many partitions, read at once over separate connections (`1`: one stream) |
 | `adbc.warp.statement.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
+| `adbc.warp.ingest.parts` | `8` | Send a bulk ingest of two batches or more over up to this many connections at once, committed as one (`1`: one ordered stream) |
 
 Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connection),
 `adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
@@ -137,7 +138,7 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
   DML) answer with their document, so `ExecuteQuery` returns an empty schema and the rows
   affected. With `async`, the driver submits, long-polls the status, and reads the result
   with `from_batch` resumption: use it for long queries behind proxies with idle timeouts.
-- **Split results** (`result_partitions` above 1, on a server with the
+- **Split results** (by default; `result_partitions` above 1, on a server with the
   `result_partitions` capability, spec §6.10): the server may split a large result into
   partitions, and the driver downloads every partition at once, each over its own
   connection, into one RecordBatchReader. One TCP connection carries what one network flow
@@ -145,7 +146,18 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
   batches come back in the server's order (round robin over the partitions), so `ORDER BY`
   holds; with `any`, as they arrive. Every partition must end with its end-of-stream
   marker: if one fails or is cut off (and can't be resumed), the whole result fails with
-  the statement's error. `ExecutePartitions` returns the server's partitions.
+  the statement's error. `ExecutePartitions` returns the server's partitions. The server
+  decides how many: a result of fewer than two batches comes as one stream, and a server
+  without the capability is never asked, so small queries cost nothing extra.
+- **Partitioned ingest** (by default; `adbc.warp.ingest.parts` above 1, on a server with
+  the `partitioned_ingest` capability, spec §8.3): an upload of two batches or more is
+  opened once, sent as that many parts at once, each over its own connection and taking
+  the next batch from the bound stream, then committed as one. It is all or nothing: if a
+  part fails (the bound reader breaks, the server refuses a batch, a connection drops), the
+  driver aborts the ingest and nothing is written. The rows land in no defined order; set
+  `adbc.warp.ingest.parts=1` to keep the upload's order. A one-batch upload, or a server
+  without the capability, gets one stream (§8.1). Each part keeps up to 4 MiB in memory so a
+  part whose answer was lost can be sent again with its `Idempotency-Key`.
 - **Broken downloads** of a retained result resume from the next batch (up to five times).
   An unretained result cannot be resumed; the error says so and names the options that
   make it resumable. A stream that ends without its end-of-stream marker is never taken

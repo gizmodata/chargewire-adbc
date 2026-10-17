@@ -56,7 +56,7 @@ func fromBatchRequests(proxy *faultProxy) []*http.Request {
 // A retained result whose streamed download breaks off resumes from the next
 // batch (§6.5), and nothing is lost or repeated.
 func TestIntegrationResumeStreamedRetainedResult(t *testing.T) {
-	proxy, cnxn := viaProxy(t, map[string]string{OptionRetainResult: "true"})
+	proxy, cnxn := viaProxy(t, map[string]string{OptionRetainResult: "true", OptionResultPartitions: "1"})
 	proxy.add(&faultRule{match: isPost("/statements"), cutAfter: 5_000_000, times: 1})
 	checkBig(t, queryTable(t, cnxn, bigQuery))
 	if len(fromBatchRequests(proxy)) == 0 {
@@ -65,11 +65,39 @@ func TestIntegrationResumeStreamedRetainedResult(t *testing.T) {
 }
 
 func TestIntegrationResumeAsyncResult(t *testing.T) {
-	proxy, cnxn := viaProxy(t, map[string]string{OptionAsync: "true"})
+	proxy, cnxn := viaProxy(t, map[string]string{OptionAsync: "true", OptionResultPartitions: "1"})
 	proxy.add(&faultRule{match: isResultFetch, cutAfter: 5_000_000, times: 2})
 	checkBig(t, queryTable(t, cnxn, bigQuery))
 	if got := len(fromBatchRequests(proxy)); got != 2 {
 		t.Fatalf("%d resumed downloads, want 2", got)
+	}
+}
+
+// Split results (the default): a retained partition whose download breaks
+// off resumes from its next batch, and the result comes back whole, in order.
+func TestIntegrationResumeSplitResult(t *testing.T) {
+	for name, options := range map[string]map[string]string{
+		"streamed": {OptionRetainResult: "true"},
+		"async":    {OptionAsync: "true"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			proxy, cnxn := viaProxy(t, options)
+			// Several batches per partition, so a cut after the first is resumed
+			// from a later one.
+			proxy.add(&faultRule{match: isResultFetch, cutAfter: 6_000_000, times: 2})
+			values := int64s(t, queryTable(t, cnxn, "SELECT i FROM range(20000000) t(i)"), 0)
+			if len(values) != 20_000_000 {
+				t.Fatalf("got %d rows", len(values))
+			}
+			for i, v := range values {
+				if v != int64(i) {
+					t.Fatalf("row %d = %d: rows lost, repeated or reordered", i, v)
+				}
+			}
+			if got := len(fromBatchRequests(proxy)); got != 2 {
+				t.Fatalf("%d resumed downloads, want 2", got)
+			}
+		})
 	}
 }
 
@@ -328,7 +356,7 @@ func executePartitions(t *testing.T, stmt *statementImpl, sql string) (*arrow.Sc
 // Partitions can be read on another connection of the same principal, more
 // than once while the result is retained.
 func TestIntegrationPartitions(t *testing.T) {
-	db := openDB(t, shared, nil)
+	db := openDB(t, shared, map[string]string{OptionResultPartitions: "1"})
 	first, second := connect(t, db), connect(t, db)
 	schema, partitions, rows, err := executePartitions(t, newStmt(t, first), bigQuery)
 	if err != nil {

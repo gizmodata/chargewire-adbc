@@ -282,6 +282,63 @@ class TestBulkIngest:
             cur.execute(operation="SELECT * FROM test_ingest_types")
             assert cur.fetch_arrow_table().to_pylist() == table.to_pylist()
 
+    @staticmethod
+    def _many_batches(rows: int, batch_rows: int) -> pa.Table:
+        ids = pa.array(range(rows), type=pa.int64())
+        table = pa.table(
+            {
+                "id": ids,
+                "s": pa.array([None if i % 7 == 0 else f"row {i}" for i in range(rows)]),
+                "d": pa.array([None if i % 11 == 0 else i / 4 for i in range(rows)]),
+            }
+        )
+        return pa.Table.from_batches(batches=table.to_batches(max_chunksize=batch_rows))
+
+    def test_ingest_in_parts_by_default(self, conn):
+        # Two batches or more go as a partitioned ingest (spec §8.3): every row once,
+        # unaltered, whatever order they land in.
+        table = self._many_batches(rows=400_000, batch_rows=10_000)
+        with conn.cursor() as cur:
+            cur.execute(operation="DROP TABLE IF EXISTS test_ingest_parts")
+            assert (
+                cur.adbc_ingest(table_name="test_ingest_parts", data=table, mode="create")
+                == 400_000
+            )
+            cur.execute(operation="SELECT id, s, d FROM test_ingest_parts ORDER BY id")
+            assert cur.fetch_arrow_table().equals(table.combine_chunks())
+
+    def test_ingest_one_part_keeps_the_order(self, warp_server):
+        table = self._many_batches(rows=100_000, batch_rows=5_000)
+        with connect(
+            server=warp_server, db_kwargs={StatementOptions.INGEST_PARTS.value: "1"}
+        ) as one:
+            with one.cursor() as cur:
+                cur.execute(operation="DROP TABLE IF EXISTS test_ingest_one_part")
+                cur.adbc_ingest(table_name="test_ingest_one_part", data=table, mode="create")
+                cur.execute(operation="SELECT id, s, d FROM test_ingest_one_part")
+                assert cur.fetch_arrow_table().equals(table.combine_chunks())
+
+    def test_ingest_in_parts_failure_leaves_nothing(self, conn):
+        good = self._many_batches(rows=100_000, batch_rows=5_000)
+
+        def broken():
+            yield from good.to_batches()
+            raise RuntimeError("the application's reader broke")
+
+        with conn.cursor() as cur:
+            cur.execute(operation="DROP TABLE IF EXISTS test_ingest_parts_broken")
+            with pytest.raises(Exception, match="reader broke"):
+                cur.adbc_ingest(
+                    table_name="test_ingest_parts_broken",
+                    data=pa.RecordBatchReader.from_batches(schema=good.schema, batches=broken()),
+                    mode="create",
+                )
+            cur.execute(
+                operation="SELECT count(*) FROM duckdb_tables() "
+                "WHERE table_name = 'test_ingest_parts_broken'"
+            )
+            assert cur.fetchone() == (0,)
+
     def test_ingest_create_existing_table_fails(self, conn):
         with conn.cursor() as cur:
             cur.execute(operation="CREATE OR REPLACE TABLE test_ingest_exists (a BIGINT)")
@@ -672,6 +729,32 @@ class TestTransactions:
                 assert cur.fetchall() == [(2,)]
 
 
+    def test_a_partitioned_ingest_belongs_to_the_open_transaction(self, warp_server):
+        # In a transaction, a partitioned ingest's rows commit and roll back with it.
+        table = pa.Table.from_batches(
+            batches=pa.table({"v": pa.array(range(200_000), type=pa.int64())}).to_batches(
+                max_chunksize=10_000
+            )
+        )
+        with connect(server=warp_server) as setup:
+            with setup.cursor() as cur:
+                cur.execute(operation="CREATE OR REPLACE TABLE test_tx_parts (v BIGINT)")
+        with connect(server=warp_server, autocommit=False) as conn:
+            with conn.cursor() as cur:
+                cur.adbc_ingest(table_name="test_tx_parts", data=table, mode="append")
+                cur.execute(operation="SELECT count(*) FROM test_tx_parts")
+                assert cur.fetchone() == (200_000,)
+                conn.rollback()
+                cur.execute(operation="SELECT count(*) FROM test_tx_parts")
+                assert cur.fetchone() == (0,)
+                cur.adbc_ingest(table_name="test_tx_parts", data=table, mode="append")
+                conn.commit()
+        with connect(server=warp_server) as other:
+            with other.cursor() as cur:
+                cur.execute(operation="SELECT count(*), sum(v) FROM test_tx_parts")
+                assert cur.fetchone() == (200_000, 199_999 * 200_000 // 2)
+
+
 class TestPartitionsAndOptions:
     def test_partitions_read_on_another_connection(self, warp_server):
         with connect(server=warp_server) as first, connect(server=warp_server) as second:
@@ -696,7 +779,9 @@ class TestPartitionsAndOptions:
             "SELECT i, CASE WHEN i % 7 = 0 THEN NULL ELSE 'row ' || i END AS s, "
             "(i % 1000)::DECIMAL(18, 3) AS d FROM range(1000000) t(i) ORDER BY i DESC"
         )
-        with connect(server=warp_server) as plain:
+        with connect(
+            server=warp_server, db_kwargs={StatementOptions.RESULT_PARTITIONS.value: "1"}
+        ) as plain:
             with plain.cursor() as cur:
                 cur.execute(operation=sql)
                 whole = cur.fetch_arrow_table()

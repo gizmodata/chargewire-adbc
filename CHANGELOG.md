@@ -10,6 +10,22 @@ All notable changes to this project are documented here. The format follows
 
 - `warpsql.NewDriverWithName(alloc, displayName)`: the driver under another GetInfo driver
   name, for drivers built on this one (hardcharger-adbc).
+- Partitioned ingest (Warp SQL spec §8.3): `adbc.warp.ingest.parts` (default 8). On a
+  server with the `partitioned_ingest` capability, an ingest of two batches or more is
+  opened once, sent as up to that many parts at once over separate connections, and
+  committed as one; any failed part aborts it, so nothing is written. `1`, a one-batch
+  upload, or a server without the capability sends one ordered stream as before. Python:
+  `StatementOptions.INGEST_PARTS`.
+
+### Changed
+
+- `adbc.warp.statement.result_partitions` defaults to 8 (was 1): large results are split
+  and read over several connections at once. The server decides: a result of fewer than
+  two batches still comes as one stream, and a server without `result_partitions` never
+  sees the request. Set it to 1 for one stream.
+
+### Added (earlier)
+
 - Split results (Warp SQL spec §6.10): `adbc.warp.statement.result_partitions` (most
   partitions, default 1) and `adbc.warp.statement.result_order` (`preserve` or `any`).
   The driver reads every partition of a split result at once, one connection each, and

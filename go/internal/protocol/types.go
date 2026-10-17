@@ -31,6 +31,7 @@ const (
 	CapabilityIPCCompressionZstd = "ipc_compression_zstd"
 	CapabilityPartitionedResults = "partitioned_results"
 	CapabilityResultPartitions   = "result_partitions"
+	CapabilityPartitionedIngest  = "partitioned_ingest"
 )
 
 // How a result split into partitions spreads its batches over them (§6.10).

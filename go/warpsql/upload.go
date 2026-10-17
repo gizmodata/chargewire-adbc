@@ -55,7 +55,12 @@ func (w *spillWriter) Write(p []byte) (int, error) {
 // compression when asked (§8.2). It returns once the body is complete in
 // memory, or once it outgrows the limit and must stream.
 func encodeUpload(rows array.RecordReader, alloc memory.Allocator, zstd bool) (*upload, error) {
-	w := &spillWriter{limit: uploadReplayLimit, spilled: make(chan *io.PipeReader, 1)}
+	return encodeUploadWithLimit(rows, alloc, zstd, uploadReplayLimit)
+}
+
+// encodeUploadWithLimit is encodeUpload keeping at most limit bytes in memory.
+func encodeUploadWithLimit(rows array.RecordReader, alloc memory.Allocator, zstd bool, limit int) (*upload, error) {
+	w := &spillWriter{limit: limit, spilled: make(chan *io.PipeReader, 1)}
 	encoded := make(chan error, 1)
 	go func() {
 		err := writeIPC(w, rows, alloc, zstd)

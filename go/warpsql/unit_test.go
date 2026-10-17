@@ -67,6 +67,7 @@ func TestExecOptions(t *testing.T) {
 	}
 	for key, value := range map[string]string{
 		OptionAsync: "yes", OptionStatementTimeout: "-1", OptionQueryTag: "[1]", OptionIPCCompression: "gzip",
+		OptionIngestParts: "0", OptionResultPartitions: "257",
 	} {
 		_, err := o.set(key, value)
 		if adbcErr, ok := errors.AsType[adbc.Error](err); !ok || adbcErr.Code != adbc.StatusInvalidArgument {
@@ -295,6 +296,18 @@ func TestDatabaseOptions(t *testing.T) {
 	}
 	if got, _ := options.GetOption(context.Background(), OptionStatementTimeout); got != "2" {
 		t.Errorf("default statement timeout %q", got)
+	}
+	// Results are split and ingests sent in parts by default (8 each).
+	for _, key := range []string{OptionResultPartitions, OptionIngestParts} {
+		if got, _ := options.GetOption(context.Background(), key); got != "8" {
+			t.Errorf("default %s %q", key, got)
+		}
+	}
+	if err := options.SetOption(context.Background(), OptionIngestParts, "1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := options.GetOption(context.Background(), OptionIngestParts); got != "1" {
+		t.Errorf("%s reads back as %q", OptionIngestParts, got)
 	}
 	for options, wantStatus := range map[string]map[string]string{
 		"bad uri":        {adbc.OptionKeyURI: "grpc://h"},

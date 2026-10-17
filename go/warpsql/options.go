@@ -80,15 +80,30 @@ const (
 	// compression for results and uploads, used when the server offers it.
 	OptionIPCCompression = "adbc.warp.ipc_compression"
 	// OptionResultPartitions is the most partitions a query's result may be
-	// split into (default 1: never). With more, a server that offers it
-	// splits a large result, and the driver reads the partitions at once,
-	// each over its own connection (§6.10): one TCP connection carries what
-	// one network flow allows, and decoding spreads over several cores.
+	// split into (default 8; 1: never). A server that offers it splits a
+	// large result, and the driver reads the partitions at once, each over
+	// its own connection (§6.10): one TCP connection carries what one network
+	// flow allows, and decoding spreads over several cores. The server
+	// decides: a result of fewer than two batches comes as one stream, and a
+	// server without the capability is never asked.
 	OptionResultPartitions = "adbc.warp.statement.result_partitions"
 	// OptionResultOrder is "preserve" (default) or "any". With "preserve" a
 	// split result comes back in the server's order (round robin over the
 	// partitions); with "any" batches come in whichever order they arrive.
 	OptionResultOrder = "adbc.warp.statement.result_order"
+	// OptionIngestParts is the most connections one bulk ingest is sent over
+	// at once (default 8; 1: one stream). On a server that offers it, an
+	// upload of two batches or more is a partitioned ingest (§8.3): its
+	// batches are spread over the parts, which are committed as one, all or
+	// nothing. The rows then land in no defined order; set 1 to keep the
+	// upload's order.
+	OptionIngestParts = "adbc.warp.ingest.parts"
+)
+
+// Defaults of the options above.
+const (
+	defaultResultPartitions = 8
+	defaultIngestParts      = 8
 )
 
 // Statement options, read-only.
@@ -99,6 +114,9 @@ const (
 
 // maxResultPartitions is the most partitions a client may ask for (§6.10).
 const maxResultPartitions = 256
+
+// maxIngestParts is the most parts one ingest may have (§8.3).
+const maxIngestParts = 256
 
 // optionBindByName is the standard ADBC option the Python DB-API sets for
 // parameters given as a dict. Arrow parameters carry their names, so it
@@ -115,6 +133,12 @@ type execOptions struct {
 	compression string
 	partitions  int  // 0 or 1: one partition
 	anyOrder    bool // the rows' order doesn't matter
+	ingestParts int  // 0 or 1: one stream
+}
+
+// defaultExecOptions are the statement options' defaults.
+func defaultExecOptions() execOptions {
+	return execOptions{partitions: defaultResultPartitions, ingestParts: defaultIngestParts}
 }
 
 // set applies one statement option; it reports false for keys it does not
@@ -156,6 +180,12 @@ func (o *execOptions) set(key, value string) (bool, error) {
 			return true, invalidOption(key, value, fmt.Sprintf("a whole number from 1 to %d", maxResultPartitions))
 		}
 		o.partitions = n
+	case OptionIngestParts:
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > maxIngestParts {
+			return true, invalidOption(key, value, fmt.Sprintf("a whole number from 1 to %d", maxIngestParts))
+		}
+		o.ingestParts = n
 	case OptionResultOrder:
 		switch strings.ToLower(value) {
 		case "", "preserve":
@@ -196,6 +226,8 @@ func (o *execOptions) get(key string) (string, bool) {
 		return o.queryTag, true
 	case OptionResultPartitions:
 		return strconv.Itoa(max(o.partitions, 1)), true
+	case OptionIngestParts:
+		return strconv.Itoa(max(o.ingestParts, 1)), true
 	case OptionResultOrder:
 		if o.anyOrder {
 			return "any", true

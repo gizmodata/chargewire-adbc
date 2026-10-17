@@ -46,6 +46,10 @@ const (
 	CodeExecutionError       = "execution_error"
 	CodeServerDraining       = "server_draining"
 	CodeNotImplemented       = "not_implemented"
+	CodeIngestNotFound       = "ingest_not_found"
+	CodeIngestIncomplete     = "ingest_incomplete"
+	CodeIngestPartExists     = "ingest_part_exists"
+	CodeIngestExpired        = "ingest_expired"
 )
 
 // Reasons a session_ended error carries (§5.6).

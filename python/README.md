@@ -44,6 +44,12 @@ with dbapi.connect(
 Driver options are in `adbc_driver_warpsql.DatabaseOptions`, `ConnectionOptions` and
 `StatementOptions`; the repository README lists them all.
 
+By default, on a server that offers it, a large result is read over up to 8 connections at
+once (`StatementOptions.RESULT_PARTITIONS`), and an `adbc_ingest` of two batches or more is
+sent as up to 8 parts at once and committed as one, all or nothing
+(`StatementOptions.INGEST_PARTS`). Set either to `"1"` for one stream; a partitioned ingest's
+rows land in no defined order.
+
 Errors are `adbc_driver_manager` exceptions whose `details` carry the server's error code
 (`b"warp.code"`, e.g. `b"sql_error"`) and request id (`b"warp.request_id"`).
 

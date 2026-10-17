@@ -55,7 +55,8 @@ func newDatabase(ctx context.Context, driver *driverbase.DriverImplBase, opts ma
 	}
 	// Each database learns its own server's vendor name and version.
 	base.DriverInfo = cloneDriverInfo(driver.DriverInfo)
-	db := &databaseImpl{DatabaseImplBase: base, maxAttempts: defaultMaxAttempts, reconnect: true}
+	db := &databaseImpl{DatabaseImplBase: base, maxAttempts: defaultMaxAttempts, reconnect: true,
+		defaults: defaultExecOptions()}
 	for key, value := range opts {
 		if err := db.SetOption(ctx, key, value); err != nil {
 			return nil, err

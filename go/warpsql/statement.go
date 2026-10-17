@@ -752,14 +752,34 @@ func (st *statementImpl) executeIngest(ctx context.Context) (int64, error) {
 		return -1, err
 	}
 	defer rows.Release()
-	up, err := encodeUpload(rows, st.alloc, st.zstd())
+	ir := protocol.IngestRequest{
+		Table: st.ingest.table, Catalog: st.ingest.catalog, Schema: st.ingest.schema,
+		Mode: st.ingest.mode, Temporary: st.ingest.temporary,
+	}
+	// An upload of two batches or more goes in parts on a server that takes
+	// them (§8.3); otherwise, or with ingest parts = 1, as one stream (§8.1).
+	ahead := &lookahead{source: rows}
+	if st.opts.ingestParts > 1 && st.cnxn.discovery.Has(protocol.CapabilityPartitionedIngest) {
+		if ahead, err = readAhead(rows, 2); err != nil {
+			for _, batch := range ahead.ahead {
+				batch.Release()
+			}
+			return -1, wrapError(err, "reading the rows to ingest")
+		}
+	}
+	shared := &sharedBatches{schema: rows.Schema(), l: ahead}
+	defer shared.release()
+	if len(ahead.ahead) >= 2 {
+		return st.ingestInParts(ctx, ir, shared, st.opts.ingestParts)
+	}
+	single := newPartReader(shared)
+	defer single.Release()
+	up, err := encodeUpload(single, st.alloc, st.zstd())
 	if err != nil {
 		return -1, wrapError(err, "encoding the rows to ingest")
 	}
-	n, err := st.session().Ingest(ctx, protocol.IngestRequest{
-		Table: st.ingest.table, Catalog: st.ingest.catalog, Schema: st.ingest.schema,
-		Mode: st.ingest.mode, Temporary: st.ingest.temporary, Body: up.body,
-	})
+	ir.Body = up.body
+	n, err := st.session().Ingest(ctx, ir)
 	if err := up.finish(err); err != nil {
 		return -1, wrapError(err, "bulk ingest into "+st.ingest.table)
 	}
