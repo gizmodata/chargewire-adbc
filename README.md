@@ -214,8 +214,10 @@ ported from gizmosql-adbc.
 
 Pushing a `vX.Y.Z` tag runs [release.yml](.github/workflows/release.yml): every suite on the
 tagged commit (ci.yml, plus the Go and Python live suites against `hardcharger-server` from
-Hardcharger's GitHub Releases), then the library and a wheel for six platforms. The Linux
-wheels are `manylinux_2_17` (the library is built with `zig cc` against glibc 2.17, checked
+Hardcharger's GitHub Releases), then the library for six platforms and a wheel for five (Linux amd64/arm64, macOS
+arm64/amd64, Windows amd64; Windows arm64 gets the library only, since pyarrow and
+adbc-driver-manager publish no wheels for it). The Linux
+wheels are `manylinux` (glibc 2.17 or older) (the library is built with `zig cc` against glibc 2.17, checked
 with `scripts/check_glibc.sh`, and installed and loaded on Oracle Linux 8). Then a GitHub
 Release with the tag's CHANGELOG section, and PyPI from the `pypi` environment (trusted
 publishing, after an approval). Before tagging: set the version in `python/pyproject.toml`

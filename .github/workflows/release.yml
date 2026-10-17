@@ -1,8 +1,8 @@
 name: warp-sql-adbc-release
 
 # On a vX.Y.Z tag: every test suite on the tagged commit (ci.yml's unit tests and library
-# builds, plus the live-server suites below), then the shared library and a platform wheel for
-# each of six platforms, a GitHub Release, and PyPI. PyPI's trusted publisher for
+# builds, plus the live-server suites below), then the shared library for six platforms and a
+# wheel for five of them (not Windows arm64), a GitHub Release, and PyPI. PyPI's trusted publisher for
 # adbc-driver-warpsql names this repository, this file (release.yml) and the `pypi`
 # environment, which requires an approval and accepts only v* tags.
 #
@@ -112,9 +112,12 @@ jobs:
           - os: windows-latest
             platform: windows_amd64
             ext: dll
+          # The library only: pyarrow and adbc-driver-manager publish no Windows arm64
+          # wheels, so pip can't install a wheel of this package there.
           - os: windows-11-arm
             platform: windows_arm64
             ext: dll
+            library-only: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -162,10 +165,12 @@ jobs:
         run: scripts/check_glibc.sh go/build/libadbc_driver_warpsql.so
 
       - uses: actions/setup-python@v7
+        if: ${{ !matrix.library-only }}
         with:
           python-version: "3.13"
 
       - name: Build the platform wheel
+        if: ${{ !matrix.library-only }}
         shell: bash
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -189,12 +194,19 @@ jobs:
           # The library inside the wheel, as shipped, keeps the ceiling too.
           mkdir -p "$RUNNER_TEMP/wheel" && unzip -q -o python/dist/*.whl -d "$RUNNER_TEMP/wheel"
           scripts/check_glibc.sh "$RUNNER_TEMP/wheel/adbc_driver_warpsql/libadbc_driver_warpsql.so"
-          case "$(ls python/dist/)" in *manylinux_2_17*) ;; *) echo "::error::not a manylinux_2_17 wheel"; exit 1 ;; esac
+          # Its platform tag promises glibc 2.28 or older (auditwheel picks the oldest that fits).
+          python3 - python/dist/*.whl <<'EOF'
+          import re, sys
+          tags = [(int(a), int(b)) for a, b in re.findall(r"manylinux_(\d+)_(\d+)", sys.argv[1])]
+          if not tags or min(tags) > (2, 28):
+              sys.exit(f"::error::{sys.argv[1]} is not installable on glibc 2.28")
+          print("glibc floor of the wheel:", "%d.%d" % min(tags))
+          EOF
 
       # The installed wheel (its own library, not the build tree's) through the C API, from
       # outside the source tree. Not on the macOS amd64 cross build, which this runner can't load.
       - name: Test the installed wheel
-        if: matrix.goarch == ''
+        if: ${{ matrix.goarch == '' && !matrix.library-only }}
         shell: bash
         run: |
           python -m venv "$RUNNER_TEMP/venv"
@@ -223,7 +235,7 @@ jobs:
           mkdir -p "dist/$PKG"
           cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} packaging/warpsql.toml.in LICENSE "dist/$PKG/"
           tar -C dist -czf "dist/$PKG.tar.gz" "$PKG"
-          cp python/dist/*.whl dist/
+          if [ "${{ matrix.library-only }}" != true ]; then cp python/dist/*.whl dist/; fi
 
       - uses: actions/upload-artifact@v7
         with:
@@ -276,12 +288,12 @@ jobs:
           pattern: dist-*
           path: artifacts
           merge-multiple: true
-      - name: Collect the six wheels
+      - name: Collect the five wheels
         run: |
           mkdir -p dist
           cp artifacts/*.whl dist/
           ls -la dist/
-          test "$(find dist -name '*.whl' | wc -l)" -eq 6
+          test "$(find dist -name '*.whl' | wc -l)" -eq 5
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/

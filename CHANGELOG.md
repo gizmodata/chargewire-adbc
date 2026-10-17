@@ -78,6 +78,6 @@ All notable changes to this project are documented here. The format follows
 
 - `.github/workflows/release.yml`: on a `vX.Y.Z` tag, every suite on the tagged commit (ci.yml,
   and the Go and Python live-server suites against `hardcharger-server` from Hardcharger's
-  releases), then the library and a wheel for Linux amd64/arm64 (manylinux_2_17, glibc
-  checked, installed and loaded on Oracle Linux 8), macOS arm64/amd64 and Windows amd64/arm64,
-  a GitHub Release, and PyPI through the `pypi` environment (trusted publishing, approval).
+  releases), then the library and a wheel for Linux amd64/arm64 (manylinux, glibc
+  checked, installed and loaded on Oracle Linux 8), macOS arm64/amd64 and Windows amd64 (Windows
+  arm64: the library only; its dependencies have no wheels there), a GitHub Release, and PyPI through the `pypi` environment (trusted publishing, approval).
