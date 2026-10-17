@@ -214,7 +214,7 @@ ported from gizmosql-adbc.
 
 Pushing a `vX.Y.Z` tag runs [release.yml](.github/workflows/release.yml): every suite on the
 tagged commit (ci.yml, plus the Go and Python live suites against `hardcharger-server` from
-Hardcharger's GitHub Releases), then the library for six platforms and a wheel for five (Linux amd64/arm64, macOS
+its container image), then the library for six platforms and a wheel for five (Linux amd64/arm64, macOS
 arm64/amd64, Windows amd64; Windows arm64 gets the library only, since pyarrow and
 adbc-driver-manager publish no wheels for it). The Linux
 wheels are `manylinux` (glibc 2.17 or older) (the library is built with `zig cc` against glibc 2.17, checked
@@ -222,8 +222,10 @@ with `scripts/check_glibc.sh`, and installed and loaded on Oracle Linux 8). Then
 Release with the tag's CHANGELOG section, and PyPI from the `pypi` environment (trusted
 publishing, after an approval). Before tagging: set the version in `python/pyproject.toml`
 and `python/src/adbc_driver_warpsql/_version.py`, move `[Unreleased]` into a dated section,
-and make sure the workflow's `HARDCHARGER_SERVER_VERSION` is a release whose server splits
-results. The live suites read Hardcharger's releases with the `GIZMODATA_READ_TOKEN` secret.
+and make sure the workflow's `HARDCHARGER_IMAGE` is a build whose server splits
+results. The live suites pull `hardcharger-server` from the private image
+`ghcr.io/gizmodata/hardcharger` with the workflow's `GITHUB_TOKEN` (the package grants this
+repository read access).
 
 ## 📦 Dependencies
 

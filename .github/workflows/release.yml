@@ -8,11 +8,11 @@ name: warp-sql-adbc-release
 #
 # workflow_dispatch runs the tests and the builds only: the release and publish jobs need a tag.
 #
-# The live suites run against hardcharger-server from gizmodata/hardcharger's GitHub Releases,
-# read with the GIZMODATA_READ_TOKEN secret (a fine-grained token, resource owner gizmodata,
-# Contents: read-only on gizmodata/hardcharger); this repository's GITHUB_TOKEN can't read
-# another repository. HARDCHARGER_SERVER_VERSION must be a release whose server splits results
-# (--max-result-partitions; 0.2.0 does not, so the split-result tests fail against it).
+# The live suites run against hardcharger-server from the private image
+# ghcr.io/gizmodata/hardcharger, pulled with this workflow's GITHUB_TOKEN (the package grants this
+# repository read access: package settings, Manage Actions access); no personal token.
+# HARDCHARGER_IMAGE must be a build whose server splits results (--max-result-partitions; 0.2.0
+# does not, so the split-result tests fail against it).
 
 on:
   push:
@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
-  HARDCHARGER_SERVER_VERSION: "0.2.0"
+  HARDCHARGER_IMAGE: ghcr.io/gizmodata/hardcharger:0.2.0
 
 jobs:
   tests:
@@ -41,6 +41,9 @@ jobs:
   live-tests:
     name: live-server suites (Go and Python, against hardcharger-server)
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read  # the server image
     env:
       WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV: HARDCHARGER_ADMIN_PASSWORD
       WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG: --mtls-ca-cert
@@ -49,19 +52,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Download hardcharger-server ${{ env.HARDCHARGER_SERVER_VERSION }}
+      - name: hardcharger-server from the image
         env:
-          GH_TOKEN: ${{ secrets.GIZMODATA_READ_TOKEN }}
+          TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::error::the GIZMODATA_READ_TOKEN secret is not set: a fine-grained token, resource owner gizmodata, Contents: read-only on gizmodata/hardcharger"
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          if ! docker pull -q "$HARDCHARGER_IMAGE"; then
+            echo "::error::can't pull $HARDCHARGER_IMAGE with this workflow's GITHUB_TOKEN: grant $GITHUB_REPOSITORY read access to the hardcharger package (package settings, Manage Actions access)"
             exit 1
           fi
-          gh release download "v$HARDCHARGER_SERVER_VERSION" -R gizmodata/hardcharger \
-            -p hardcharger-linux-amd64.tar.gz -D "$RUNNER_TEMP"
-          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/hardcharger-linux-amd64.tar.gz"
-          binary="$RUNNER_TEMP/hardcharger-linux-amd64/bin/hardcharger-server"
-          test "$("$binary" --version)" = "Hardcharger $HARDCHARGER_SERVER_VERSION"
+          id=$(docker create "$HARDCHARGER_IMAGE")
+          docker cp "$id:/opt/hardcharger" "$RUNNER_TEMP/hardcharger"
+          docker rm "$id" >/dev/null
+          binary="$RUNNER_TEMP/hardcharger/bin/hardcharger-server"
+          "$binary" --version
           echo "WARP_SQL_ADBC_TEST_SERVER_BINARY=$binary" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@v7
