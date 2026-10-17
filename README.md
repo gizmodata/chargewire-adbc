@@ -4,50 +4,174 @@ A native [ADBC](https://arrow.apache.org/adbc/) driver for the
 [Warp SQL protocol](https://github.com/gizmodata/warp-sql), written in Go, with Python
 bindings.
 
-It is a **generic** driver: it talks to any server that implements the Warp SQL spec,
-not one particular database. Compiled to a C shared library, one implementation
-serves every ADBC language: Python, Go, R, C/C++, C#, Rust and JavaScript.
+It is a **generic** driver: it talks to any server that implements the Warp SQL spec
+(draft 0.1.0), not one particular database. Compiled to a C shared library, one
+implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and JavaScript.
 
-> **Status: not started.** The protocol is at draft 0.1.0. The driver is written
-> against the spec once a reference server exists to test it with.
+> **Status: in development, unreleased (0.1.0.dev0).** Tested against `warp-duckdb`, the
+> reference server.
 
-## Planned layout
-
-The same shape as [`gizmosql-adbc`](https://github.com/gizmodata/gizmosql-adbc):
+## Layout
 
 ```
-go/       Go driver (ADBC Go interfaces over plain net/http) + cgo C exports
-python/   Python bindings that ship the shared library in their wheels
-docs/     Design notes and conformance results
+go/warpsql/          the ADBC driver (driverbase-go), package warpsql
+go/internal/protocol the Warp SQL wire client over net/http (no ADBC)
+go/pkg/warpsql/      cgo exports for the C shared library (generated)
+python/              adbc-driver-warpsql: ships the library in its wheel, adds dbapi.connect()
+packaging/           ADBC driver manifest template
+docs/                design notes and the test inventory
 ```
 
-## What it maps
+## Connecting
 
-| ADBC | Warp SQL |
+| URI | Meaning |
 |---|---|
-| `AdbcDatabaseInit` (URI, credentials, TLS options) | `GET /warp` discovery, `POST /warp/v1/auth/token` |
-| `AdbcConnectionInit` / `Release` | `POST` / `DELETE /warp/v1/sessions` |
-| Connection options (current catalog, schema, autocommit) | `PATCH /warp/v1/sessions/{id}` |
-| `AdbcConnectionCommit` / `Rollback` | `POST …/commit`, `POST …/rollback` |
-| `AdbcStatementExecuteQuery` | `POST …/statements`, streamed or async with resumable fetch |
-| `AdbcStatementExecuteUpdate` | Same, `kind: update` |
-| `AdbcStatementPrepare`, `Bind`, `GetParameterSchema` | `POST …/prepared`, `POST …/prepared/{id}/execute` with Arrow parameters |
-| `AdbcStatementExecutePartitions` / `AdbcConnectionReadPartition` | The statement's `partitions` |
-| Bulk ingest (`adbc.ingest.*` options) | `POST …/ingest` |
-| `AdbcStatementCancel` | `POST …/statements/{id}/cancel` |
-| `AdbcConnectionGetObjects`, `GetTableTypes`, `GetTableSchema` | `GET …/metadata/*` (Flight SQL's result schemas) |
-| `AdbcConnectionGetInfo` | `GET …/metadata/server-info` |
+| `warp://host:port` | HTTPS, base path `/warp` (the default) |
+| `warp://host:port/custom/prefix` | HTTPS, the server mounts the protocol under `/custom/prefix` |
+| `warp://host:port?tls=false` | Plain HTTP (development; loopback) |
+| `https://host:port[/prefix]` | Same as `warp://` |
+| `http://host:port[/prefix]` | Plain HTTP |
 
-The driver handles retries the protocol makes safe: it sends an `Idempotency-Key`
-with every submit and ingest, resumes a dropped result download from the last batch it
-received, and on `session_not_found` opens a new session and replays its options
-instead of hiding the loss.
+TLS is verified unless `adbc.warp.tls.skip_verify` is set explicitly. Credentials never go
+in the URI; a URI with user info is refused.
+
+### Go
+
+```go
+drv := warpsql.NewDriver(memory.DefaultAllocator)
+db, err := drv.NewDatabaseWithContext(ctx, map[string]string{
+	"uri":      "warp://db.example.com:31337",
+	"username": "joe",
+	"password": "…",
+})
+cnxn, err := db.Open(ctx)
+stmt, err := cnxn.NewStatement(ctx)
+err = stmt.SetSqlQuery(ctx, "SELECT 42 AS answer")
+reader, _, err := stmt.ExecuteQuery(ctx)
+```
+
+`warpsql.ErrorCode(err)` returns the server's error code (`sql_error`,
+`session_not_found`, …) behind any error the driver returns.
+
+### Python
+
+```python
+from adbc_driver_warpsql import dbapi
+
+with dbapi.connect(uri="warp://db.example.com:31337", username="joe", password="…") as conn:
+    with conn.cursor() as cur:
+        cur.execute(operation="SELECT * FROM sales WHERE year = ?", parameters=[2026])
+        print(cur.fetch_arrow_table())
+```
+
+See [python/README.md](python/README.md) for `connect()`'s arguments.
+
+### Any language, through a driver manifest
+
+Build the library (`make -C go lib`), fill in [packaging/warpsql.toml.in](packaging/warpsql.toml.in)
+and install it as `warpsql.toml` in an ADBC driver search path; then every driver manager
+loads it as `driver = "warpsql"`. Its entry point is `AdbcDriverWarpsqlInit`.
+
+## Options
+
+Database options (with the standard `uri`, `username`, `password` and `adbc.telemetry.*`):
+
+| Option | Default | Meaning |
+|---|---|---|
+| `adbc.warp.tls.skip_verify` | `false` | Do not verify the server's certificate |
+| `adbc.warp.tls.root_certs` | system | PEM CA certificates to trust instead of the system's |
+| `adbc.warp.tls.client_cert`, `adbc.warp.tls.client_key` | | PEM client certificate and key (mutual TLS) |
+| `adbc.warp.tls.server_name` | URI host | Host name the certificate is checked against |
+| `adbc.warp.auth.access_token` | | An access token issued elsewhere (used as is, never renewed) |
+| `adbc.warp.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
+| `adbc.warp.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
+| `adbc.warp.session.reconnect` | `true` | Replace a session the server lost (see below) |
+
+Statement options; set on the database or connection they are defaults for its statements:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `adbc.warp.statement.async` | `false` | Submit, poll, then read a retained, resumable result |
+| `adbc.warp.statement.retain_result` | server | Ask the server to keep results for re-reading and resuming |
+| `adbc.warp.statement.timeout_seconds` | none | The server cancels the statement after this long |
+| `adbc.warp.statement.query_tag` | | JSON object recorded with every statement |
+| `adbc.warp.ipc_compression` | `none` | `zstd`: Arrow buffer compression for results and uploads |
+
+Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connection),
+`adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
+`adbc.ingest.*` options; the transaction options are the standard ones.
+
+## How it behaves
+
+- **Queries** stream on the one-round-trip path by default. Statements without rows (DDL,
+  DML) answer with their document, so `ExecuteQuery` returns an empty schema and the rows
+  affected. With `async`, the driver submits, long-polls the status, and reads the result
+  with `from_batch` resumption: use it for long queries behind proxies with idle timeouts.
+- **Broken downloads** of a retained result resume from the next batch (up to five times).
+  An unretained result cannot be resumed; the error says so and names the options that
+  make it resumable. A stream that ends without its end-of-stream marker is never taken
+  for a complete result.
+- **Retries.** Every submit, prepared execute and ingest carries an `Idempotency-Key`, so
+  a request whose answer was lost is sent again without running twice. Reads, deletes and
+  idempotent writes are retried after transport errors and 429/502/503/504 (honouring
+  `Retry-After`). Commit and rollback are never retried. Uploads up to 16 MiB are kept in
+  memory so they can be retried; larger ones stream (chunked) and are sent once.
+- **Tokens** are renewed before they expire and, once, when the server refuses one.
+- **Lost sessions** (`session_not_found`, or `session_ended` because a token expired) are
+  replaced by a new session with the options the driver set, and the loss is reported,
+  not hidden: a warning is logged, `adbc.warp.session.replacements` counts it, and errors
+  from work in the replacement say it ran there. Inside a transaction nothing runs on the
+  replacement (it would commit half a transaction): the operation fails with the
+  transaction named as lost. A prepared statement is prepared again; a retained result is
+  gone. With `adbc.warp.session.reconnect=false` the connection stays broken.
+- **Cancel** (`AdbcStatementCancel`, Python's `adbc_cancel()` and Ctrl+C, releasing an
+  unread result, closing the statement, or a Go context ending) stops the statement on the
+  server. When its answer has not arrived yet, the driver learns its id by sending the same
+  request again with its `Idempotency-Key`, which does not run it twice.
+- **Prepared statements** are created on the server only when needed (to bind parameters or
+  describe them), which spares a DB-API cursor, which prepares every query, two round
+  trips per query. Bound parameters travel as Arrow, one row per execution.
+- **Cleanup.** Finished statements are deleted on the server in the background, so a
+  long-lived session does not accumulate them.
+- **GetObjects** takes one request per level (catalogs, schemas, tables with their
+  schemas). Constraints are not reported: the key endpoints answer one table at a time.
+
+## Building and testing
+
+Go 1.27, a C toolchain for cgo, and Python 3.10+ for the bindings.
+
+```bash
+make -C go lib                      # go/build/libadbc_driver_warpsql.{so,dylib,dll}
+make -C go test                     # Go unit tests (no server)
+
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e "python[test,dev]"
+pytest -m "not integration" python/tests   # Python unit tests (no server)
+```
+
+The live-server suites start the server binary named by `WARP_SQL_ADBC_TEST_SERVER_BINARY`
+(a `warp-duckdb` build from [warp-sql](https://github.com/gizmodata/warp-sql), or any
+server with its command line) on free ports, plain and with TLS:
+
+```bash
+export WARP_SQL_ADBC_TEST_SERVER_BINARY=/path/to/warp-duckdb
+make -C go integration-test         # Go, with the race detector
+pytest python/tests                 # everything, Python
+```
+
+Without the variable they fail; they never skip, and a run in which no integration test
+ran fails too. See [docs/testing.md](docs/testing.md) for what is tested and what was not
+ported from gizmosql-adbc.
 
 ## Dependencies
 
-- `github.com/apache/arrow-adbc/go/adbc` for the ADBC interfaces
-- `github.com/apache/arrow-go` for Arrow IPC
-- Go's standard `net/http` and `crypto/tls`; no gRPC
+- [`apache/arrow-adbc/go/adbc`](https://github.com/apache/arrow-adbc) 1.12 and
+  [`apache/arrow-go`](https://github.com/apache/arrow-go) 18.8
+- [`adbc-drivers/driverbase-go`](https://github.com/adbc-drivers/driverbase-go) (the
+  framework upstream's drivers are built on; it publishes no tagged releases, so it is
+  pinned at a commit), which also provides OpenTelemetry tracing and the cgo export template
+- Go's `net/http` and `crypto/tls`. The protocol is plain HTTP; gRPC is linked only by
+  OpenTelemetry's OTLP trace exporter.
 
 ## License
 

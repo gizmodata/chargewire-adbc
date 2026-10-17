@@ -1,0 +1,113 @@
+name: warp-sql-adbc-ci
+
+# Unit tests, the C shared library on every platform, and the Python bindings.
+#
+# Not here yet: the live-server suites (`make -C go integration-test`, `pytest -m
+# integration`). They need a warp-duckdb binary, which is built from the private
+# gizmodata/warp-sql repository (DuckDB 2.0 from source); this repository has no
+# credential to check it out. Until it does, run them locally with
+# WARP_SQL_ADBC_TEST_SERVER_BINARY set (see README.md). They fail, never skip, without
+# a server, so they cannot pass here by accident.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: go and python (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: gofmt
+        working-directory: go
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: go vet
+        working-directory: go
+        run: |
+          go vet ./...
+          go vet -tags integration ./...
+
+      - name: Unit tests
+        working-directory: go
+        run: make test
+
+      - uses: mlugg/setup-zig@v2
+        if: runner.os == 'Linux'
+        with:
+          version: 0.14.1
+
+      - name: Build the shared library
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: scripts/build_lib.sh
+
+      - name: Check the glibc ceiling (2.17)
+        if: runner.os == 'Linux'
+        run: scripts/check_glibc.sh go/build/libadbc_driver_warpsql.so
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Python lint and unit tests (against the built library)
+        working-directory: python
+        run: |
+          pip install -e ".[test,dev]"
+          ruff check src tests
+          ruff format --check src tests
+          python -m pytest -m "not integration" tests
+
+      - name: Build the wheel
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          cp go/build/libadbc_driver_warpsql.* python/src/adbc_driver_warpsql/
+          rm python/src/adbc_driver_warpsql/libadbc_driver_warpsql.h
+          cd python && python -m build --wheel && ls -la dist/
+
+  lib:
+    name: library (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - uses: mlugg/setup-zig@v2
+        if: runner.os == 'Linux'
+        with:
+          version: 0.14.1
+
+      - name: Build the shared library
+        shell: bash
+        run: scripts/build_lib.sh
+
+      - name: Check the glibc ceiling (2.17)
+        if: runner.os == 'Linux'
+        run: scripts/check_glibc.sh go/build/libadbc_driver_warpsql.so
