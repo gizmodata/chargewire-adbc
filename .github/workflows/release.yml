@@ -17,7 +17,6 @@ name: warp-sql-adbc-release
 on:
   push:
     tags: ["v*"]
-    branches: [feature/vanity-drivers]  # TEMPORARY: proof run of the builds; removed before merge
   workflow_dispatch:
 
 permissions:
