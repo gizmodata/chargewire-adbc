@@ -50,6 +50,13 @@ const (
 	CodeIngestIncomplete     = "ingest_incomplete"
 	CodeIngestPartExists     = "ingest_part_exists"
 	CodeIngestExpired        = "ingest_expired"
+
+	// Client certificate sign-in and certificate-bound tokens (§4.4).
+	CodeClientCertificateRequired   = "client_certificate_required"
+	CodeUnknownCertificateIdentity  = "unknown_certificate_identity"
+	CodeCertificateRevoked          = "certificate_revoked"
+	CodeCertificateMismatch         = "certificate_mismatch"
+	CodeCertificateIdentityMismatch = "certificate_identity_mismatch"
 )
 
 // Reasons a session_ended error carries (§5.6).

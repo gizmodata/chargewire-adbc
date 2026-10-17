@@ -2,11 +2,11 @@
 
 | Suite | Where | Needs a server | Tests |
 |---|---|---|---|
-| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake) | 19 |
-| Go driver unit | `go/warpsql/unit_test.go`, `fakeserver_test.go` | no (in-process fake) | 12 |
-| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 73 (+14 subtests) |
-| Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py` | no (the C-ABI test needs the built library) | 27 |
-| Python live | `python/tests/test_integration.py`, `test_cancel_integration.py` | yes | 68 |
+| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake) | 20 |
+| Go driver unit | `go/warpsql/unit_test.go`, `fakeserver_test.go`, `mtls_unit_test.go` | no (in-process fakes; a TLS one for certificate sign-in) | 16 |
+| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 74 (+19 subtests) |
+| Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py` | no (the C-ABI test needs the built library) | 33 |
+| Python live | `python/tests/test_integration.py`, `test_cancel_integration.py` | yes | 79 |
 
 The live suites start the binary named by `WARP_SQL_ADBC_TEST_SERVER_BINARY` on free ports,
 with a fresh password containing `:` and `@`: one shared plain-HTTP server, plus servers of
@@ -15,7 +15,8 @@ also fails when no integration test ran (`go test -run Nothing`), and pytest exi
 nothing is collected. The Go live tests run with the race detector (`make integration-test`)
 and on a checked Arrow allocator: a test that leaks Arrow memory fails.
 
-Any Warp SQL server with warp-duckdb's flags works. For Hardcharger, name its password
+Any Warp SQL server with warp-duckdb's flags works (the certificate sign-in tests also pass
+`--mtls-admin-identities`, which warp-duckdb and Hardcharger share). For Hardcharger, name its password
 variable, client-CA flag, user-name flag and vendor name:
 
 ```bash
@@ -76,7 +77,7 @@ re-prepared, retained result lost); partitions read on another connection; zstd 
 uploads; query tags; ingest modes, temporary tables, target catalog/schema, a 2M-row
 streamed upload; GetObjects at every depth with LIKE patterns and escaping; GetTableSchema
 resolution; GetInfo; current catalog/schema; transactions; TLS, mutual TLS, server name,
-skip-verify; wrong passwords, tokens, unsupported grants, unreachable and non-Warp servers,
+skip-verify; client certificate sign-in (no password; a split result read with the bound token; an unknown identity refused with `unknown_certificate_identity`; a bound token over another certificate refused with `certificate_mismatch`, and accepted over its own; a server without client CAs refused before any grant is sent); wrong passwords, tokens, unsupported grants, unreachable and non-Warp servers,
 bad URIs. The fake servers cover what the reference server cannot be made to do: token
 expiry mid-connection, partitions on other servers, concurrent session loss, `session_ended`
 reasons, `Retry-After`.

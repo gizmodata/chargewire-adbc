@@ -102,6 +102,8 @@ def _wait_up(server: Server, timeout: float = 20) -> None:
             with urllib.request.urlopen(url=f"{server.base_url}/warp", timeout=2, context=context):
                 return
         except (urllib.error.URLError, OSError) as error:
+            if "CERTIFICATE_REQUIRED" in str(error):
+                return  # a server that requires client certificates answered the handshake
             last_error = error
         time.sleep(0.1)
     stop_server(server=server)
@@ -129,7 +131,7 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
                 str(port),
                 os.environ.get("WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG") or "--username",
                 USERNAME,
-                *extra_args,
+                *[_mtls_flag(arg=arg) for arg in extra_args],
             ],
             env={**os.environ, SERVER_PASSWORD_ENV: password},
             stdout=out,
@@ -144,6 +146,13 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
     )
     _wait_up(server=server)
     return server
+
+
+def _mtls_flag(arg: str) -> str:
+    """The server's own name for the client-CA flag (Hardcharger: ``--mtls-ca-cert``)."""
+    if arg == "--tls-client-ca":
+        return os.environ.get("WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG") or arg
+    return arg
 
 
 def stop_server(server: Server) -> None:
@@ -223,8 +232,14 @@ def raw_request(server: Server, method: str, path: str, body: dict | None = None
         return error.code, json.loads(s=error.read() or b"null")
 
 
+#: The identity (e-mail SAN) of make_certificates' client certificate.
+CLIENT_EMAIL = "warp-test-client@example.com"
+
+
 def make_certificates(out_dir: Path) -> dict[str, Path]:
-    """A throwaway CA, and a server certificate for 127.0.0.1/localhost it signed."""
+    """A throwaway CA; a server certificate for 127.0.0.1/localhost it signed; and two
+    client certificates it signed, with e-mail identities: ``client`` (CLIENT_EMAIL) and
+    ``stranger`` (stranger@example.com)."""
     import ipaddress
 
     from cryptography import x509
@@ -249,6 +264,24 @@ def make_certificates(out_dir: Path) -> dict[str, Path]:
         .not_valid_before(time=now - datetime.timedelta(minutes=5))
         .not_valid_after(time=now + datetime.timedelta(days=1))
         .add_extension(extval=x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            extval=x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            extval=x509.SubjectKeyIdentifier.from_public_key(public_key=ca_key.public_key()),
+            critical=False,
+        )
         .sign(private_key=ca_key, algorithm=hashes.SHA256())
     )
     server_key = ec.generate_private_key(curve=ec.SECP256R1())
@@ -269,6 +302,12 @@ def make_certificates(out_dir: Path) -> dict[str, Path]:
             ),
             critical=False,
         )
+        .add_extension(
+            extval=x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                public_key=ca_key.public_key()
+            ),
+            critical=False,
+        )
         .sign(private_key=ca_key, algorithm=hashes.SHA256())
     )
     paths = {
@@ -276,6 +315,40 @@ def make_certificates(out_dir: Path) -> dict[str, Path]:
         "cert": out_dir / "server.pem",
         "key": out_dir / "server-key.pem",
     }
+    for label, email in [("client", CLIENT_EMAIL), ("stranger", "stranger@example.com")]:
+        client_key = ec.generate_private_key(curve=ec.SECP256R1())
+        client_cert = (
+            x509.CertificateBuilder()
+            .subject_name(name=name(common_name=label))
+            .issuer_name(name=ca_cert.subject)
+            .public_key(key=client_key.public_key())
+            .serial_number(number=x509.random_serial_number())
+            .not_valid_before(time=now - datetime.timedelta(minutes=5))
+            .not_valid_after(time=now + datetime.timedelta(days=1))
+            .add_extension(
+                extval=x509.SubjectAlternativeName(general_names=[x509.RFC822Name(value=email)]),
+                critical=False,
+            )
+            .add_extension(
+                extval=x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                    public_key=ca_key.public_key()
+                ),
+                critical=False,
+            )
+            .sign(private_key=ca_key, algorithm=hashes.SHA256())
+        )
+        paths[f"{label}_cert"] = out_dir / f"{label}.pem"
+        paths[f"{label}_key"] = out_dir / f"{label}-key.pem"
+        paths[f"{label}_cert"].write_bytes(
+            data=client_cert.public_bytes(encoding=serialization.Encoding.PEM)
+        )
+        paths[f"{label}_key"].write_bytes(
+            data=client_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        )
     paths["ca"].write_bytes(data=ca_cert.public_bytes(encoding=serialization.Encoding.PEM))
     paths["cert"].write_bytes(data=server_cert.public_bytes(encoding=serialization.Encoding.PEM))
     paths["key"].write_bytes(

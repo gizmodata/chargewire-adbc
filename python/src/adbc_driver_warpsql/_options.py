@@ -17,6 +17,11 @@ class DatabaseOptions(enum.Enum):
     TLS_CLIENT_KEY = "adbc.warp.tls.client_key"
     #: Host name the server certificate is checked against, instead of the URI's.
     TLS_SERVER_NAME = "adbc.warp.tls.server_name"
+    #: How to sign in: "password" (the default: username and password, or a token) or
+    #: "client_certificate" ("mtls"): the TLS client certificate (TLS_CLIENT_CERT and
+    #: TLS_CLIENT_KEY) is the credential, with no password. The server binds the token to
+    #: the certificate.
+    AUTH_TYPE = "adbc.warp.auth.type"
     #: A Warp SQL access token obtained elsewhere (used as is, never renewed).
     ACCESS_TOKEN = "adbc.warp.auth.access_token"
     #: An identity provider's token, exchanged for an access token.

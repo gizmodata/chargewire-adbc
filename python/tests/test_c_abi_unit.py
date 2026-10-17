@@ -56,3 +56,35 @@ def test_unreachable_server_is_an_io_error():
         )
     assert caught.value.status_code == adbc_driver_manager.AdbcStatusCode.IO
     assert "[warpsql]" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"username": "u"},  # a certificate sign-in takes no password or token
+        {DatabaseOptions.ACCESS_TOKEN.value: "tok"},
+        {DatabaseOptions.TLS_CLIENT_CERT.value: ""},  # and needs a certificate
+        {DatabaseOptions.AUTH_TYPE.value: "kerberos"},
+    ],
+)
+def test_certificate_sign_in_options_are_checked(options):
+    pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+    all_options = {
+        "uri": "warp://127.0.0.1:1",
+        DatabaseOptions.AUTH_TYPE.value: "client_certificate",
+        DatabaseOptions.TLS_CLIENT_CERT.value: pem,
+        DatabaseOptions.TLS_CLIENT_KEY.value: pem,
+        **options,
+    }
+    with pytest.raises(adbc_driver_manager.ProgrammingError) as caught:
+        adbc_driver_manager.AdbcDatabase(driver=_driver_path(), **all_options)
+    assert caught.value.status_code == adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT
+
+
+def test_auth_type_reads_back():
+    with adbc_driver_manager.AdbcDatabase(
+        driver=_driver_path(),
+        uri="warp://127.0.0.1:1?tls=false",
+        **{DatabaseOptions.AUTH_TYPE.value: "password"},
+    ) as db:
+        assert db.get_option(key=DatabaseOptions.AUTH_TYPE.value) == "password"

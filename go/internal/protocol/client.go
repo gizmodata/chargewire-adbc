@@ -22,10 +22,14 @@ import (
 )
 
 // Credentials say how the client gets its access token (§4). Exactly one way
-// is used: a password grant, a token exchange, or a token issued elsewhere.
+// is used: a password grant, a token exchange, a client certificate, or a
+// token issued elsewhere.
 type Credentials struct {
-	Username string
-	Password string
+	// ClientCertificate signs in with the client_certificate grant (§4.4):
+	// the TLS client certificate is the credential.
+	ClientCertificate bool
+	Username          string
+	Password          string
 	// SubjectToken is an identity provider's token for the token_exchange
 	// grant.
 	SubjectToken string
@@ -40,6 +44,8 @@ func (c Credentials) grant() map[string]string {
 	switch {
 	case c.AccessToken != "":
 		return nil
+	case c.ClientCertificate:
+		return map[string]string{"grant_type": GrantClientCertificate}
 	case c.SubjectToken != "":
 		return map[string]string{"grant_type": GrantTokenExchange, "subject_token": c.SubjectToken}
 	default:

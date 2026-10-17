@@ -67,6 +67,20 @@ class TestConnect:
             "adbc.warp.auth.access_token": "tok",
         }
 
+    def test_client_certificate_auth(
+        self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib, tmp_path
+    ):
+        from adbc_driver_warpsql.dbapi import connect
+
+        key = "-----BEGIN PRIVATE KEY-----\nAAA\n-----END PRIVATE KEY-----\n"
+        connect(uri="warp://h:1", auth_type="mtls", tls_client_cert=PEM, tls_client_key=key)
+        assert _db_kwargs(mock_db=mock_db) == {
+            "uri": "warp://h:1",
+            "adbc.warp.auth.type": "mtls",
+            "adbc.warp.tls.client_cert": PEM,
+            "adbc.warp.tls.client_key": key,
+        }
+
     def test_pem_text_and_files(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib, tmp_path):
         from adbc_driver_warpsql.dbapi import connect
 

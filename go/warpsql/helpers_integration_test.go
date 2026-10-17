@@ -6,18 +6,8 @@ package warpsql
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
-	"math/big"
-	"net"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -179,60 +169,4 @@ func assertSessionUsable(t *testing.T, cnxn adbc.ConnectionWithContext) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the session did not answer SELECT 42 within 30s: an earlier statement is still running")
 	}
-}
-
-// testCA is a throwaway certificate authority with a server and a client
-// certificate, written to PEM files.
-type testCA struct {
-	caPEM, serverCert, serverKey, clientCertPEM, clientKeyPEM string
-	caFile, serverCertFile, serverKeyFile                     string
-}
-
-func newTestCA(t *testing.T) *testCA {
-	t.Helper()
-	dir := t.TempDir()
-	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	caTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "warp-sql-adbc test CA"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
-		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-	}
-	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	caCert, _ := x509.ParseCertificate(caDER)
-	issue := func(serial int64, cn string, usage x509.ExtKeyUsage, server bool) (string, string) {
-		key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		template := &x509.Certificate{
-			SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: cn},
-			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
-			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{usage},
-		}
-		if server {
-			template.DNSNames = []string{"localhost"}
-			template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
-		}
-		der, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		keyDER, _ := x509.MarshalECPrivateKey(key)
-		return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
-			string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
-	}
-	ca := &testCA{caPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}))}
-	ca.serverCert, ca.serverKey = issue(2, "localhost", x509.ExtKeyUsageServerAuth, true)
-	ca.clientCertPEM, ca.clientKeyPEM = issue(3, testUsername, x509.ExtKeyUsageClientAuth, false)
-	write := func(name, content string) string {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	ca.caFile = write("ca.pem", ca.caPEM)
-	ca.serverCertFile = write("server.pem", ca.serverCert)
-	ca.serverKeyFile = write("server-key.pem", ca.serverKey)
-	return ca
 }

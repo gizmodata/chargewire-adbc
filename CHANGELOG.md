@@ -46,6 +46,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added (earlier)
 
+- Client certificate sign-in (Warp SQL spec §4.4, servers with capability `mtls_identity`):
+  `adbc.warp.auth.type` = `client_certificate` (alias `mtls`; default `password`) signs in
+  with `{"grant_type": "client_certificate"}` over the TLS client certificate
+  (`adbc.warp.tls.client_cert`/`client_key`), with no password, and renews the token the
+  same way before it expires. Refused before connecting without a client certificate,
+  over plain HTTP, or beside a username, password, subject token or access token; refused
+  with a clear error by a server that doesn't offer it. The new problem codes
+  (`client_certificate_required`, `unknown_certificate_identity`, `certificate_revoked`,
+  `certificate_mismatch`, `certificate_identity_mismatch`) map to `Unauthenticated` and
+  carry `warp.code`. Python: `DatabaseOptions.AUTH_TYPE` and `connect(auth_type=...)`.
 - Split results (Warp SQL spec §6.10): `adbc.warp.statement.result_partitions` (most
   partitions, default 1) and `adbc.warp.statement.result_order` (`preserve` or `any`).
   The driver reads every partition of a split result at once, one connection each, and

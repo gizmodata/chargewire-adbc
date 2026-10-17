@@ -101,7 +101,10 @@ func statusOfProblem(p *protocol.Problem) adbc.Status {
 		return adbc.StatusInvalidArgument
 	case protocol.CodeUnknownOption, protocol.CodeNotImplemented, protocol.CodeUnsupportedArrowType:
 		return adbc.StatusNotImplemented
-	case protocol.CodeInvalidCredentials, protocol.CodeInvalidToken, protocol.CodeSessionEnded:
+	case protocol.CodeInvalidCredentials, protocol.CodeInvalidToken, protocol.CodeSessionEnded,
+		protocol.CodeClientCertificateRequired, protocol.CodeUnknownCertificateIdentity,
+		protocol.CodeCertificateRevoked, protocol.CodeCertificateMismatch,
+		protocol.CodeCertificateIdentityMismatch:
 		return adbc.StatusUnauthenticated
 	case protocol.CodePermissionDenied, protocol.CodeReadOnly:
 		return adbc.StatusUnauthorized

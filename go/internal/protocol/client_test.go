@@ -29,6 +29,7 @@ type fake struct {
 	nextID   int
 	created  []map[string]any // options of every session created
 	lifetime int64            // expires_in of issued tokens
+	grants   []map[string]string
 }
 
 func newFake(t *testing.T) *fake {
@@ -41,7 +42,10 @@ func newFake(t *testing.T) *fake {
 	f.mux.HandleFunc("POST /warp/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		var grant map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&grant)
-		if grant["password"] != "s3:cr@t" {
+		f.mu.Lock()
+		f.grants = append(f.grants, grant)
+		f.mu.Unlock()
+		if grant["password"] != "s3:cr@t" && grant["grant_type"] != GrantClientCertificate {
 			writeProblem(w, http.StatusUnauthorized, CodeInvalidCredentials, "")
 			return
 		}
@@ -264,6 +268,40 @@ func TestParseRetryAfter(t *testing.T) {
 	for value, want := range map[string]time.Duration{"3": 3 * time.Second, " 0 ": 0, "": 0, "-1": 0, "Wed, 21 Oct 2026 07:28:00 GMT": 0} {
 		if got := parseRetryAfter(value); got != want {
 			t.Errorf("parseRetryAfter(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+// The client_certificate grant sends nothing but its type (§4.4), and is sent
+// again, unchanged, to renew the token: when the server forgets the token and
+// before it expires.
+func TestClientCertificateGrantSendsNoSecret(t *testing.T) {
+	f := newFake(t)
+	f.lifetime = 1
+	client := f.client(Credentials{ClientCertificate: true}, 1)
+	session, err := client.OpenSession(context.Background(), nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mux.HandleFunc("GET /warp/v1/sessions/{id}", f.auth(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"session_id": r.PathValue("id"), "options": map[string]any{}})
+	}))
+	f.revokeAll()
+	if _, err := session.Get(context.Background()); err != nil {
+		t.Fatalf("Get after the token was revoked: %v", err)
+	}
+	time.Sleep(time.Second)
+	if _, err := session.Get(context.Background()); err != nil {
+		t.Fatalf("Get after the token expired: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.grants) != 3 {
+		t.Fatalf("%d grants sent, want 3 (sign-in, renewal after revocation, renewal before expiry)", len(f.grants))
+	}
+	for _, grant := range f.grants {
+		if len(grant) != 1 || grant["grant_type"] != GrantClientCertificate {
+			t.Errorf("grant %v, want only grant_type=client_certificate", grant)
 		}
 	}
 }

@@ -92,6 +92,14 @@ with dbapi.connect(uri="warp://db.example.com:31337", username="joe", password="
         print(cur.fetch_arrow_table())
 ```
 
+With mutual TLS the certificate can be the credential itself (the server maps it to a
+user; Hardcharger's `mtls_admin_identities` or its access-control users):
+
+```python
+dbapi.connect(uri="warp://db.example.com:31337", auth_type="client_certificate",
+              tls_client_cert="client.pem", tls_client_key="client-key.pem")
+```
+
 See [python/README.md](python/README.md) for `connect()`'s arguments.
 
 ### Any language, through a driver manifest
@@ -110,6 +118,7 @@ Database options (with the standard `uri`, `username`, `password` and `adbc.tele
 | `adbc.warp.tls.root_certs` | system | PEM CA certificates to trust instead of the system's |
 | `adbc.warp.tls.client_cert`, `adbc.warp.tls.client_key` | | PEM client certificate and key (mutual TLS) |
 | `adbc.warp.tls.server_name` | URI host | Host name the certificate is checked against |
+| `adbc.warp.auth.type` | `password` | `client_certificate` (or `mtls`): sign in with the TLS client certificate alone, no password (spec §4.4; servers with capability `mtls_identity`). Needs the client certificate and key; refuses a username, password or token beside it. The token is bound to the certificate and renewed like a password sign-in's |
 | `adbc.warp.auth.access_token` | | An access token issued elsewhere (used as is, never renewed) |
 | `adbc.warp.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
 | `adbc.warp.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |

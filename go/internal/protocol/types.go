@@ -32,6 +32,8 @@ const (
 	CapabilityPartitionedResults = "partitioned_results"
 	CapabilityResultPartitions   = "result_partitions"
 	CapabilityPartitionedIngest  = "partitioned_ingest"
+	// CapabilityMTLSIdentity: the client_certificate grant (§4.4).
+	CapabilityMTLSIdentity = "mtls_identity"
 )
 
 // How a result split into partitions spreads its batches over them (§6.10).
@@ -48,6 +50,10 @@ const (
 const (
 	GrantPassword      = "password"
 	GrantTokenExchange = "token_exchange"
+	// GrantClientCertificate signs in with the TLS client certificate the
+	// connection presents, with no password (§4.4). The token is bound to the
+	// certificate.
+	GrantClientCertificate = "client_certificate"
 )
 
 // Discovery is the document GET /warp returns (§3.1).

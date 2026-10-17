@@ -29,6 +29,16 @@ const (
 	// against.
 	OptionTLSServerName = "adbc.warp.tls.server_name"
 
+	// OptionAuthType is how the driver signs in: AuthTypePassword (the
+	// default: the username and password options, or a subject or access
+	// token when one is given) or AuthTypeClientCertificate (the TLS client
+	// certificate of OptionTLSClientCert/OptionTLSClientKey is the
+	// credential, with no password; spec §4.4). "mtls" is accepted for
+	// AuthTypeClientCertificate. The server binds a certificate sign-in's
+	// token to the certificate, and every connection the driver opens
+	// presents it.
+	OptionAuthType = "adbc.warp.auth.type"
+
 	// OptionAccessToken is a Warp SQL access token obtained elsewhere, used
 	// instead of a username and password. It cannot be renewed.
 	OptionAccessToken = "adbc.warp.auth.access_token"
@@ -47,6 +57,14 @@ const (
 	// the old session (an open transaction, a pending result) fails either
 	// way; this decides whether the connection is usable afterwards.
 	OptionSessionReconnect = "adbc.warp.session.reconnect"
+)
+
+// Values of OptionAuthType.
+const (
+	AuthTypePassword          = "password"
+	AuthTypeClientCertificate = "client_certificate"
+	// authTypeMTLS is accepted as AuthTypeClientCertificate.
+	authTypeMTLS = "mtls"
 )
 
 // Connection options, read-only.

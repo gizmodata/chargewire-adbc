@@ -248,6 +248,9 @@ func TestErrorStatuses(t *testing.T) {
 		protocol.CodeStatementTimeout: adbc.StatusTimeout, protocol.CodeStatementCancelled: adbc.StatusCancelled,
 		protocol.CodeUnsupportedArrowType: adbc.StatusNotImplemented, protocol.CodeResultExpired: adbc.StatusInvalidState,
 		protocol.CodeServerDraining: adbc.StatusIO, protocol.CodeExecutionError: adbc.StatusInternal,
+		protocol.CodeClientCertificateRequired: adbc.StatusUnauthenticated, protocol.CodeUnknownCertificateIdentity: adbc.StatusUnauthenticated,
+		protocol.CodeCertificateRevoked: adbc.StatusUnauthenticated, protocol.CodeCertificateMismatch: adbc.StatusUnauthenticated,
+		protocol.CodeCertificateIdentityMismatch: adbc.StatusUnauthenticated,
 	} {
 		if got := statusOfProblem(&protocol.Problem{Code: code}); got != want {
 			t.Errorf("%s -> %v, want %v", code, got, want)

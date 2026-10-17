@@ -13,7 +13,14 @@ import os
 import adbc_driver_manager
 import pyarrow as pa
 import pytest
-from conftest import USERNAME, make_certificates, raw_request, start_server, stop_server
+from conftest import (
+    CLIENT_EMAIL,
+    USERNAME,
+    make_certificates,
+    raw_request,
+    start_server,
+    stop_server,
+)
 
 from adbc_driver_warpsql import ConnectionOptions, StatementOptions, dbapi
 
@@ -634,6 +641,134 @@ class TestTLS:
             with conn.cursor() as cur:
                 cur.execute(operation="SELECT 2")
                 assert cur.fetchone() == (2,)
+
+
+@pytest.fixture(scope="module")
+def mtls_server(tmp_path_factory, server_log):
+    """A server that verifies client certificates and signs in CLIENT_EMAIL by its
+    certificate (the client_certificate grant)."""
+    certificates = make_certificates(out_dir=tmp_path_factory.mktemp("mtls"))
+    server = start_server(
+        log=server_log,
+        extra_args=[
+            "--tls-cert",
+            str(certificates["cert"]),
+            "--tls-key",
+            str(certificates["key"]),
+            "--tls-client-ca",
+            str(certificates["ca"]),
+            "--mtls-admin-identities",
+            CLIENT_EMAIL,
+        ],
+    )
+    yield server, certificates
+    stop_server(server=server)
+
+
+def certificate_connect(server, certificates, label: str = "client", **kwargs):
+    return dbapi.connect(
+        uri=server.uri,
+        auth_type="client_certificate",
+        tls_root_certs=certificates["ca"],
+        tls_client_cert=certificates[f"{label}_cert"],
+        tls_client_key=certificates[f"{label}_key"],
+        **kwargs,
+    )
+
+
+def certificate_token(server, certificates, label: str = "client") -> str:
+    """A token from the client_certificate grant, outside the driver."""
+    import json
+    import ssl
+    import urllib.request
+
+    context = ssl.create_default_context(cafile=str(certificates["ca"]))
+    context.load_cert_chain(
+        certfile=str(certificates[f"{label}_cert"]), keyfile=str(certificates[f"{label}_key"])
+    )
+    request = urllib.request.Request(
+        url=f"{server.base_url}/warp/v1/auth/token",
+        method="POST",
+        data=b'{"grant_type": "client_certificate"}',
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(url=request, context=context) as response:
+        return json.load(fp=response)["access_token"]
+
+
+class TestClientCertificate:
+    def test_signs_in_without_a_password(self, mtls_server):
+        server, certificates = mtls_server
+        with certificate_connect(server=server, certificates=certificates) as conn:
+            with conn.cursor() as cur:
+                cur.execute(operation="SELECT 7")
+                assert cur.fetchone() == (7,)
+
+    def test_mtls_is_an_alias(self, mtls_server):
+        server, certificates = mtls_server
+        with dbapi.connect(
+            uri=server.uri,
+            db_kwargs={"adbc.warp.auth.type": "mtls"},
+            tls_root_certs=certificates["ca"],
+            tls_client_cert=certificates["client_cert"],
+            tls_client_key=certificates["client_key"],
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(operation="SELECT 8")
+                assert cur.fetchone() == (8,)
+
+    def test_a_split_result_is_read_with_the_bound_token(self, mtls_server):
+        server, certificates = mtls_server
+        with certificate_connect(server=server, certificates=certificates) as conn:
+            with conn.cursor(
+                adbc_stmt_kwargs={StatementOptions.RESULT_PARTITIONS.value: "4"}
+            ) as cur:
+                cur.execute(operation="SELECT i FROM range(1000000) t(i) ORDER BY i")
+                table = cur.fetch_arrow_table()
+        assert table.column("i").to_pylist() == list(range(1000000))
+
+    def test_an_unknown_identity_is_refused(self, mtls_server):
+        server, certificates = mtls_server
+        with pytest.raises(adbc_driver_manager.Error) as caught:
+            certificate_connect(server=server, certificates=certificates, label="stranger")
+        assert_error(
+            error=caught.value,
+            status=adbc_driver_manager.AdbcStatusCode.UNAUTHENTICATED,
+            code="unknown_certificate_identity",
+        )
+
+    def test_a_bound_token_needs_its_certificate(self, mtls_server):
+        server, certificates = mtls_server
+        token = certificate_token(server=server, certificates=certificates)
+
+        def with_token(label: str):
+            return dbapi.connect(
+                uri=server.uri,
+                access_token=token,
+                tls_root_certs=certificates["ca"],
+                tls_client_cert=certificates[f"{label}_cert"],
+                tls_client_key=certificates[f"{label}_key"],
+            )
+
+        with pytest.raises(adbc_driver_manager.Error) as caught:
+            with_token(label="stranger")
+        assert_error(
+            error=caught.value,
+            status=adbc_driver_manager.AdbcStatusCode.UNAUTHENTICATED,
+            code="certificate_mismatch",
+        )
+        with with_token(label="client") as conn:
+            with conn.cursor() as cur:
+                cur.execute(operation="SELECT 9")
+                assert cur.fetchone() == (9,)
+
+    def test_a_server_without_client_cas_does_not_offer_it(self, tls_server):
+        server, certificates = tls_server
+        with pytest.raises(adbc_driver_manager.Error, match="mtls_identity") as caught:
+            certificate_connect(server=server, certificates=certificates)
+        assert_error(
+            error=caught.value, status=adbc_driver_manager.AdbcStatusCode.UNAUTHENTICATED, code=None
+        )
 
 
 class TestOpenTelemetryTracing:

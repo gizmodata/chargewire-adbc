@@ -4,7 +4,7 @@ Example::
 
     from adbc_driver_warpsql import dbapi
 
-    with dbapi.connect("warp://db.example.com:31337", username="joe", password="...") as conn:
+    with dbapi.connect(uri="warp://db.example.com:31337", username="joe", password="...") as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT region, sum(amount) FROM sales WHERE year = ? GROUP BY 1",
                         parameters=[2026])
@@ -12,6 +12,11 @@ Example::
 
 ``warp://host:port`` is HTTPS (TLS on); add ``?tls=false`` for plain HTTP to a
 development server. ``https://`` and ``http://`` URLs work too.
+
+With mutual TLS, the client certificate can be the credential itself::
+
+    dbapi.connect(uri="warp://db.example.com:31337", auth_type="client_certificate",
+                  tls_client_cert="client.pem", tls_client_key="client-key.pem")
 """
 
 from __future__ import annotations
@@ -140,6 +145,7 @@ def connect(
     username: Optional[str] = None,
     password: Optional[str] = None,
     access_token: Optional[str] = None,
+    auth_type: Optional[str] = None,
     tls_skip_verify: bool = False,
     tls_root_certs: Optional[PemSource] = None,
     tls_client_cert: Optional[PemSource] = None,
@@ -162,6 +168,10 @@ def connect(
         password: Password for password sign-in.
         access_token: A Warp SQL access token obtained elsewhere, instead of a
             username and password.
+        auth_type: ``"password"`` (the default) or ``"client_certificate"``
+            (``"mtls"``): sign in with the TLS client certificate
+            (``tls_client_cert`` and ``tls_client_key``) and no password. The
+            server binds the token to the certificate.
         tls_skip_verify: Do not verify the server's certificate (development
             only).
         tls_root_certs: CA certificates to trust, as PEM text or a file path.
@@ -195,6 +205,7 @@ def connect(
         "username": username,
         "password": password,
         DatabaseOptions.ACCESS_TOKEN.value: access_token,
+        DatabaseOptions.AUTH_TYPE.value: auth_type,
     }
     for key, value in credentials.items():
         if value is not None:

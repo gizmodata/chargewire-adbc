@@ -6,9 +6,13 @@ package warpsql
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,4 +174,90 @@ func TestIntegrationBadURIs(t *testing.T) {
 		options[adbc.OptionKeyURI] = uri
 		assertStatus(t, openErr(t, options), adbc.StatusInvalidArgument, "")
 	}
+}
+
+// certificateToken signs in with the client_certificate grant over a plain
+// HTTP client presenting cert/key, the way another tool would get a token.
+func certificateToken(t *testing.T, server *testServer, ca *testCA, cert, key string) string {
+	t.Helper()
+	pair, err := tls.X509KeyPair([]byte(cert), []byte(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM([]byte(ca.caPEM))
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{pair}}}}
+	resp, err := client.Post("https://"+server.host+"/warp/v1/auth/token", "application/json",
+		strings.NewReader(`{"grant_type":"client_certificate"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var answer struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&answer); err != nil || answer.AccessToken == "" {
+		t.Fatalf("certificate sign-in: HTTP %d, %v", resp.StatusCode, err)
+	}
+	return answer.AccessToken
+}
+
+// The client_certificate grant (§4.4): the certificate is the credential, and
+// the token it gets is bound to it.
+func TestIntegrationClientCertificate(t *testing.T) {
+	ca := newTestCA(t)
+	server := startServer(t, "--tls-cert", ca.serverCertFile, "--tls-key", ca.serverKeyFile, "--tls-client-ca", ca.caFile,
+		"--mtls-admin-identities", testClientEmail)
+	strangerCert, strangerKey := ca.issue(t, "stranger", []string{"stranger@example.com"}, false)
+	certificate := func(cert, key string) map[string]string {
+		return map[string]string{
+			adbc.OptionKeyUsername: "", adbc.OptionKeyPassword: "", OptionAuthType: "mtls",
+			OptionTLSRootCerts: ca.caPEM, OptionTLSClientCert: cert, OptionTLSClientKey: key,
+		}
+	}
+
+	t.Run("signs in without a password", func(t *testing.T) {
+		cnxn := connect(t, openDB(t, server, certificate(ca.clientCertPEM, ca.clientKeyPEM)))
+		if got := scalarInt(t, cnxn, "SELECT 7"); got != 7 {
+			t.Fatal(got)
+		}
+	})
+	t.Run("a split result is read with the bound token", func(t *testing.T) {
+		cnxn := splitDB(t, server, "4", "preserve", certificate(ca.clientCertPEM, ca.clientKeyPEM))
+		table := queryTable(t, cnxn, "SELECT i FROM range(1000000) t(i) ORDER BY i DESC")
+		defer table.Release()
+		if got := int64Column(t, table, "i"); !slices.Equal(got, descending(1000000)) {
+			t.Fatal("the split result over a certificate sign-in is wrong")
+		}
+	})
+	t.Run("an unknown identity is refused", func(t *testing.T) {
+		assertStatus(t, openErr(t, mergeOptions(server.options(), certificate(strangerCert, strangerKey))),
+			adbc.StatusUnauthenticated, "unknown_certificate_identity")
+	})
+	t.Run("a bound token over another certificate is refused", func(t *testing.T) {
+		token := certificateToken(t, server, ca, ca.clientCertPEM, ca.clientKeyPEM)
+		stolen := certificate(strangerCert, strangerKey)
+		stolen[OptionAuthType], stolen[OptionAccessToken] = "password", token
+		assertStatus(t, openErr(t, mergeOptions(server.options(), stolen)), adbc.StatusUnauthenticated, "certificate_mismatch")
+		// The twin: the same token over its own certificate works.
+		own := certificate(ca.clientCertPEM, ca.clientKeyPEM)
+		own[OptionAuthType], own[OptionAccessToken] = "password", token
+		cnxn := connect(t, openDB(t, server, own))
+		if got := scalarInt(t, cnxn, "SELECT 8"); got != 8 {
+			t.Fatal(got)
+		}
+	})
+	t.Run("a server without client CAs does not offer it", func(t *testing.T) {
+		plain := startServer(t, "--tls-cert", ca.serverCertFile, "--tls-key", ca.serverKeyFile)
+		err := openErr(t, mergeOptions(plain.options(), certificate(ca.clientCertPEM, ca.clientKeyPEM)))
+		assertStatus(t, err, adbc.StatusUnauthenticated, "")
+		if !strings.Contains(err.Error(), "mtls_identity") {
+			t.Errorf("error %v does not say what the server lacks", err)
+		}
+		// The twin: a password sign-in over the same TLS works.
+		cnxn := connect(t, openDB(t, plain, map[string]string{OptionTLSRootCerts: ca.caPEM}))
+		if got := scalarInt(t, cnxn, "SELECT 9"); got != 9 {
+			t.Fatal(got)
+		}
+	})
 }

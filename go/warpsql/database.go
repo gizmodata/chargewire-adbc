@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
@@ -62,6 +63,13 @@ func newDatabase(ctx context.Context, driver *driverbase.DriverImplBase, opts ma
 			return nil, err
 		}
 	}
+	// Contradicting credentials fail here already when the uri is known (and
+	// otherwise at the first Open).
+	if base, err := parseURI(db.uri); err == nil {
+		if err := db.checkCredentials(base); err != nil {
+			return nil, err
+		}
+	}
 	return db, nil
 }
 
@@ -95,6 +103,15 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 		d.credentials.Username = value
 	case adbc.OptionKeyPassword:
 		d.credentials.Password = value
+	case OptionAuthType:
+		switch strings.ToLower(value) {
+		case "", AuthTypePassword:
+			d.credentials.ClientCertificate = false
+		case AuthTypeClientCertificate, authTypeMTLS:
+			d.credentials.ClientCertificate = true
+		default:
+			return invalidOption(key, value, `"password" or "client_certificate" ("mtls")`)
+		}
 	case OptionAccessToken:
 		d.credentials.AccessToken = value
 	case OptionSubjectToken:
@@ -140,6 +157,11 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.uri, nil
 	case adbc.OptionKeyUsername:
 		return d.credentials.Username, nil
+	case OptionAuthType:
+		if d.credentials.ClientCertificate {
+			return AuthTypeClientCertificate, nil
+		}
+		return AuthTypePassword, nil
 	case OptionTLSSkipVerify:
 		return strconv.FormatBool(d.tls.skipVerify), nil
 	case OptionTLSServerName:
@@ -182,6 +204,9 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 	if err != nil {
 		return nil, nil, d.ErrorHelper.InvalidArgument("%s", err)
 	}
+	if err := d.checkCredentials(base); err != nil {
+		return nil, nil, err
+	}
 	transport, err := d.newTransport(base)
 	if err != nil {
 		return nil, nil, err
@@ -198,6 +223,11 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 	if err != nil {
 		transport.CloseIdleConnections()
 		return nil, nil, wrapError(err, "connecting to "+base.Redacted())
+	}
+	if d.credentials.ClientCertificate && !discovery.Has(protocol.CapabilityMTLSIdentity) {
+		transport.CloseIdleConnections()
+		return nil, nil, d.ErrorHelper.Unauthenticated("the server does not offer client certificate sign-in (capability %s): it needs TLS with client CAs and must list the %s grant (it offers %v)",
+			protocol.CapabilityMTLSIdentity, protocol.GrantClientCertificate, discovery.Auth.GrantTypes)
 	}
 	if grant := d.grantType(); grant != "" && !discovery.SupportsGrant(grant) {
 		transport.CloseIdleConnections()
@@ -221,10 +251,44 @@ func (d *databaseImpl) grantType() string {
 	switch {
 	case d.credentials.AccessToken != "":
 		return ""
+	case d.credentials.ClientCertificate:
+		return protocol.GrantClientCertificate
 	case d.credentials.SubjectToken != "":
 		return protocol.GrantTokenExchange
 	}
 	return protocol.GrantPassword
+}
+
+// checkCredentials refuses credentials that contradict each other: a
+// certificate sign-in takes no password or token, and needs a client
+// certificate over TLS.
+func (d *databaseImpl) checkCredentials(base *url.URL) error {
+	if !d.credentials.ClientCertificate {
+		return nil
+	}
+	c := d.credentials
+	var given []string
+	for _, credential := range []struct {
+		name, value string
+	}{{adbc.OptionKeyUsername, c.Username}, {adbc.OptionKeyPassword, c.Password},
+		{OptionSubjectToken, c.SubjectToken}, {OptionAccessToken, c.AccessToken}} {
+		if credential.value != "" {
+			given = append(given, credential.name)
+		}
+	}
+	if len(given) > 0 {
+		return d.ErrorHelper.InvalidArgument("%s=%s signs in with the client certificate alone; do not also set %s",
+			OptionAuthType, AuthTypeClientCertificate, strings.Join(given, ", "))
+	}
+	if d.tls.clientCert == "" || d.tls.clientKey == "" {
+		return d.ErrorHelper.InvalidArgument("%s=%s needs a client certificate: set %s and %s",
+			OptionAuthType, AuthTypeClientCertificate, OptionTLSClientCert, OptionTLSClientKey)
+	}
+	if base.Scheme != "https" {
+		return d.ErrorHelper.InvalidArgument("%s=%s needs TLS, but the uri %s is plain HTTP",
+			OptionAuthType, AuthTypeClientCertificate, base.Redacted())
+	}
+	return nil
 }
 
 func (d *databaseImpl) newTransport(base *url.URL) (*http.Transport, error) {
