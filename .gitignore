@@ -13,3 +13,6 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+*.so
+*.dylib
+*.dll

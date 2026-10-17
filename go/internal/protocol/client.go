@@ -4,6 +4,8 @@ package protocol
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -139,7 +141,7 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			if !req.Idempotent || !canRepeat {
+			if !req.Idempotent || !canRepeat || permanent(err) {
 				return nil, &TransportError{Op: req.Method + " " + req.Path, Err: err}
 			}
 			c.logger.DebugContext(ctx, "retrying after transport error", "path", req.Path, "attempt", attempt, "error", err)
@@ -176,6 +178,18 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 		}
 		return nil, problem
 	}
+}
+
+// permanent reports a transport error that sending again cannot cure: the
+// TLS handshake failed on a certificate.
+func permanent(err error) bool {
+	var verification *tls.CertificateVerificationError
+	var alert tls.AlertError
+	var authority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	return errors.As(err, &verification) || errors.As(err, &alert) || errors.As(err, &authority) ||
+		errors.As(err, &hostname) || errors.As(err, &invalid)
 }
 
 // retryableStatus is an answer that a repeat of the same request may not get.

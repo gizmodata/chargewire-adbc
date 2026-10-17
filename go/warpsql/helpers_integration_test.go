@@ -185,7 +185,7 @@ func assertSessionUsable(t *testing.T, cnxn adbc.ConnectionWithContext) {
 // certificate, written to PEM files.
 type testCA struct {
 	caPEM, serverCert, serverKey, clientCertPEM, clientKeyPEM string
-	caFile, serverCertFile, serverKeyFile                    string
+	caFile, serverCertFile, serverKeyFile                     string
 }
 
 func newTestCA(t *testing.T) *testCA {

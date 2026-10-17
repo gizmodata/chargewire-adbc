@@ -27,6 +27,14 @@ var errIncompleteStream = errors.New("the Arrow stream ended without its end-of-
 // maxResumes bounds how often one result download is resumed.
 const maxResumes = 5
 
+// settleWait is how long a broken unretained download waits for its
+// statement to reach a final state, to report the statement's own error.
+const settleWait = 2 * time.Second
+
+func ioError(format string, args ...any) error {
+	return adbc.Error{Code: adbc.StatusIO, Msg: fmt.Sprintf("[%s] "+format, append([]any{driverName}, args...)...)}
+}
+
 // byteCounter counts the bytes read through it and keeps the last eight.
 type byteCounter struct {
 	r    io.Reader
@@ -209,7 +217,7 @@ func (r *resultReader) open() error {
 		})
 		if protocol.HasCode(err, protocol.CodeResultNotReady) && attempt < maxResumes {
 			// No schema yet: wait for the statement to make progress (§6.4).
-			if _, err := r.session.Status(r.ctx, r.ref, longPoll); err != nil {
+			if _, err := r.session.Status(r.ctx, r.ref, settleWait); err != nil {
 				return wrapError(err, "waiting for the result")
 			}
 			continue
@@ -252,7 +260,7 @@ func (r *resultReader) recover(streamErr error) error {
 	if !retained && !doc.State.Terminal() {
 		// An unretained result can't be resumed; wait briefly for the
 		// statement to settle so its own error can be reported.
-		if settled, err := r.session.Status(r.ctx, r.ref, longPoll); err == nil {
+		if settled, err := r.session.Status(r.ctx, r.ref, settleWait); err == nil {
 			doc = settled
 		}
 	}
@@ -262,10 +270,10 @@ func (r *resultReader) recover(streamErr error) error {
 	case doc.State == protocol.StateCancelled && doc.CancelReason != "client":
 		return wrapError(statementError(doc), "the statement was cancelled")
 	case !retained:
-		return wrapError(fmt.Errorf("the result stream broke off (%v); the server did not retain the result, so it "+
-			"cannot be resumed (set %s=true or %s=true to make downloads resumable)", streamErr, OptionRetainResult, OptionAsync), "reading the result")
+		return ioError("reading the result: the result stream broke off (%v); the server did not retain the result, so it "+
+			"cannot be resumed (set %s=true or %s=true to make downloads resumable)", streamErr, OptionRetainResult, OptionAsync)
 	case r.resumes >= maxResumes:
-		return wrapError(fmt.Errorf("the result stream broke off %d times; last: %w", r.resumes, streamErr), "reading the result")
+		return ioError("reading the result: the result stream broke off %d times; last: %v", r.resumes, streamErr)
 	}
 	r.resumes++
 	if err := gadgets.SleepCtx(r.ctx, min(time.Duration(r.resumes)*250*time.Millisecond, 2*time.Second)); err != nil {

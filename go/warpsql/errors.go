@@ -33,7 +33,7 @@ func ErrorCode(err error) string {
 
 // wrapError turns an error from the protocol layer into an adbc.Error with
 // the status the Warp SQL code stands for. op says what was being done.
-// errors.Is/As still reach the original error.
+// errors.As finds both the adbc.Error and the original error.
 func wrapError(err error, op string) error {
 	if err == nil {
 		return nil
@@ -49,8 +49,17 @@ func wrapError(err error, op string) error {
 			adbcErr.Details = append(adbcErr.Details, &adbc.TextErrorDetail{Name: ErrorDetailRequestID, Detail: p.RequestID})
 		}
 	}
-	return errors.Join(adbcErr, err)
+	return &driverError{adbcErr: adbcErr, cause: err}
 }
+
+// driverError is an adbc.Error that keeps the error it was made from.
+type driverError struct {
+	adbcErr adbc.Error
+	cause   error
+}
+
+func (e *driverError) Error() string   { return e.adbcErr.Error() }
+func (e *driverError) Unwrap() []error { return []error{e.adbcErr, e.cause} }
 
 // statusOf maps an error to an ADBC status.
 func statusOf(err error) adbc.Status {

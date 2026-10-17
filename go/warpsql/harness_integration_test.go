@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -142,6 +143,9 @@ func (s *testServer) waitUp() error {
 	var lastErr error
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(s.scheme + "://" + s.host + "/warp")
+		if err != nil && strings.Contains(err.Error(), "certificate required") {
+			return nil // a server that requires client certificates answered the handshake
+		}
 		if err == nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()

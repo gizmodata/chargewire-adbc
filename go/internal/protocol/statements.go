@@ -173,13 +173,18 @@ func (s *Session) Status(ctx context.Context, ref StatementRef, wait time.Durati
 	return doc, decodeJSON(resp, doc)
 }
 
-// WaitDone long-polls until the statement reaches a terminal state.
+// WaitDone long-polls until the statement reaches a terminal state. The
+// waits grow from one second to poll: a server may hold a poll for its full
+// wait when the statement finished just before the poll arrived, so short
+// first waits keep quick statements quick.
 func (s *Session) WaitDone(ctx context.Context, ref StatementRef, doc *StatementDocument, poll time.Duration) (*StatementDocument, error) {
+	wait := min(time.Second, poll)
 	for !doc.State.Terminal() {
 		var err error
-		if doc, err = s.Status(ctx, ref, poll); err != nil {
+		if doc, err = s.Status(ctx, ref, wait); err != nil {
 			return nil, err
 		}
+		wait = min(2*wait, poll)
 	}
 	return doc, nil
 }
