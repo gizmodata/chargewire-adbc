@@ -36,9 +36,16 @@ type driverImpl struct {
 
 // NewDriver returns the Warp SQL ADBC driver.
 func NewDriver(alloc memory.Allocator) driverbase.Driver {
+	return NewDriverWithName(alloc, driverDisplayName)
+}
+
+// NewDriverWithName returns the Warp SQL ADBC driver reporting displayName as
+// its driver name in GetInfo, for a driver built on this one (for example
+// "ADBC Hardcharger Driver - Go"). Nothing else changes.
+func NewDriverWithName(alloc memory.Allocator, displayName string) driverbase.Driver {
 	info := driverbase.DefaultDriverInfo(driverName)
 	info.MustRegister(map[adbc.InfoCode]any{
-		adbc.InfoDriverName:      driverDisplayName,
+		adbc.InfoDriverName:      displayName,
 		adbc.InfoVendorSql:       true,
 		adbc.InfoVendorSubstrait: false,
 	})

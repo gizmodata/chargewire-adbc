@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `warpsql.NewDriverWithName(alloc, displayName)`: the driver under another GetInfo driver
+  name, for drivers built on this one (hardcharger-adbc).
 - Split results (Warp SQL spec §6.10): `adbc.warp.statement.result_partitions` (most
   partitions, default 1) and `adbc.warp.statement.result_order` (`preserve` or `any`).
   The driver reads every partition of a split result at once, one connection each, and

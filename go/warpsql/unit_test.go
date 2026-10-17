@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -318,5 +319,39 @@ func TestTLSConfig(t *testing.T) {
 	config, err := (tlsOptions{}).config()
 	if err != nil || config.InsecureSkipVerify || config.MinVersion < 0x0303 {
 		t.Errorf("default TLS config %+v, %v", config, err)
+	}
+}
+
+func TestNewDriverWithNameReportsTheName(t *testing.T) {
+	fake := newFakeWarp(t)
+	for drv, want := range map[driverbase.Driver]string{
+		NewDriver(memory.DefaultAllocator):                                     "ADBC Warp SQL Driver - Go",
+		NewDriverWithName(memory.DefaultAllocator, "ADBC Example Driver - Go"): "ADBC Example Driver - Go",
+	} {
+		db, err := drv.NewDatabaseWithContext(context.Background(), map[string]string{
+			adbc.OptionKeyURI: fake.server.URL, adbc.OptionKeyUsername: "u", adbc.OptionKeyPassword: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cnxn, err := db.Open(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		reader, err := cnxn.GetInfo(context.Background(), []adbc.InfoCode{adbc.InfoDriverName})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got string
+		for reader.Next() {
+			rec := reader.RecordBatch()
+			union := rec.Column(1).(*array.DenseUnion)
+			got = union.Field(union.ChildID(0)).(*array.String).Value(int(union.ValueOffset(0)))
+		}
+		reader.Release()
+		if got != want {
+			t.Errorf("driver name %q, want %q", got, want)
+		}
+		_ = cnxn.Close(context.Background())
+		_ = db.Close(context.Background())
 	}
 }
