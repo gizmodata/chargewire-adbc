@@ -215,7 +215,7 @@ func (c *Client) send(ctx context.Context, req *Request, token string) (*http.Re
 	var body io.Reader
 	length := int64(0)
 	if req.Body != nil {
-		body, length = req.Body.open()
+		body, length = req.Body.Open()
 	}
 	if req.Trace != nil {
 		ctx = httptrace.WithClientTrace(ctx, req.Trace)

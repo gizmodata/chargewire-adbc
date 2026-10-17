@@ -46,8 +46,8 @@ func (b *Body) Bytes() []byte {
 	return b.data
 }
 
-// open returns the body for one attempt and its length (-1 when streamed).
-func (b *Body) open() (io.Reader, int64) {
+// Open returns the body for one attempt and its length (-1 when streamed).
+func (b *Body) Open() (io.Reader, int64) {
 	if b.stream != nil {
 		return b.stream, -1
 	}
