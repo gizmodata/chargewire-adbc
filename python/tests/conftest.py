@@ -3,7 +3,9 @@
 Integration tests (marked ``integration``) run against a live server started from
 ``WARP_SQL_ADBC_TEST_SERVER_BINARY`` (a binary with warp-duckdb's interface: ``--host``,
 ``--port``, ``--username``, ``--tls-cert``/``--tls-key``, password in ``WARP_DUCKDB_PASSWORD``)
-on a free port. Without it they fail; they never skip. Unit tests need no server.
+on a free port. Without it they fail; they never skip. Unit tests need no server. For another
+server, name its password variable in ``WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV`` (Hardcharger:
+``HARDCHARGER_PASSWORD``), and its name (for GetInfo) in ``WARP_SQL_ADBC_TEST_SERVER_NAME``.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from pathlib import Path
 import pytest
 
 SERVER_BINARY_ENV = "WARP_SQL_ADBC_TEST_SERVER_BINARY"
+SERVER_PASSWORD_ENV = os.environ.get("WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV") or "WARP_DUCKDB_PASSWORD"
 USERNAME = "warp_test"
 
 NATIONS = [
@@ -124,7 +127,7 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
                 USERNAME,
                 *extra_args,
             ],
-            env={**os.environ, "WARP_DUCKDB_PASSWORD": password},
+            env={**os.environ, SERVER_PASSWORD_ENV: password},
             stdout=out,
             stderr=subprocess.STDOUT,
         )

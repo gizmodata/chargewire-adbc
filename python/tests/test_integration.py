@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import os
 
 import adbc_driver_manager
 import pyarrow as pa
@@ -646,7 +647,7 @@ class TestMetadata:
 
     def test_get_info(self, conn):
         info = conn.adbc_get_info()
-        assert info["vendor_name"] == "warp-duckdb"
+        assert info["vendor_name"] == (os.environ.get("WARP_SQL_ADBC_TEST_SERVER_NAME") or "warp-duckdb")
         assert info["driver_name"] == "ADBC Warp SQL Driver - Go"
 
 

@@ -251,7 +251,7 @@ func TestIntegrationGetInfo(t *testing.T) {
 			}
 		}
 	}
-	if values[adbc.InfoVendorName] != "warp-duckdb" {
+	if want := envOr("WARP_SQL_ADBC_TEST_SERVER_NAME", "warp-duckdb"); values[adbc.InfoVendorName] != want {
 		t.Errorf("vendor name %v", values[adbc.InfoVendorName])
 	}
 	if version, _ := values[adbc.InfoVendorVersion].(string); version == "" || version == driverbase.UnknownVersion {

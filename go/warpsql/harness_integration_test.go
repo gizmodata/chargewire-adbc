@@ -6,7 +6,11 @@
 // WARP_SQL_ADBC_TEST_SERVER_BINARY (a server with warp-duckdb's interface:
 // --host, --port, --username, --tls-*, password in WARP_DUCKDB_PASSWORD) on
 // a free port. Without it they fail; they never skip, and a run in which no
-// integration test ran fails too.
+// integration test ran fails too. For another server, name its password
+// variable in WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV and its client-CA flag in
+// WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG, and its name in
+// WARP_SQL_ADBC_TEST_SERVER_NAME (Hardcharger: HARDCHARGER_PASSWORD,
+// --mtls-ca-cert, Hardcharger).
 //
 //	WARP_SQL_ADBC_TEST_SERVER_BINARY=/path/to/warp-duckdb go test -tags integration ./...
 
@@ -35,9 +39,19 @@ import (
 )
 
 const (
-	serverBinaryEnv = "WARP_SQL_ADBC_TEST_SERVER_BINARY"
-	testUsername    = "warp_test"
+	serverBinaryEnv      = "WARP_SQL_ADBC_TEST_SERVER_BINARY"
+	serverPasswordEnvEnv = "WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV"
+	serverMTLSFlagEnv    = "WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG"
+	testUsername         = "warp_test"
 )
+
+// envOr returns the environment variable's value, or fallback when it is unset.
+func envOr(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
 
 // integrationTests counts tests that reached a server, so that a run where
 // none did fails instead of passing vacuously.
@@ -118,14 +132,18 @@ func launchServer(binary string, extraArgs []string) (*testServer, error) {
 		scheme:   "http",
 		log:      &syncBuffer{},
 	}
+	args := []string{"--host", "127.0.0.1", "--port", fmt.Sprint(port), "--username", testUsername}
 	for _, arg := range extraArgs {
-		if arg == "--tls-cert" {
+		switch arg {
+		case "--tls-cert":
 			server.scheme = "https"
+		case "--tls-client-ca":
+			arg = envOr(serverMTLSFlagEnv, arg)
 		}
+		args = append(args, arg)
 	}
-	args := append([]string{"--host", "127.0.0.1", "--port", fmt.Sprint(port), "--username", testUsername}, extraArgs...)
 	server.cmd = exec.Command(binary, args...)
-	server.cmd.Env = append(os.Environ(), "WARP_DUCKDB_PASSWORD="+server.password)
+	server.cmd.Env = append(os.Environ(), envOr(serverPasswordEnvEnv, "WARP_DUCKDB_PASSWORD")+"="+server.password)
 	server.cmd.Stdout, server.cmd.Stderr = server.log, server.log
 	if err := server.cmd.Start(); err != nil {
 		return nil, err
