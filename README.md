@@ -1,4 +1,25 @@
-# warp-sql-adbc
+<p align="center">
+  <a href="https://github.com/gizmodata/warp-sql">
+    <img src="docs/assets/warp-sql-adbc-banner.svg" alt="Warp SQL ADBC: one native driver for every ADBC language. By GizmoData." width="100%">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://arrow.apache.org/adbc/"><img src="https://img.shields.io/badge/ADBC-1.12-f15a24.svg" alt="ADBC 1.12"></a>
+  <a href="https://github.com/gizmodata/warp-sql"><img src="https://img.shields.io/badge/protocol-Warp%20SQL-31a8db.svg" alt="Warp SQL protocol"></a>
+  <img src="https://img.shields.io/badge/core-Go-00ADD8.svg?logo=go&logoColor=white" alt="Go core">
+  <img src="https://img.shields.io/badge/bindings-Python-3776AB.svg?logo=python&logoColor=white" alt="Python bindings">
+  <img src="https://img.shields.io/badge/gRPC-not%20needed-lightgrey.svg" alt="No gRPC">
+  <a href="https://github.com/gizmodata/hardcharger"><img src="https://img.shields.io/badge/tested%20with-Hardcharger-f15a24.svg" alt="Tested with Hardcharger"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-brightgreen.svg" alt="Apache 2.0 license"></a>
+  <a href="https://gizmodata.com"><img src="https://img.shields.io/badge/by-GizmoData-f15a24.svg" alt="GizmoData"></a>
+</p>
+
+<h3 align="center">Query any Warp SQL server from Python, Go, R, C/C++, C#, Rust or JavaScript.</h3>
+
+---
+
+## 🔌 What is it?
 
 A native [ADBC](https://arrow.apache.org/adbc/) driver for the
 [Warp SQL protocol](https://github.com/gizmodata/warp-sql), written in Go, with Python
@@ -8,10 +29,17 @@ It is a **generic** driver: it talks to any server that implements the Warp SQL 
 (draft 0.1.0), not one particular database. Compiled to a C shared library, one
 implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and JavaScript.
 
-> **Status: in development, unreleased (0.1.0.dev0).** Tested against `warp-duckdb`, the
-> reference server.
+- ⚡ **Arrow end to end:** results stream from the server as Arrow IPC straight into
+  your `pyarrow.Table`, Go `RecordReader` or any ADBC consumer, with no row conversion.
+- 🌐 **Built for real networks:** resumable downloads, safe retries with idempotency keys,
+  async submit/poll/fetch for long queries behind proxies, and token renewal.
+- 🛑 **Cancel that really cancels:** Ctrl+C or a Go context stops the statement on the server.
+- 🔐 **TLS by default**, mutual TLS and token exchange for SSO.
 
-## Layout
+> **Status: in development, unreleased (0.1.0.dev0).** Tested against `warp-duckdb`, the
+> reference server, and [Hardcharger](https://github.com/gizmodata/hardcharger).
+
+## 📂 Layout
 
 ```
 go/warpsql/          the ADBC driver (driverbase-go), package warpsql
@@ -22,7 +50,7 @@ packaging/           ADBC driver manifest template
 docs/                design notes and the test inventory
 ```
 
-## Connecting
+## 🚀 Connecting
 
 | URI | Meaning |
 |---|---|
@@ -72,7 +100,7 @@ Build the library (`make -C go lib`), fill in [packaging/warpsql.toml.in](packag
 and install it as `warpsql.toml` in an ADBC driver search path; then every driver manager
 loads it as `driver = "warpsql"`. Its entry point is `AdbcDriverWarpsqlInit`.
 
-## Options
+## ⚙️ Options
 
 Database options (with the standard `uri`, `username`, `password` and `adbc.telemetry.*`):
 
@@ -101,7 +129,7 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
 `adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
 `adbc.ingest.*` options; the transaction options are the standard ones.
 
-## How it behaves
+## 🧠 How it behaves
 
 - **Queries** stream on the one-round-trip path by default. Statements without rows (DDL,
   DML) answer with their document, so `ExecuteQuery` returns an empty schema and the rows
@@ -144,7 +172,7 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
   schemas) and, at column depth, one each for primary and foreign keys. Errors whose
   SQLSTATE is `42P01`/`42P07` (no such table / it exists) are ADBC NotFound/AlreadyExists.
 
-## Building and testing
+## 🛠️ Building and testing
 
 Go 1.27, a C toolchain for cgo, and Python 3.10+ for the bindings.
 
@@ -171,7 +199,7 @@ Without the variable they fail; they never skip, and a run in which no integrati
 ran fails too. See [docs/testing.md](docs/testing.md) for what is tested and what was not
 ported from gizmosql-adbc.
 
-## Dependencies
+## 📦 Dependencies
 
 - [`apache/arrow-adbc/go/adbc`](https://github.com/apache/arrow-adbc) 1.12 and
   [`apache/arrow-go`](https://github.com/apache/arrow-go) 18.8
@@ -181,6 +209,13 @@ ported from gizmosql-adbc.
 - Go's `net/http` and `crypto/tls`. The protocol is plain HTTP; gRPC is linked only by
   OpenTelemetry's OTLP trace exporter.
 
-## License
+## 📄 License
 
 [Apache License 2.0](LICENSE).
+
+---
+
+<p align="center">
+  <a href="https://gizmodata.com"><img src="docs/assets/gizmodata-logo.png" alt="GizmoData" width="56"></a><br>
+  <sub>Built by <a href="https://gizmodata.com">GizmoData</a></sub>
+</p>
