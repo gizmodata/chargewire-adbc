@@ -1,0 +1,14 @@
+# Go
+/go/build/
+*.so
+*.dylib
+*.dll
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+dist/
+# Editors
+.idea/
+.vscode/
+.DS_Store
