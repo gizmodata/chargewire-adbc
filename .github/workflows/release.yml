@@ -175,13 +175,21 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
-          # Set only on the macOS amd64 cross build: an empty value blanks the platform tag.
-          if [ "${{ matrix.goarch }}" = "amd64" ] && [ "$RUNNER_OS" = "macOS" ]; then
-            export _PYTHON_HOST_PLATFORM="macosx-11.0-x86_64"
+          # On macOS, name the library's architecture: setup-python's Python is universal2,
+          # which would tag an arm64-only wheel universal2. (Never set it empty elsewhere: an
+          # empty value blanks the platform tag.)
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            if [ "${{ matrix.goarch }}" = "amd64" ]; then arch=x86_64; else arch=arm64; fi
+            export _PYTHON_HOST_PLATFORM="macosx-11.0-$arch"
           fi
           cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} python/src/adbc_driver_warpsql/
           pip install build
           cd python && python -m build --wheel
+          ls dist/
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ls dist/*"macosx_11_0_$arch.whl" || { echo "::error::the wheel's tag isn't macosx_11_0_$arch"; exit 1; }
+            lipo -archs ../go/build/libadbc_driver_warpsql.dylib | grep -qx "$arch" || { echo "::error::the library isn't $arch"; exit 1; }
+          fi
 
       - name: Repair the wheel to manylinux
         if: runner.os == 'Linux'
