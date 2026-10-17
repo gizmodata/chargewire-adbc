@@ -49,3 +49,19 @@ All notable changes to this project are documented here. The format follows
   suites are not in CI yet: the reference server is built from a private repository.
 - `docs/testing.md` (what is tested, what was not ported and why) and
   `docs/spec-feedback.md` (spec gaps and reference-server issues found).
+
+### Changed
+
+- Follows warp-sql `188cd84`, which resolves every item in `docs/spec-feedback.md`:
+  - A statement whose answer has not arrived is cancelled with the session cancel
+    (`POST /sessions/{id}/cancel`) when it is the connection's only statement running;
+    beside other statements, or on a server without it, the driver still resends with the
+    `Idempotency-Key`. Explicit stops (Cancel, Close while running, a Go context ending)
+    send `POST …/cancel`; releasing a result deletes the statement, which lets a write
+    finish.
+  - `ExecuteSchema` returns the prepared statement's `result_kind`/`result_schema` (the
+    empty schema for statements without rows) instead of NotImplemented.
+  - `GetObjects` reports primary and foreign keys, with one request to each key endpoint.
+  - SQLSTATEs `42P01` and `42P07` are ADBC NotFound and AlreadyExists.
+  - Removed workarounds the server no longer needs: growing long-poll waits (back to a
+    fixed 15 s) and precision/scale taken from Arrow decimal types.

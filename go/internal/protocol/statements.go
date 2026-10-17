@@ -173,18 +173,13 @@ func (s *Session) Status(ctx context.Context, ref StatementRef, wait time.Durati
 	return doc, decodeJSON(resp, doc)
 }
 
-// WaitDone long-polls until the statement reaches a terminal state. The
-// waits grow from one second to poll: a server may hold a poll for its full
-// wait when the statement finished just before the poll arrived, so short
-// first waits keep quick statements quick.
+// WaitDone long-polls until the statement reaches a terminal state.
 func (s *Session) WaitDone(ctx context.Context, ref StatementRef, doc *StatementDocument, poll time.Duration) (*StatementDocument, error) {
-	wait := min(time.Second, poll)
 	for !doc.State.Terminal() {
 		var err error
-		if doc, err = s.Status(ctx, ref, wait); err != nil {
+		if doc, err = s.Status(ctx, ref, poll); err != nil {
 			return nil, err
 		}
-		wait = min(2*wait, poll)
 	}
 	return doc, nil
 }
@@ -224,7 +219,21 @@ func (s *Session) Cancel(ctx context.Context, ref StatementRef) error {
 	return err
 }
 
-// DeleteStatement cancels a statement if it runs and frees its result (§6.8).
+// CancelAll cancels every statement of the session that is queued or running
+// (§6.8), for a client that has no statement id yet. It returns the ids it
+// cancelled.
+func (s *Session) CancelAll(ctx context.Context) ([]string, error) {
+	id := s.ID()
+	answer := &struct {
+		Cancelled []string `json:"cancelled"`
+	}{}
+	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodPost, Path: sessionPath(id) + "/cancel", Idempotent: true}, answer)
+	return answer.Cancelled, err
+}
+
+// DeleteStatement says the client is done with a statement (§6.8): its result
+// is freed, a running query is cancelled, and a running write finishes with
+// its rows discarded. To stop a write, Cancel it first.
 func (s *Session) DeleteStatement(ctx context.Context, ref StatementRef) error {
 	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: ref.path(), Idempotent: true}, nil)
 	if HasCode(err, CodeStatementNotFound) || HasCode(err, CodeSessionNotFound) {

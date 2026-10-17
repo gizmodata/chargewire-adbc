@@ -5,6 +5,7 @@ package warpsql
 import (
 	"context"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
@@ -28,6 +29,9 @@ type connectionImpl struct {
 	session   *protocol.Session
 	defaults  execOptions
 	janitor   *janitor
+	// running counts the connection's statements between submit and the end
+	// of their result.
+	running atomic.Int32
 }
 
 func newConnection(db *databaseImpl, client *protocol.Client, discovery *protocol.Discovery, session *protocol.Session) driverbase.Connection {

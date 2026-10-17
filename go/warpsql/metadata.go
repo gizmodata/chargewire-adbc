@@ -18,6 +18,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/gizmodata/warp-sql-adbc/go/internal/protocol"
 )
 
 // Field metadata keys of Flight SQL column metadata, which the tables
@@ -205,8 +206,8 @@ func (c *connectionImpl) listTables(ctx context.Context, query url.Values, withS
 // GetObjects builds the catalog/schema/table/column hierarchy from the
 // metadata endpoints, with one request per level. Patterns on catalogs and
 // columns are applied here; the server filters schemas, tables and table
-// types. Constraints are not reported: the key endpoints answer one table at
-// a time.
+// types. At column depth, primary and foreign keys come from one request each
+// to the key endpoints.
 func (c *connectionImpl) GetObjects(ctx context.Context, depth adbc.ObjectDepth, catalog, dbSchema, tableName, columnName *string, tableTypes []string) (rdr array.RecordReader, err error) {
 	ctx, span := c.StartSpan(ctx, "Connection.GetObjects")
 	defer driverbase.EndSpanWithError(span, &err)
@@ -296,6 +297,12 @@ func (c *connectionImpl) addTables(ctx context.Context, depth adbc.ObjectDepth, 
 	if err != nil {
 		return err
 	}
+	var constraints map[tableKey][]driverbase.ConstraintInfo
+	if withColumns {
+		if constraints, err = c.listConstraints(ctx); err != nil {
+			return err
+		}
+	}
 	columnPattern := compileLike(columnName)
 	for i := range infos {
 		for j := range infos[i].CatalogDbSchemas {
@@ -318,7 +325,10 @@ func (c *connectionImpl) addTables(ctx context.Context, depth adbc.ObjectDepth, 
 		table := driverbase.TableInfo{TableName: row.name, TableType: row.kind}
 		if withColumns {
 			table.TableColumns = []driverbase.ColumnInfo{}
-			table.TableConstraints = []driverbase.ConstraintInfo{}
+			table.TableConstraints = constraints[tableKey{*row.catalog, *row.schema, row.name}]
+			if table.TableConstraints == nil {
+				table.TableConstraints = []driverbase.ConstraintInfo{}
+			}
 			for position, field := range row.arrowSchema.Fields() {
 				if columnPattern.match(field.Name) {
 					table.TableColumns = append(table.TableColumns, columnInfo(field, position+1))
@@ -366,18 +376,137 @@ func columnInfo(field arrow.Field, position int) driverbase.ColumnInfo {
 			info.XdbcDecimalDigits = new(int16(n))
 		}
 	}
-	// A decimal says its precision and scale itself, when the server's
-	// metadata does not.
-	if decimal, ok := field.Type.(arrow.DecimalType); ok {
-		if info.XdbcColumnSize == nil {
-			info.XdbcColumnSize = new(decimal.GetPrecision())
-		}
-		if info.XdbcDecimalDigits == nil {
-			info.XdbcDecimalDigits = new(int16(decimal.GetScale()))
-		}
+	if _, ok := field.Type.(arrow.DecimalType); ok {
 		info.XdbcNumPrecRadix = new(int16(10))
 	}
 	return info
+}
+
+// tableKey names a table in GetObjects.
+type tableKey struct{ catalog, schema, table string }
+
+// keyColumn is one column of a primary or foreign key.
+type keyColumn struct {
+	sequence int32
+	column   string
+	// For a foreign key, the column it references.
+	references *driverbase.ConstraintColumnUsage
+}
+
+// listConstraints reads every visible table's primary and foreign keys, with
+// one request to each key endpoint (§10). A server whose key endpoints need a
+// table name reports none.
+func (c *connectionImpl) listConstraints(ctx context.Context) (map[tableKey][]driverbase.ConstraintInfo, error) {
+	type constraintKey struct {
+		table      tableKey
+		kind, name string
+	}
+	columns := map[constraintKey][]keyColumn{}
+	var order []constraintKey
+	add := func(key constraintKey, column keyColumn) {
+		if _, seen := columns[key]; !seen {
+			order = append(order, key)
+		}
+		columns[key] = append(columns[key], column)
+	}
+
+	err := c.readMetadata(ctx, "primary-keys", nil, func(rec arrow.RecordBatch) error {
+		names, err := stringColumns(rec, "catalog_name", "db_schema_name", "table_name", "column_name", "key_name")
+		if err != nil {
+			return err
+		}
+		sequences, err := int32Column(rec, "key_sequence")
+		if err != nil {
+			return err
+		}
+		for i := range int(rec.NumRows()) {
+			key := constraintKey{table: tableKey{stringAt(names[0], i), stringAt(names[1], i), stringAt(names[2], i)},
+				kind: driverbase.PrimaryKey, name: stringAt(names[4], i)}
+			add(key, keyColumn{sequence: sequences.Value(i), column: stringAt(names[3], i)})
+		}
+		return nil
+	})
+	if protocol.HasCode(err, protocol.CodeBadRequest) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	err = c.readMetadata(ctx, "imported-keys", nil, func(rec arrow.RecordBatch) error {
+		names, err := stringColumns(rec, "pk_catalog_name", "pk_db_schema_name", "pk_table_name", "pk_column_name",
+			"fk_catalog_name", "fk_db_schema_name", "fk_table_name", "fk_column_name", "fk_key_name")
+		if err != nil {
+			return err
+		}
+		sequences, err := int32Column(rec, "key_sequence")
+		if err != nil {
+			return err
+		}
+		for i := range int(rec.NumRows()) {
+			name := stringAt(names[8], i)
+			if names[8].IsNull(i) {
+				name = stringAt(names[2], i) // an unnamed key, told apart by the table it references
+			}
+			key := constraintKey{table: tableKey{stringAt(names[4], i), stringAt(names[5], i), stringAt(names[6], i)},
+				kind: driverbase.ForeignKey, name: name}
+			add(key, keyColumn{sequence: sequences.Value(i), column: stringAt(names[7], i),
+				references: &driverbase.ConstraintColumnUsage{
+					ForeignKeyCatalog: stringValue(names[0], i), ForeignKeyDbSchema: stringValue(names[1], i),
+					ForeignKeyTable: stringAt(names[2], i), ForeignKeyColumn: stringAt(names[3], i),
+				}})
+		}
+		return nil
+	})
+	if err != nil && !protocol.HasCode(err, protocol.CodeBadRequest) {
+		return nil, err
+	}
+
+	constraints := map[tableKey][]driverbase.ConstraintInfo{}
+	for _, key := range order {
+		keyColumns := columns[key]
+		slices.SortFunc(keyColumns, func(a, b keyColumn) int { return int(a.sequence - b.sequence) })
+		info := driverbase.ConstraintInfo{ConstraintType: key.kind}
+		if key.name != "" {
+			info.ConstraintName = new(key.name)
+		}
+		var names []string
+		for _, column := range keyColumns {
+			names = append(names, column.column)
+			if column.references != nil {
+				info.ConstraintColumnUsage = append(info.ConstraintColumnUsage, *column.references)
+			}
+		}
+		info.ConstraintColumnNames = driverbase.RequiredList(names)
+		constraints[key.table] = append(constraints[key.table], info)
+	}
+	return constraints, nil
+}
+
+// stringColumns returns several utf8 columns of a metadata result.
+func stringColumns(rec arrow.RecordBatch, names ...string) ([]*array.String, error) {
+	columns := make([]*array.String, len(names))
+	for i, name := range names {
+		column, err := stringColumn(rec, name)
+		if err != nil {
+			return nil, err
+		}
+		columns[i] = column
+	}
+	return columns, nil
+}
+
+// int32Column returns an int32 column of a metadata result by name.
+func int32Column(rec arrow.RecordBatch, name string) (*array.Int32, error) {
+	indices := rec.Schema().FieldIndices(name)
+	if len(indices) == 0 {
+		return nil, adbc.Error{Code: adbc.StatusInternal, Msg: fmt.Sprintf("[%s] metadata result has no column %q", driverName, name)}
+	}
+	column, ok := rec.Column(indices[0]).(*array.Int32)
+	if !ok {
+		return nil, adbc.Error{Code: adbc.StatusInternal, Msg: fmt.Sprintf("[%s] metadata column %q is %s, not int32", driverName, name, rec.Column(indices[0]).DataType())}
+	}
+	return column, nil
 }
 
 // GetTableSchema returns a table's Arrow schema, with the server's column

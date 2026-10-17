@@ -231,3 +231,15 @@ func TestClosedSessionIsNotReplaced(t *testing.T) {
 		t.Fatalf("error %v, %d sessions created", err, len(f.created))
 	}
 }
+
+func TestCancelAll(t *testing.T) {
+	f := newFake(t).withSessions()
+	f.mux.HandleFunc("POST /warp/v1/sessions/{id}/cancel", f.auth(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusAccepted, map[string]any{"cancelled": []string{"q1", "q2"}})
+	}))
+	session := openTestSession(t, f, true)
+	cancelled, err := session.CancelAll(context.Background())
+	if err != nil || len(cancelled) != 2 || cancelled[0] != "q1" {
+		t.Fatalf("CancelAll: %v, %v", cancelled, err)
+	}
+}

@@ -80,9 +80,21 @@ func statusOf(err error) adbc.Status {
 	return adbc.StatusInternal
 }
 
+// SQLSTATEs that say more than their error code.
+const (
+	sqlstateUndefinedTable = "42P01"
+	sqlstateDuplicateTable = "42P07"
+)
+
 // statusOfProblem maps a Warp SQL error code to an ADBC status, falling back
 // to the HTTP status for codes this driver does not know (§12).
 func statusOfProblem(p *protocol.Problem) adbc.Status {
+	switch p.SQLState {
+	case sqlstateUndefinedTable:
+		return adbc.StatusNotFound
+	case sqlstateDuplicateTable:
+		return adbc.StatusAlreadyExists
+	}
 	switch p.Code {
 	case protocol.CodeBadRequest, protocol.CodeInvalidOptionValue, protocol.CodeSQLError,
 		protocol.CodePayloadTooLarge, protocol.CodeHeadersTooLarge:

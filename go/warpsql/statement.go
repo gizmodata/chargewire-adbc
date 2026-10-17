@@ -42,7 +42,8 @@ type preparedStatement struct {
 	ref             protocol.PreparedRef
 	sql             string
 	parameterSchema *arrow.Schema
-	resultSchema    *arrow.Schema // nil when the server did not say
+	resultKind      string        // protocol.ResultRows or ResultUpdate; "" when only running tells
+	resultSchema    *arrow.Schema // nil when the server cannot describe the rows
 }
 
 // ingestTarget is where bulk ingest writes; table is empty unless the
@@ -86,6 +87,8 @@ type execution struct {
 	sub       *protocol.Submission
 	cancel    context.CancelFunc
 	cancelled atomic.Bool // the application cancelled it
+	reading   atomic.Bool // its result is being read
+	finished  sync.Once   // releases its place in the connection's running count
 
 	mu    sync.Mutex
 	ref   protocol.StatementRef
@@ -96,6 +99,11 @@ func (e *execution) setRef(ref protocol.StatementRef) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ref, e.known = ref, ref.StatementID != ""
+}
+
+// finish takes the execution out of the connection's running count.
+func (e *execution) finish(c *connectionImpl) {
+	e.finished.Do(func() { c.running.Add(-1) })
 }
 
 func (e *execution) statementRef() (protocol.StatementRef, bool) {
@@ -249,16 +257,21 @@ func (st *statementImpl) GetParameterSchema(ctx context.Context) (*arrow.Schema,
 	return prepared.parameterSchema, nil
 }
 
-// ExecuteSchema returns the result schema without running the query.
+// ExecuteSchema returns the result schema without running the query, as the
+// server reported it when preparing (§7.1): a statement without rows has the
+// empty schema.
 func (st *statementImpl) ExecuteSchema(ctx context.Context) (*arrow.Schema, error) {
 	prepared, err := st.ensurePrepared(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if prepared.resultSchema == nil {
-		return nil, st.ErrorHelper.NotImplemented("the server did not report the query's result schema when preparing it")
+	switch {
+	case prepared.resultKind == protocol.ResultUpdate:
+		return arrow.NewSchema(nil, nil), nil
+	case prepared.resultSchema != nil:
+		return prepared.resultSchema, nil
 	}
-	return prepared.resultSchema, nil
+	return nil, st.ErrorHelper.NotImplemented("the server can tell this statement's result only by running it")
 }
 
 // ensurePrepared creates the server-side prepared statement for the query.
@@ -278,6 +291,9 @@ func (st *statementImpl) ensurePrepared(ctx context.Context) (*preparedStatement
 		return nil, wrapError(err, "Prepare")
 	}
 	prepared := &preparedStatement{ref: ref, sql: st.query}
+	if doc.ResultKind != nil {
+		prepared.resultKind = *doc.ResultKind
+	}
 	if prepared.parameterSchema, err = decodeSchema(doc.ParameterSchema, st.alloc); err != nil {
 		return nil, wrapError(err, "Prepare")
 	}
@@ -348,6 +364,7 @@ func (st *statementImpl) newSubmission(ctx context.Context, arrowResult bool) (*
 func (st *statementImpl) begin(ctx context.Context, sub *protocol.Submission) (context.Context, *execution) {
 	execCtx, cancel := context.WithCancel(ctx)
 	exec := &execution{sub: sub, cancel: cancel}
+	st.cnxn.running.Add(1)
 	st.mu.Lock()
 	st.active = exec
 	st.mu.Unlock()
@@ -365,6 +382,7 @@ func (st *statementImpl) end(exec *execution) {
 	}
 	st.mu.Unlock()
 	exec.cancel()
+	exec.finish(st.cnxn)
 }
 
 // submit sends a submission. A prepared statement lost with its session (or
@@ -397,72 +415,54 @@ func preparedGone(err error) bool {
 	return protocol.HasCode(err, protocol.CodePreparedNotFound)
 }
 
-// fail ends an execution that went wrong and returns its error. A statement
-// that may still run on the server is stopped.
+// fail ends an execution that went wrong and returns its error. When the
+// caller's context ended, the statement it was waiting for is stopped on the
+// server too.
 func (st *statementImpl) fail(exec *execution, err error, op string) error {
+	if !exec.cancelled.Load() && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+		_ = st.stopOnServer(ctx, exec)
+		cancel()
+	}
 	st.end(exec)
-	st.stop(exec)
+	st.free(exec)
 	if exec.cancelled.Load() {
 		return adbc.Error{Code: adbc.StatusCancelled, Msg: fmt.Sprintf("[%s] %s: the statement was cancelled", driverName, op)}
 	}
 	return wrapError(err, op)
 }
 
-// stop frees the statement on the server (deleting a running statement
-// cancels it), off the caller's path. A statement whose answer never arrived
-// is first named by sending its request again with its Idempotency-Key, which
-// does not run it twice (§6.7) — but only when the request was sent in full;
-// one that never reached the server must not be started now.
-func (st *statementImpl) stop(exec *execution) {
-	session := st.session()
+// free tells the server the driver is done with the statement (§6.8), off the
+// caller's path: its result is freed, a query still running is cancelled, and
+// a write still running finishes with its rows discarded.
+func (st *statementImpl) free(exec *execution) {
 	ref, known := exec.statementRef()
-	switch {
-	case known:
-		st.cnxn.janitor.submit("free statement", func(ctx context.Context) error {
-			return session.DeleteStatement(ctx, ref)
-		})
-	case exec.sub != nil && exec.sub.Sent():
-		sub := exec.sub
-		st.cnxn.janitor.submit("stop unanswered statement", func(ctx context.Context) error {
-			ref, err := session.Recall(ctx, sub)
-			if err != nil {
-				return err
-			}
-			return session.DeleteStatement(ctx, ref)
-		})
+	if !known {
+		return
 	}
+	session := st.session()
+	st.cnxn.janitor.submit("free statement", func(ctx context.Context) error {
+		return session.DeleteStatement(ctx, ref)
+	})
 }
 
-// abandonActive stops a statement still running or an unread result: a new
-// execution or Close invalidates it.
-func (st *statementImpl) abandonActive() {
-	st.mu.Lock()
-	exec := st.active
-	st.active = nil
-	st.mu.Unlock()
-	if exec != nil {
-		exec.cancelled.Store(true)
-		exec.cancel()
-		st.stop(exec)
-	}
-}
-
-// Cancel stops the running statement on the server and stops waiting for it.
-// When the statement's id is not known yet (its answer is still on the way),
-// it is learned by sending the same request again with its Idempotency-Key.
-func (st *statementImpl) Cancel(ctx context.Context) error {
-	st.mu.Lock()
-	exec := st.active
-	st.mu.Unlock()
-	if exec == nil {
-		return st.ErrorHelper.InvalidState("no statement is running")
-	}
-	exec.cancelled.Store(true)
-	defer exec.cancel()
+// stopOnServer cancels the statement on the server (§6.8). Without its id
+// (its answer has not arrived) it cancels the session's work when this is the
+// connection's only statement running; otherwise, or when the server has no
+// session cancel, it learns the id by sending the same request again with its
+// Idempotency-Key, which does not run it twice (§6.7). A request that never
+// reached the server in full needs nothing.
+func (st *statementImpl) stopOnServer(ctx context.Context, exec *execution) error {
 	ref, known := exec.statementRef()
 	if !known {
 		if exec.sub == nil || !exec.sub.Sent() {
-			return nil // nothing reached the server; stopping the request is enough
+			return nil
+		}
+		if st.cnxn.running.Load() == 1 {
+			_, err := st.session().CancelAll(ctx)
+			if !unsupported(err) {
+				return wrapError(err, "Cancel")
+			}
 		}
 		var err error
 		if ref, err = st.session().Recall(ctx, exec.sub); err != nil {
@@ -478,6 +478,47 @@ func (st *statementImpl) Cancel(ctx context.Context) error {
 		return nil // already ended and freed: nothing left to stop
 	}
 	return wrapError(err, "Cancel")
+}
+
+// unsupported reports a server without the endpoint that was called.
+func unsupported(err error) bool {
+	return protocol.HasCode(err, protocol.CodeNotFound) || protocol.HasCode(err, protocol.CodeMethodNotAllowed) ||
+		protocol.HasCode(err, protocol.CodeNotImplemented)
+}
+
+// abandonActive ends what a new execution or Close invalidates: a statement
+// still running is stopped on the server; an open result is freed, as when
+// it is released unread.
+func (st *statementImpl) abandonActive() {
+	st.mu.Lock()
+	exec := st.active
+	st.active = nil
+	st.mu.Unlock()
+	if exec == nil {
+		return
+	}
+	exec.cancelled.Store(true)
+	if !exec.reading.Load() {
+		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
+		_ = st.stopOnServer(ctx, exec)
+		cancel()
+	}
+	exec.cancel()
+	st.free(exec)
+	exec.finish(st.cnxn)
+}
+
+// Cancel stops the running statement on the server and stops waiting for it.
+func (st *statementImpl) Cancel(ctx context.Context) error {
+	st.mu.Lock()
+	exec := st.active
+	st.mu.Unlock()
+	if exec == nil {
+		return st.ErrorHelper.InvalidState("no statement is running")
+	}
+	exec.cancelled.Store(true)
+	defer exec.cancel()
+	return st.stopOnServer(ctx, exec)
 }
 
 func (st *statementImpl) Close(ctx context.Context) error {
@@ -576,7 +617,7 @@ func (st *statementImpl) queryResult(ctx context.Context, exec *execution, doc *
 	}
 	if doc.Result.Kind != protocol.ResultRows {
 		st.end(exec)
-		st.stop(exec)
+		st.free(exec)
 		reader, err := array.NewRecordReader(arrow.NewSchema(nil, nil), nil)
 		return reader, rowsAffected(doc.Result), err
 	}
@@ -603,16 +644,17 @@ func (st *statementImpl) checkSucceeded(exec *execution, doc *protocol.Statement
 }
 
 // readerConfig sets up a result reader for an execution: when the result
-// ends, the execution ends, and the statement is freed on the server (which
-// also stops it, if the result was abandoned).
+// ends, the execution ends and the statement is freed on the server. Freeing
+// an abandoned result cancels a query and lets a write finish (§6.8).
 func (st *statementImpl) readerConfig(ctx context.Context, exec *execution, parts []resultPart) resultReaderConfig {
+	exec.reading.Store(true)
 	ref, _ := exec.statementRef()
 	return resultReaderConfig{
 		ctx: ctx, alloc: st.alloc, session: st.session(), ref: ref, parts: parts, zstd: st.zstd(),
 		cancelled: exec.cancelled.Load,
 		onEnd: func(bool) {
 			st.end(exec)
-			st.stop(exec)
+			st.free(exec)
 		},
 	}
 }
@@ -664,7 +706,7 @@ func (st *statementImpl) ExecuteUpdate(ctx context.Context) (affected int64, err
 		return -1, err
 	}
 	st.end(exec)
-	st.stop(exec)
+	st.free(exec)
 	if doc.Result.Kind != protocol.ResultUpdate {
 		return -1, nil
 	}
@@ -716,7 +758,7 @@ func (st *statementImpl) ExecutePartitions(ctx context.Context) (schema *arrow.S
 	// The result must outlive the statement: partitions are read later.
 	st.end(exec)
 	if doc.Result.Kind != protocol.ResultRows {
-		st.stop(exec)
+		st.free(exec)
 		return arrow.NewSchema(nil, nil), adbc.Partitions{}, rowsAffected(doc.Result), nil
 	}
 	schemaBytes, err := doc.Result.SchemaBytes()

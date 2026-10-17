@@ -2,9 +2,9 @@
 
 | Suite | Where | Needs a server | Tests |
 |---|---|---|---|
-| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake) | 17 |
+| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake) | 19 |
 | Go driver unit | `go/warpsql/unit_test.go`, `fakeserver_test.go` | no (in-process fake) | 12 |
-| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 72 (+14 subtests) |
+| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 73 (+14 subtests) |
 | Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py` | no (the C-ABI test needs the built library) | 27 |
 | Python live | `python/tests/test_integration.py`, `test_cancel_integration.py` | yes | 68 |
 
@@ -45,7 +45,7 @@ and persists without a fetch.
 | Go `TestIntegrationSelectOne` | `TestIntegrationSelectOne` |
 | Go `TestIntegrationLegacySchemeParity` | `TestIntegrationURISpellings` (warp://, http://, base paths) |
 | Go bind tests (5) | `TestIntegrationBindWithoutPrepare{Query,Update}`, `ExplicitPrepareThenBindPreparesOnce` (the prepared id is reused), `RebindAfterNewQueryReprepares`; bulk ingest never prepares (`TestIntegrationIngest*`) |
-| Go cancel tests: interrupt, close while executing, abandoned result, close while updating | the same four, plus cancel with an unknown statement id, async cancel, context deadline, statement timeout, nothing to cancel |
+| Go cancel tests: interrupt, close while executing, abandoned result, close while updating | the same four, plus cancel with an unknown statement id (alone, and beside another statement), async cancel, context deadline, statement timeout, nothing to cancel |
 | Go routing tests: DDL/DML without fetch, RETURNING rows and persistence, string literal, select streams, bound DML/RETURNING/select | `TestIntegrationDDLDMLThroughExecuteQuery`, `ReturningYieldsRowsAndPersists`, `ReturningPersistsWithoutFetch`, `StringLiteralReturning`, `ManyBatches`, `BoundDMLAndSelect`; bound RETURNING in Python |
 | Python `TestPasswordAuth`, `TestExecuteAutoDetect`, `TestExecuteUpdate`, `TestBulkIngest`, `TestReturningClause`, `TestBoundParameterRouting`, `TestConnectionContextManager`, `TestConnectionProfiles`, `TestOpenTelemetryTracing`, `TestConnectCatalog` | the same classes (`TestExecuteDDLDML`, `TestBoundParameters`), with `SELECT version()` for `GIZMOSQL_VERSION()` and DDL reporting -1 rows (the server gives no count) |
 | Python `TestGizmoSqlUriScheme` | `TestUriSpellings`, `TestTLS` |

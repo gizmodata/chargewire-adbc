@@ -7,6 +7,7 @@ package warpsql
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -22,7 +23,7 @@ func metaConn(t *testing.T) adbc.ConnectionWithContext {
 	cnxn := openConn(t)
 	execUpdate(t, cnxn, "ATTACH IF NOT EXISTS ':memory:' AS md; CREATE SCHEMA IF NOT EXISTS md.s1; CREATE SCHEMA IF NOT EXISTS md.s2; "+
 		"CREATE TABLE IF NOT EXISTS md.s1.orders (id INTEGER PRIMARY KEY, total DECIMAL(12, 2) NOT NULL, note VARCHAR); "+
-		"CREATE TABLE IF NOT EXISTS md.s1.order_lines (order_id INTEGER, line INTEGER); "+
+		"CREATE TABLE IF NOT EXISTS md.s1.order_lines (order_id INTEGER REFERENCES md.s1.orders (id), line INTEGER); "+
 		"CREATE OR REPLACE VIEW md.s1.orders_v AS SELECT id FROM md.s1.orders; "+
 		"CREATE TABLE IF NOT EXISTS md.s2.orderxlines (x INTEGER)")
 	return cnxn
@@ -151,8 +152,23 @@ func TestIntegrationGetObjectsColumns(t *testing.T) {
 	if *total.XdbcDataType != int16(driverbase.XdbcDataType_XDBC_DECIMAL) {
 		t.Errorf("xdbc type %d", *total.XdbcDataType)
 	}
-	if tables[0].TableConstraints == nil {
-		t.Error("constraints should be an empty list at column depth")
+	if *total.XdbcNullable != driverbase.XdbcColumnNoNulls || *total.XdbcIsNullable != "NO" {
+		t.Errorf("NOT NULL column reported nullable: %d %s", *total.XdbcNullable, *total.XdbcIsNullable)
+	}
+	if *columns[2].XdbcNullable != driverbase.XdbcColumnNullable {
+		t.Errorf("nullable column reported NOT NULL")
+	}
+	constraints := tables[0].TableConstraints
+	if len(constraints) != 1 || constraints[0].ConstraintType != driverbase.PrimaryKey ||
+		fmt.Sprint(constraints[0].ConstraintColumnNames) != "[id]" {
+		t.Errorf("orders constraints %+v", constraints)
+	}
+	lines := getObjects(t, cnxn, adbc.ObjectDepthAll, new("md"), new("s1"), new("order_lines"), nil, nil)
+	foreign := findSchema(&lines[0], "s1").DbSchemaTables[0].TableConstraints
+	if len(foreign) != 1 || foreign[0].ConstraintType != driverbase.ForeignKey ||
+		fmt.Sprint(foreign[0].ConstraintColumnNames) != "[order_id]" || len(foreign[0].ConstraintColumnUsage) != 1 ||
+		foreign[0].ConstraintColumnUsage[0].ForeignKeyTable != "orders" || foreign[0].ConstraintColumnUsage[0].ForeignKeyColumn != "id" {
+		t.Errorf("order_lines constraints %+v", foreign)
 	}
 
 	filtered := getObjects(t, cnxn, adbc.ObjectDepthAll, new("md"), new("s1"), new("orders"), new("n%"), nil)

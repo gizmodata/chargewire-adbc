@@ -251,6 +251,11 @@ func TestErrorStatuses(t *testing.T) {
 			t.Errorf("%s -> %v, want %v", code, got, want)
 		}
 	}
+	for sqlstate, want := range map[string]adbc.Status{"42P01": adbc.StatusNotFound, "42P07": adbc.StatusAlreadyExists, "42601": adbc.StatusInvalidArgument} {
+		if got := statusOfProblem(&protocol.Problem{Code: protocol.CodeSQLError, SQLState: sqlstate}); got != want {
+			t.Errorf("sql_error %s -> %v, want %v", sqlstate, got, want)
+		}
+	}
 	for status, want := range map[int]adbc.Status{
 		http.StatusForbidden: adbc.StatusUnauthorized, http.StatusGone: adbc.StatusInvalidState,
 		http.StatusTeapot: adbc.StatusInvalidArgument, http.StatusBadGateway: adbc.StatusInternal,

@@ -96,7 +96,7 @@ func TestIntegrationIngestCreateRefusesExistingTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := ingest(t, cnxn, "ing_once", adbc.OptionValueIngestModeCreate, rec, nil)
-	assertStatus(t, err, adbc.StatusInvalidArgument, "sql_error")
+	assertStatus(t, err, adbc.StatusAlreadyExists, "sql_error")
 	if got := scalarInt(t, cnxn, "SELECT count(*) FROM ing_once"); got != 1 {
 		t.Fatalf("the refused upload changed the table: %d rows", got)
 	}
@@ -107,7 +107,7 @@ func TestIntegrationIngestAppendNeedsTable(t *testing.T) {
 	rec := keyValueBatch([]int64{1}, []string{"a"})
 	defer rec.Release()
 	_, err := ingest(t, cnxn, "ing_missing", adbc.OptionValueIngestModeAppend, rec, nil)
-	assertStatus(t, err, adbc.StatusInvalidArgument, "sql_error")
+	assertStatus(t, err, adbc.StatusNotFound, "sql_error")
 }
 
 func TestIntegrationIngestTargetCatalogSchemaAndTemporary(t *testing.T) {
@@ -136,7 +136,7 @@ func TestIntegrationIngestTargetCatalogSchemaAndTemporary(t *testing.T) {
 	stmt := newStmt(t, other)
 	_ = stmt.SetSqlQuery(context.Background(), "SELECT * FROM ing_tmp")
 	_, _, err := stmt.ExecuteQuery(context.Background())
-	assertStatus(t, err, adbc.StatusInvalidArgument, "sql_error")
+	assertStatus(t, err, adbc.StatusNotFound, "sql_error")
 }
 
 // An upload too big to keep in memory streams (chunked), in many batches,

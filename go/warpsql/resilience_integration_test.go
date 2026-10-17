@@ -229,7 +229,7 @@ func TestIntegrationLostSessionTemporaryStateIsReported(t *testing.T) {
 	stmt := newStmt(t, cnxn)
 	setQuery(t, stmt, "SELECT v FROM scratch")
 	_, _, err := stmt.ExecuteQuery(context.Background())
-	assertStatus(t, err, adbc.StatusInvalidArgument, "sql_error")
+	assertStatus(t, err, adbc.StatusNotFound, "sql_error")
 	if !strings.Contains(err.Error(), "replacement session") {
 		t.Errorf("the error does not say the session was replaced: %v", err)
 	}

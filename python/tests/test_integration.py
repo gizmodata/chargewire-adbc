@@ -285,13 +285,13 @@ class TestBulkIngest:
     def test_ingest_create_existing_table_fails(self, conn):
         with conn.cursor() as cur:
             cur.execute(operation="CREATE OR REPLACE TABLE test_ingest_exists (a BIGINT)")
-            with pytest.raises(adbc_driver_manager.ProgrammingError) as caught:
+            with pytest.raises(adbc_driver_manager.Error) as caught:
                 cur.adbc_ingest(
                     table_name="test_ingest_exists", data=pa.table({"a": [1]}), mode="create"
                 )
             assert_error(
                 error=caught.value,
-                status=adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT,
+                status=adbc_driver_manager.AdbcStatusCode.ALREADY_EXISTS,
                 code="sql_error",
             )
 

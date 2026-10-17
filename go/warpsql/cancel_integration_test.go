@@ -11,6 +11,8 @@ package warpsql
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,10 +135,10 @@ func TestIntegrationCancelQueryInterruptsRunningStatement(t *testing.T) {
 }
 
 // Cancel reaches an ExecuteUpdate whose answer the server is still holding
-// (Prefer: wait): its id is learned by sending the request again with its
-// Idempotency-Key, which does not run it twice.
+// (Prefer: wait), whose id the driver does not know: alone on its connection,
+// through the session cancel (§6.8).
 func TestIntegrationCancelUpdateWithUnknownStatementID(t *testing.T) {
-	cnxn := openConn(t)
+	proxy, cnxn := viaProxy(t, nil)
 	stmt := newStmt(t, cnxn)
 	setQuery(t, stmt, "CREATE OR REPLACE TABLE cancelled_update AS "+longQuery)
 	done := runUpdateInBackground(stmt)
@@ -148,9 +150,41 @@ func TestIntegrationCancelUpdateWithUnknownStatementID(t *testing.T) {
 		t.Fatalf("Cancel: %v", err)
 	}
 	assertStatus(t, waitErr(t, done, 30*time.Second), adbc.StatusCancelled, "")
+	sessionCancels := proxy.requests(func(r *http.Request) bool {
+		return r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/cancel") && !strings.Contains(r.URL.Path, "/statements/")
+	})
+	if submits := proxy.requests(isPost("/statements")); len(sessionCancels) != 1 || len(submits) != 1 {
+		t.Fatalf("%d session cancels and %d submits; want 1 and 1 (no resend)", len(sessionCancels), len(submits))
+	}
 	assertSessionUsable(t, cnxn)
 	if got := scalarInt(t, cnxn, "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cancelled_update'"); got != 0 {
-		t.Fatalf("the cancelled CREATE OR REPLACE TABLE AS left %d table(s) behind", got)
+		t.Fatalf("the cancelled CREATE TABLE AS left %d table(s) behind", got)
+	}
+}
+
+// Beside another statement of the same connection, the session cancel would
+// stop that one too: the driver names its own statement by sending its
+// request again with its Idempotency-Key, and only it is cancelled.
+func TestIntegrationCancelLeavesOtherStatementsAlone(t *testing.T) {
+	cnxn := openConn(t)
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE cancel_bystander (v INTEGER)")
+	long := newStmt(t, cnxn)
+	setQuery(t, long, "CREATE OR REPLACE TABLE cancel_target AS "+longQuery)
+	done := runUpdateInBackground(long)
+	waitRunning(t, long)
+	bystander := newStmt(t, cnxn)
+	setQuery(t, bystander, "INSERT INTO cancel_bystander VALUES (1)")
+	queued := runUpdateInBackground(bystander) // waits behind the long statement
+	waitRunning(t, bystander)
+	if err := long.Cancel(context.Background()); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	assertStatus(t, waitErr(t, done, 30*time.Second), adbc.StatusCancelled, "")
+	if err := waitErr(t, queued, 30*time.Second); err != nil {
+		t.Fatalf("the other statement was cancelled too: %v", err)
+	}
+	if got := scalarInt(t, cnxn, "SELECT count(*) FROM cancel_bystander"); got != 1 {
+		t.Fatalf("the other statement's row is missing: %d", got)
 	}
 }
 

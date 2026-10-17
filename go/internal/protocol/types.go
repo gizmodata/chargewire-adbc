@@ -140,11 +140,14 @@ type Partition struct {
 	Rows     *int64  `json:"rows"`
 }
 
-// PreparedDocument describes a prepared statement (§7.1).
+// PreparedDocument describes a prepared statement (§7.1). ResultKind is
+// ResultRows or ResultUpdate, or nil when the server can tell only by running
+// it; ResultSchema is set for rows the server could describe.
 type PreparedDocument struct {
 	PreparedID      string  `json:"prepared_id"`
 	ParameterSchema string  `json:"parameter_schema"`
 	ResultSchema    *string `json:"result_schema"`
+	ResultKind      *string `json:"result_kind"`
 }
 
 // ingestResult is the answer to POST …/ingest (§8.1).

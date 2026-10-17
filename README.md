@@ -124,17 +124,25 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
   replacement (it would commit half a transaction): the operation fails with the
   transaction named as lost. A prepared statement is prepared again; a retained result is
   gone. With `adbc.warp.session.reconnect=false` the connection stays broken.
-- **Cancel** (`AdbcStatementCancel`, Python's `adbc_cancel()` and Ctrl+C, releasing an
-  unread result, closing the statement, or a Go context ending) stops the statement on the
-  server. When its answer has not arrived yet, the driver learns its id by sending the same
-  request again with its `Idempotency-Key`, which does not run it twice.
+- **Cancel** (`AdbcStatementCancel`, Python's `adbc_cancel()` and Ctrl+C, closing the
+  statement while it runs, or a Go context ending) stops the statement on the server with
+  `POST …/cancel`. When its answer has not arrived yet, the driver cancels the session's
+  work (`POST /sessions/{id}/cancel`) if it is the connection's only statement running;
+  beside other statements, or on a server without the session cancel, it learns the id by
+  sending the same request again with its `Idempotency-Key`, which does not run it twice.
+- **Done with a result.** Releasing a result, read or not, deletes the statement on the
+  server (§6.8): a query still running is cancelled, a write (`INSERT … RETURNING`) runs to
+  the end with its rows discarded.
 - **Prepared statements** are created on the server only when needed (to bind parameters or
   describe them), which spares a DB-API cursor, which prepares every query, two round
   trips per query. Bound parameters travel as Arrow, one row per execution.
-- **Cleanup.** Finished statements are deleted on the server in the background, so a
-  long-lived session does not accumulate them.
+  `ExecuteSchema` returns the schema the server reports when preparing (`result_kind`,
+  `result_schema`), without running the statement.
+- **Cleanup.** Finished statements are deleted on the server in the background, off the
+  caller's path.
 - **GetObjects** takes one request per level (catalogs, schemas, tables with their
-  schemas). Constraints are not reported: the key endpoints answer one table at a time.
+  schemas) and, at column depth, one each for primary and foreign keys. Errors whose
+  SQLSTATE is `42P01`/`42P07` (no such table / it exists) are ADBC NotFound/AlreadyExists.
 
 ## Building and testing
 

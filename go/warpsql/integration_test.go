@@ -384,24 +384,27 @@ func TestIntegrationGetParameterSchema(t *testing.T) {
 	}
 }
 
-// ExecuteSchema returns what the server reported when preparing, and says
-// plainly when it reported nothing.
+// ExecuteSchema returns what the server reported when preparing (§7.1),
+// without running anything.
 func TestIntegrationExecuteSchema(t *testing.T) {
 	cnxn := openConn(t)
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE exec_schema (v INTEGER)")
 	stmt := newStmt(t, cnxn)
-	if err := stmt.SetSqlQuery(context.Background(), "SELECT 1::INTEGER AS a, 'x' AS b"); err != nil {
-		t.Fatal(err)
-	}
+	setQuery(t, stmt, "SELECT 1::INTEGER AS a, 'x' AS b")
 	schema, err := stmt.ExecuteSchema(context.Background())
-	if stmt.prepared.resultSchema == nil {
-		assertStatus(t, err, adbc.StatusNotImplemented, "")
-		return
-	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if schema.NumFields() != 2 || schema.Field(0).Name != "a" {
+	if schema.NumFields() != 2 || schema.Field(0).Name != "a" || schema.Field(0).Type.ID() != arrow.INT32 {
 		t.Fatalf("schema %s", schema)
+	}
+	setQuery(t, stmt, "INSERT INTO exec_schema VALUES (1)")
+	schema, err = stmt.ExecuteSchema(context.Background())
+	if err != nil || schema.NumFields() != 0 {
+		t.Fatalf("a statement without rows: schema %v, %v", schema, err)
+	}
+	if got := scalarInt(t, cnxn, "SELECT count(*) FROM exec_schema"); got != 0 {
+		t.Fatalf("ExecuteSchema ran the INSERT: %d rows", got)
 	}
 }
 
