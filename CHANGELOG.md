@@ -18,14 +18,14 @@ All notable changes to this project are documented here. The format follows
   server answers a part or upload sent again with its `Idempotency-Key` from the first
   upload without reading the body, and the Warp SQL SDK then closed the connection with
   the body unread on Linux and macOS, which resets it, so a client still sending got a
-  broken pipe or a reset instead of the answer (fixed in warp-sql ce22b15, which drains
-  before closing on every platform; Hardcharger 4556928 takes it). The tests' fault proxy
+  broken pipe or a reset instead of the answer (fixed in warp-sql 2dbcd84, which drains
+  before closing on every platform; Hardcharger main cadc02e takes it, through warp-sql 3aefd27). The tests' fault proxy
   had the same defect on its own hop (the answer passed on, the rest of the body unread):
   it now reads every request body to its end. No row was ever written twice: every run
   checked the table row by row. New live test `TestIntegrationIngestAnswerToARetryArrives`
   sends a part and a one-request upload (about 2 MB) again 40 times each, directly and
   through the proxy, and asserts every answer arrives and the rows count once; it fails
-  on servers before warp-sql ce22b15 (8 of 10 runs on warp-duckdb 17e4609) and passes
+  on servers before warp-sql 2dbcd84 (8 of 10 runs on warp-duckdb 17e4609) and passes
   with it.
 - The `dbapi` module exports PEP 249's exception classes (`Error`, `Warning`, `InterfaceError`,
   `DatabaseError`, `DataError`, `OperationalError`, `IntegrityError`, `InternalError`,
