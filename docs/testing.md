@@ -4,7 +4,7 @@
 |---|---|---|---|
 | Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake) | 20 |
 | Go driver unit | `go/warpsql/unit_test.go`, `fakeserver_test.go`, `mtls_unit_test.go` | no (in-process fakes; a TLS one for certificate sign-in) | 16 |
-| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 74 (+19 subtests) |
+| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 75 (+25 subtests) |
 | Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py` | no (the C-ABI test needs the built library) | 33 |
 | Python live | `python/tests/test_integration.py`, `test_cancel_integration.py` | yes | 79 |
 
@@ -70,7 +70,9 @@ Not ported, and why:
 
 Resumed downloads (streamed with retention, async, twice in one result) and unretained ones
 failing with the remedy, through a fault-injecting proxy; lost answers to submits and
-uploads retried with the same `Idempotency-Key` and run once; retried status polls;
+uploads retried with the same `Idempotency-Key` and run once; the answer to a part or
+upload sent again arriving every time, directly and through the proxy (which reads every
+request body to its end, so it loses no answer itself); retried status polls;
 failures mid-stream; lost sessions (replaced with options replayed, temporary state
 reported, refused inside a transaction, commit refused, reconnect off, prepared statement
 re-prepared, retained result lost); partitions read on another connection; zstd results and

@@ -61,13 +61,42 @@ func newFaultProxy(t *testing.T, server *testServer) *faultProxy {
 		proxy.mu.Lock()
 		proxy.seen = append(proxy.seen, r.Clone(r.Context()))
 		proxy.mu.Unlock()
+		body := &lingeringBody{body: r.Body}
+		r.Body = body
 		reverse.ServeHTTP(w, r)
+		body.drain()
 	}))
 	t.Cleanup(proxy.server.Close)
 	return proxy
 }
 
 var errDropResponse = errors.New("fault proxy: response dropped")
+
+// lingeringBody is a request body the proxy reads to its end even when the
+// server answered without reading it all (a retried part, answered from its
+// first upload): leaving the rest unread would reset the client's connection
+// and lose the answer the proxy passed on, a fault no rule asked for. The
+// reverse proxy's transport may still be sending it when the answer is back,
+// so reads are serialized, and Close waits for drain.
+type lingeringBody struct {
+	mu   sync.Mutex
+	body io.ReadCloser
+}
+
+func (b *lingeringBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.body.Read(p)
+}
+
+func (b *lingeringBody) Close() error { return nil }
+
+func (b *lingeringBody) drain() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, _ = io.Copy(io.Discard, b.body)
+	_ = b.body.Close()
+}
 
 // cutBody fails after a number of bytes, which makes the reverse proxy
 // abort the connection mid-body.
