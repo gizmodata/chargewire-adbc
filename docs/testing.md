@@ -16,7 +16,7 @@ nothing is collected. The Go live tests run with the race detector (`make integr
 and on a checked Arrow allocator: a test that leaks Arrow memory fails.
 
 Any Warp SQL server with warp-duckdb's flags works (the certificate sign-in tests also pass
-`--mtls-admin-identities`, which warp-duckdb and Hardcharger share). For Hardcharger, name its password
+`--mtls-certificate-sign-in --mtls-admin-identities`, which warp-duckdb and Hardcharger share). For Hardcharger, name its password
 variable, client-CA flag, user-name flag and vendor name:
 
 ```bash

@@ -657,6 +657,7 @@ def mtls_server(tmp_path_factory, server_log):
             str(certificates["key"]),
             "--tls-client-ca",
             str(certificates["ca"]),
+            "--mtls-certificate-sign-in",
             "--mtls-admin-identities",
             CLIENT_EMAIL,
         ],

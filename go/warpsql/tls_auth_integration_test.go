@@ -209,7 +209,7 @@ func certificateToken(t *testing.T, server *testServer, ca *testCA, cert, key st
 func TestIntegrationClientCertificate(t *testing.T) {
 	ca := newTestCA(t)
 	server := startServer(t, "--tls-cert", ca.serverCertFile, "--tls-key", ca.serverKeyFile, "--tls-client-ca", ca.caFile,
-		"--mtls-admin-identities", testClientEmail)
+		"--mtls-certificate-sign-in", "--mtls-admin-identities", testClientEmail)
 	strangerCert, strangerKey := ca.issue(t, "stranger", []string{"stranger@example.com"}, false)
 	certificate := func(cert, key string) map[string]string {
 		return map[string]string{

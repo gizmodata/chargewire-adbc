@@ -93,7 +93,8 @@ with dbapi.connect(uri="warp://db.example.com:31337", username="joe", password="
 ```
 
 With mutual TLS the certificate can be the credential itself (the server maps it to a
-user; Hardcharger's `mtls_admin_identities` or its access-control users):
+user, on a server that turned certificate sign-in on; Hardcharger's `mtls_certificate_sign_in`
+with `mtls_admin_identities` or its access-control users):
 
 ```python
 dbapi.connect(uri="warp://db.example.com:31337", auth_type="client_certificate",
