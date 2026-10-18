@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The `dbapi` module exports PEP 249's exception classes (`Error`, `Warning`, `InterfaceError`,
+  `DatabaseError`, `DataError`, `OperationalError`, `IntegrityError`, `InternalError`,
+  `ProgrammingError`, `NotSupportedError`), as PEP 249 requires of a driver module. They are
+  `adbc_driver_manager`'s own classes, so `except dbapi.ProgrammingError` and
+  `except adbc_driver_manager.ProgrammingError` catch the same errors.
+
 ### Added
 
 - `warpsql.NewDriverWithName(alloc, displayName)`: the driver under another GetInfo driver
