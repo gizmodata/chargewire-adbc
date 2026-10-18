@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-adbc/go/adbc"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
@@ -228,6 +230,39 @@ func TestIntegrationClientCertificate(t *testing.T) {
 		defer table.Release()
 		if got := int64Column(t, table, "i"); !slices.Equal(got, descending(1000000)) {
 			t.Fatal("the split result over a certificate sign-in is wrong")
+		}
+	})
+	t.Run("a partitioned ingest is sent with the bound token", func(t *testing.T) {
+		// Every part goes over a connection of its own; each presents the certificate.
+		cnxn := connect(t, openDB(t, server, certificate(ca.clientCertPEM, ca.clientKeyPEM)))
+		keys := make([]int64, 100000)
+		values := make([]string, len(keys))
+		for i := range keys {
+			keys[i] = int64(i)
+			values[i] = "v"
+		}
+		rec := keyValueBatch(keys, values)
+		defer rec.Release()
+		reader, err := array.NewRecordReader(rec.Schema(), []arrow.RecordBatch{rec.NewSlice(0, 50000), rec.NewSlice(50000, 100000)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reader.Release()
+		stmt := newStmt(t, cnxn)
+		for key, value := range map[string]string{adbc.OptionKeyIngestTargetTable: "mtls_parts",
+			adbc.OptionKeyIngestMode: adbc.OptionValueIngestModeCreate, OptionIngestParts: "4"} {
+			if err := stmt.SetOption(context.Background(), key, value); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := stmt.BindStream(context.Background(), reader); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := stmt.ExecuteUpdate(context.Background()); err != nil || n != 100000 {
+			t.Fatalf("ingested %d rows: %v", n, err)
+		}
+		if got := scalarInt(t, cnxn, "SELECT count(*) FROM mtls_parts"); got != 100000 {
+			t.Fatal(got)
 		}
 	})
 	t.Run("an unknown identity is refused", func(t *testing.T) {
