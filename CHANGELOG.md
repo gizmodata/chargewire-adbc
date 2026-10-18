@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Python 3.11 is the minimum (`requires-python = ">=3.11"`): pyarrow 26, the floor,
+  needs 3.11, so on 3.10 the package could never be installed.
+
 ### Fixed
 
 - The `dbapi` module exports PEP 249's exception classes (`Error`, `Warning`, `InterfaceError`,

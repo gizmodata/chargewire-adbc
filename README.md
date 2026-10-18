@@ -197,7 +197,7 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
 
 ## 🛠️ Building and testing
 
-Go 1.27, a C toolchain for cgo, and Python 3.10+ for the bindings.
+Go 1.27, a C toolchain for cgo, and Python 3.11+ for the bindings.
 
 ```bash
 make -C go lib                      # go/build/libadbc_driver_warpsql.{so,dylib,dll}
