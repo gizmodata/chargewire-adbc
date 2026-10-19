@@ -121,6 +121,10 @@ type Request struct {
 	Anonymous bool
 	// Trace, when set, observes the request's progress on the wire.
 	Trace *httptrace.ClientTrace
+	// MaxAttempts, when 1 or more, bounds how often this request is sent
+	// below the client's own bound (best-effort requests such as ending a
+	// session when a connection closes).
+	MaxAttempts int
 }
 
 // Do sends req and returns a 2xx response, whose body the caller closes. An
@@ -142,7 +146,11 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 			}
 		}
 		resp, err := c.send(ctx, req, token)
-		canRepeat := req.Body.Replayable() && attempt < c.maxAttempts
+		maxAttempts := c.maxAttempts
+		if req.MaxAttempts > 0 {
+			maxAttempts = min(maxAttempts, req.MaxAttempts)
+		}
+		canRepeat := req.Body.Replayable() && attempt < maxAttempts
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -187,7 +195,7 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 }
 
 // permanent reports a transport error that sending again cannot cure: the
-// TLS handshake failed on a certificate.
+// TLS handshake failed on a certificate, or met a plain-HTTP server.
 func permanent(err error) bool {
 	var verification *tls.CertificateVerificationError
 	var alert tls.AlertError
@@ -195,7 +203,18 @@ func permanent(err error) bool {
 	var hostname x509.HostnameError
 	var invalid x509.CertificateInvalidError
 	return errors.As(err, &verification) || errors.As(err, &alert) || errors.As(err, &authority) ||
-		errors.As(err, &hostname) || errors.As(err, &invalid)
+		errors.As(err, &hostname) || errors.As(err, &invalid) || SpeaksPlainHTTP(err)
+}
+
+// SpeaksPlainHTTP reports a TLS handshake that the server answered with plain
+// HTTP: the client sent only its TLS hello, and nothing else (no request, no
+// credentials) reached the server.
+func SpeaksPlainHTTP(err error) bool {
+	if errors.Is(err, http.ErrSchemeMismatch) {
+		return true
+	}
+	var record tls.RecordHeaderError
+	return errors.As(err, &record) && string(record.RecordHeader[:]) == "HTTP/"
 }
 
 // retryableStatus is an answer that a repeat of the same request may not get.

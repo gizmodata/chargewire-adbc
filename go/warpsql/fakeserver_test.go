@@ -41,7 +41,12 @@ type fakeWarp struct {
 	tokens        atomic.Int64
 	fromBatch     []int64 // from_batch of every result request
 	mu            sync.Mutex
+	// sessionDelete, when set, answers DELETE of a session.
+	sessionDelete atomic.Pointer[http.HandlerFunc]
 }
+
+// setSessionDelete makes handler answer DELETE of a session.
+func (f *fakeWarp) setSessionDelete(handler http.HandlerFunc) { f.sessionDelete.Store(&handler) }
 
 var fakeSchema = arrow.NewSchema([]arrow.Field{{Name: "v", Type: arrow.PrimitiveTypes.Int64}}, nil)
 
@@ -60,7 +65,13 @@ func newFakeWarp(t *testing.T) *fakeWarp {
 	mux.HandleFunc("POST /warp/v1/sessions", func(w http.ResponseWriter, r *http.Request) {
 		fakeJSON(w, http.StatusCreated, map[string]any{"session_id": "s1", "options": map[string]any{}})
 	})
-	mux.HandleFunc("DELETE /warp/v1/sessions/{s}", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("DELETE /warp/v1/sessions/{s}", func(w http.ResponseWriter, r *http.Request) {
+		if handler := f.sessionDelete.Load(); handler != nil {
+			(*handler)(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("DELETE /warp/v1/sessions/{s}/statements/{q}", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})

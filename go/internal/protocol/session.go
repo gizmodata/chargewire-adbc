@@ -320,7 +320,11 @@ func (s *Session) Close(ctx context.Context) error {
 	s.closed = true
 	id := s.id
 	s.mu.Unlock()
-	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: sessionPath(id), Idempotent: true}, nil)
+	// Two attempts at most (the second for a pooled connection the server had
+	// already closed): a stopped server must not hold up a close, and a
+	// session whose end the server never heard idles out there.
+	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: sessionPath(id), Idempotent: true,
+		MaxAttempts: 2}, nil)
 	if HasCode(err, CodeSessionNotFound) {
 		return nil
 	}

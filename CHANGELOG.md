@@ -13,6 +13,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A TLS connection (`warp://`, the default, or `https://`) to a server that speaks plain HTTP
+  failed with Go's "server gave HTTP response to HTTPS client", after four tries. It now fails
+  at once with what to do: `The server at HOST:PORT speaks plain HTTP, not TLS. Add ?tls=false
+  to the URI to connect without encryption.` (for an `https://` URI: "Use an http:// URI
+  instead of https://"), status `IO`. Only the TLS hello reaches the server: no request and no
+  credential (live tests record the bytes through a TCP proxy, Go and Python). The driver never
+  falls back to plaintext.
+- Closing a connection after the server stopped returned an error ("closing the session: …
+  connection refused"), so Python's `Connection.close()` raised and left the driver's database
+  handle open ("Cannot close AdbcDatabase with open AdbcConnection"). Ending the session is now
+  best-effort: at most two tries within 5 s (was four within 10 s), and a server that is gone,
+  hangs or refuses no longer fails `Close`, which always releases the connection's local
+  resources; the session ends on the server when it idles out. Live tests stop the server (or
+  freeze it behind a proxy) and close statements, connections and the database, with no error,
+  no leaked goroutine (goleak) and no Arrow memory left.
 - `TestIntegrationIngestPartAnswerLost` failed now and then ("10 part requests, want 9"):
   the answer to the part sent again was itself lost, and the part went a third time. The
   server answers a part or upload sent again with its `Idempotency-Key` from the first

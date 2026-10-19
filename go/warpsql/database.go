@@ -222,6 +222,9 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 	discovery, err := client.Discover(ctx)
 	if err != nil {
 		transport.CloseIdleConnections()
+		if hint := plainHTTPError(err, d.uri, base); hint != nil {
+			return nil, nil, hint
+		}
 		return nil, nil, wrapError(err, "connecting to "+base.Redacted())
 	}
 	if d.credentials.ClientCertificate && !discovery.Has(protocol.CapabilityMTLSIdentity) {

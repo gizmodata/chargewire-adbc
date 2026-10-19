@@ -61,7 +61,14 @@ docs/                design notes and the test inventory
 | `http://host:port[/prefix]` | Plain HTTP |
 
 TLS is verified unless `adbc.warp.tls.skip_verify` is set explicitly. Credentials never go
-in the URI; a URI with user info is refused.
+in the URI; a URI with user info is refused. A TLS URI pointed at a plain-HTTP server fails
+at once, before anything but the TLS hello is sent, with `The server at HOST:PORT speaks plain
+HTTP, not TLS. Add ?tls=false to the URI to connect without encryption.` (for an `https://`
+URI: use `http://`); the driver never falls back to plaintext by itself.
+
+Closing a connection ends its server session as a courtesy: when the server has stopped or
+doesn't answer, `Close` still succeeds (within 5 seconds) and releases everything the driver
+holds, and the session ends on the server when it idles out.
 
 ### Go
 

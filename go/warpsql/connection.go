@@ -14,7 +14,7 @@ import (
 )
 
 // closeTimeout bounds ending the session when a connection closes.
-const closeTimeout = 10 * time.Second
+const closeTimeout = 5 * time.Second
 
 // longPoll is how long the server may hold a status request (§6.3). It stays
 // well below the idle timeouts of common proxies.
@@ -142,13 +142,17 @@ func (c *connectionImpl) NewStatement(ctx context.Context) (adbc.StatementWithCo
 }
 
 // Close ends the session, which also stops its running statements and frees
-// their results on the server.
+// their results on the server. Ending it is best-effort: when the server
+// can't be reached or refuses (it stopped, the network is down), Close still
+// succeeds after at most closeTimeout, and the session ends on the server when
+// it idles out. Whatever the connection holds locally is released either way.
 func (c *connectionImpl) Close(ctx context.Context) error {
 	c.janitor.close()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 	defer cancel()
 	if err := c.session.Close(ctx); err != nil {
-		return wrapError(err, "closing the session")
+		c.db.Logger.Debug("could not end the session on the server; it ends there when it idles out",
+			"session", c.session.ID(), "error", err)
 	}
 	return nil
 }
