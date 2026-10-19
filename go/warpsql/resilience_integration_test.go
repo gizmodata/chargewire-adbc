@@ -174,7 +174,7 @@ func TestIntegrationFailureMidStream(t *testing.T) {
 		err = reader.Err()
 		reader.Release()
 	}
-	assertStatus(t, err, adbc.StatusInternal, "execution_error")
+	assertStatus(t, err, adbc.StatusInvalidArgument, "execution_error")
 	if !strings.Contains(err.Error(), "boom") {
 		t.Errorf("the error lost the server's message: %v", err)
 	}

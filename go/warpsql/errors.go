@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/apache/arrow-adbc/go/adbc"
 	"github.com/gizmodata/warp-sql-adbc/go/internal/protocol"
@@ -94,73 +95,161 @@ func statusOf(err error) adbc.Status {
 	return adbc.StatusInternal
 }
 
-// SQLSTATEs that say more than their error code.
+// SQLSTATEs that say more than their error code: the two §11 names, which
+// clients map to "not found" and "already exists", and class 23, a violated
+// constraint, which is what StatusIntegrity stands for. They refine only the
+// codes of a statement's SQL, so a server that attaches one to another code
+// (a permission or a session error) keeps that code's status.
 const (
-	sqlstateUndefinedTable = "42P01"
-	sqlstateDuplicateTable = "42P07"
+	sqlstateUndefinedTable          = "42P01"
+	sqlstateDuplicateTable          = "42P07"
+	sqlstateClassIntegrityViolation = "23"
 )
+
+// codeStatuses maps every Warp SQL error code of version 1 (§11), and the
+// driver's own client_ codes, to the ADBC status that says what to do about
+// it. A user's SQL that fails, at prepare (sql_error) or while it runs
+// (execution_error: a division by zero, a conversion), is
+// StatusInvalidArgument, as the DuckDB and PostgreSQL ADBC drivers report it
+// and as the Flight SQL driver does for gRPC INVALID_ARGUMENT, so DB-API
+// layers raise ProgrammingError rather than InternalError. StatusInternal is
+// kept for a failure that is no request's doing: internal_error, an answer
+// that broke the protocol, an Idempotency-Key the driver reused (it makes
+// them). Limits and a server that can't serve now are StatusIO, which callers
+// may retry. A code missing here falls back to its HTTP status (§12).
+//
+// TestErrorStatusesCoverTheSpec checks this table against the spec's.
+var codeStatuses = map[string]adbc.Status{
+	// 400: what the request asked for is malformed or not allowed.
+	protocol.CodeBadRequest:         adbc.StatusInvalidArgument,
+	protocol.CodeInvalidOptionValue: adbc.StatusInvalidArgument,
+	protocol.CodeInvalidReturnTo:    adbc.StatusInvalidArgument,
+	protocol.CodeSQLError:           adbc.StatusInvalidArgument,
+	// An option the server doesn't have: ADBC's status for an unknown option.
+	protocol.CodeUnknownOption: adbc.StatusNotImplemented,
+	// A grant this server doesn't offer: the connection can't sign in.
+	protocol.CodeUnsupportedGrantType: adbc.StatusUnauthenticated,
+
+	// 401: no valid identity.
+	protocol.CodeInvalidCredentials:          adbc.StatusUnauthenticated,
+	protocol.CodeInvalidToken:                adbc.StatusUnauthenticated,
+	protocol.CodeSessionEnded:                adbc.StatusUnauthenticated,
+	protocol.CodeCertificateRequired:         adbc.StatusUnauthenticated,
+	protocol.CodeUnknownCertificateIdentity:  adbc.StatusUnauthenticated,
+	protocol.CodeCertificateRevoked:          adbc.StatusUnauthenticated,
+	protocol.CodeCertificateMismatch:         adbc.StatusUnauthenticated,
+	protocol.CodeCertificateIdentityMismatch: adbc.StatusUnauthenticated,
+	// A failed browser sign-in's codes (§4.3.2), and flow_not_found (404): a
+	// sign-in that can't complete.
+	protocol.CodeAccessDenied:          adbc.StatusUnauthenticated,
+	protocol.CodeIdentityProviderError: adbc.StatusUnauthenticated,
+	protocol.CodeFlowNotFound:          adbc.StatusUnauthenticated,
+	protocol.CodeClientSignInFailed:    adbc.StatusUnauthenticated,
+
+	// 403: an identity without the privilege.
+	protocol.CodePermissionDenied: adbc.StatusUnauthorized,
+	protocol.CodeReadOnly:         adbc.StatusUnauthorized,
+
+	// 404.
+	protocol.CodeSessionNotFound:   adbc.StatusNotFound,
+	protocol.CodeStatementNotFound: adbc.StatusNotFound,
+	protocol.CodePreparedNotFound:  adbc.StatusNotFound,
+	protocol.CodeIngestNotFound:    adbc.StatusNotFound,
+	protocol.CodePartitionNotFound: adbc.StatusNotFound,
+	protocol.CodeNotFound:          adbc.StatusNotFound,
+
+	// 405: the server doesn't support this operation on the endpoint.
+	protocol.CodeMethodNotAllowed: adbc.StatusNotImplemented,
+
+	// 409 and 410: the handle is not in a state that allows the request.
+	protocol.CodeResultNotReady:     adbc.StatusInvalidState,
+	protocol.CodeResultNotResumable: adbc.StatusInvalidState,
+	protocol.CodeIngestIncomplete:   adbc.StatusInvalidState,
+	protocol.CodeResultExpired:      adbc.StatusInvalidState,
+	protocol.CodeIngestExpired:      adbc.StatusInvalidState,
+	protocol.CodeIngestPartExists:   adbc.StatusAlreadyExists,
+	// 409: the statement's own end.
+	protocol.CodeStatementCancelled:       adbc.StatusCancelled,
+	protocol.CodeClientStatementCancelled: adbc.StatusCancelled,
+	protocol.CodeStatementTimeout:         adbc.StatusTimeout,
+
+	// 413, 415, 431.
+	protocol.CodePayloadTooLarge:      adbc.StatusInvalidArgument,
+	protocol.CodeHeadersTooLarge:      adbc.StatusInvalidArgument,
+	protocol.CodeUnsupportedArrowType: adbc.StatusNotImplemented,
+
+	// 421, 429, 503: retry (elsewhere, or later).
+	protocol.CodeSessionElsewhere:    adbc.StatusIO,
+	protocol.CodeTooManySessions:     adbc.StatusIO,
+	protocol.CodeResultQuotaExceeded: adbc.StatusIO,
+	protocol.CodeRateLimited:         adbc.StatusIO,
+	protocol.CodeServerDraining:      adbc.StatusIO,
+
+	// 422: the statement failed while running; the user's SQL or data.
+	protocol.CodeExecutionError: adbc.StatusInvalidArgument,
+	// 422 too, but the driver makes every Idempotency-Key (§6.7): a reused
+	// one is the driver's fault.
+	protocol.CodeIdempotencyKeyReused: adbc.StatusInternal,
+
+	// 500 and 501.
+	protocol.CodeInternalError:  adbc.StatusInternal,
+	protocol.CodeNotImplemented: adbc.StatusNotImplemented,
+
+	// The driver's own: an answer that broke the protocol, a failed
+	// statement document without its error (the spec requires one).
+	protocol.CodeClientProtocolError:   adbc.StatusInternal,
+	protocol.CodeClientStatementFailed: adbc.StatusInternal,
+	// client_http_error is absent on purpose: its HTTP status decides.
+}
 
 // statusOfProblem maps a Warp SQL error code to an ADBC status, falling back
 // to the HTTP status for codes this driver does not know (§12).
 func statusOfProblem(p *protocol.Problem) adbc.Status {
-	switch p.SQLState {
-	case sqlstateUndefinedTable:
-		return adbc.StatusNotFound
-	case sqlstateDuplicateTable:
-		return adbc.StatusAlreadyExists
+	if p.Code == protocol.CodeSQLError || p.Code == protocol.CodeExecutionError {
+		switch p.SQLState {
+		case sqlstateUndefinedTable:
+			return adbc.StatusNotFound
+		case sqlstateDuplicateTable:
+			return adbc.StatusAlreadyExists
+		}
+		if len(p.SQLState) == 5 && strings.HasPrefix(p.SQLState, sqlstateClassIntegrityViolation) {
+			return adbc.StatusIntegrity
+		}
 	}
-	switch p.Code {
-	case protocol.CodeBadRequest, protocol.CodeInvalidOptionValue, protocol.CodeSQLError,
-		protocol.CodePayloadTooLarge, protocol.CodeHeadersTooLarge, protocol.CodeInvalidReturnTo:
-		return adbc.StatusInvalidArgument
-	case protocol.CodeUnknownOption, protocol.CodeNotImplemented, protocol.CodeUnsupportedArrowType:
-		return adbc.StatusNotImplemented
-	case protocol.CodeInvalidCredentials, protocol.CodeInvalidToken, protocol.CodeSessionEnded,
-		protocol.CodeUnsupportedGrantType, protocol.CodeCertificateRequired, protocol.CodeUnknownCertificateIdentity,
-		protocol.CodeCertificateRevoked, protocol.CodeCertificateMismatch,
-		protocol.CodeCertificateIdentityMismatch, protocol.CodeFlowNotFound, protocol.CodeAccessDenied,
-		protocol.CodeIdentityProviderError:
-		return adbc.StatusUnauthenticated
-	case protocol.CodePermissionDenied, protocol.CodeReadOnly:
-		return adbc.StatusUnauthorized
-	case protocol.CodeSessionNotFound, protocol.CodeStatementNotFound, protocol.CodePreparedNotFound,
-		protocol.CodeIngestNotFound, protocol.CodePartitionNotFound, protocol.CodeNotFound:
-		return adbc.StatusNotFound
-	case protocol.CodeResultNotReady, protocol.CodeResultNotResumable, protocol.CodeResultExpired,
-		protocol.CodeMethodNotAllowed, protocol.CodeIngestIncomplete, protocol.CodeIngestPartExists,
-		protocol.CodeIngestExpired:
-		return adbc.StatusInvalidState
-	case protocol.CodeStatementTimeout:
-		return adbc.StatusTimeout
-	case protocol.CodeStatementCancelled, protocol.CodeClientStatementCancelled:
-		return adbc.StatusCancelled
-	case protocol.CodeSessionElsewhere, protocol.CodeTooManySessions, protocol.CodeResultQuotaExceeded,
-		protocol.CodeRateLimited, protocol.CodeServerDraining:
-		return adbc.StatusIO
-	case protocol.CodeExecutionError, protocol.CodeIdempotencyKeyReused, protocol.CodeInternalError,
-		protocol.CodeClientProtocolError, protocol.CodeClientStatementFailed:
-		return adbc.StatusInternal
+	if status, ok := codeStatuses[p.Code]; ok {
+		return status
 	}
-	// An unknown code, or an error status without a problem document
-	// (client_http_error): the HTTP status decides (§12).
+	return statusOfHTTP(p.Status)
+}
+
+// statusOfHTTP is the status of an error code this driver does not know, or
+// of an error status without a problem document (client_http_error), by its
+// HTTP status (§11, §12): a 4xx is the request's doing, a 5xx the server's.
+func statusOfHTTP(status int) adbc.Status {
 	switch {
-	case p.Status == http.StatusUnauthorized:
+	case status == http.StatusUnauthorized:
 		return adbc.StatusUnauthenticated
-	case p.Status == http.StatusForbidden:
+	case status == http.StatusForbidden:
 		return adbc.StatusUnauthorized
-	case p.Status == http.StatusNotFound:
+	case status == http.StatusNotFound:
 		return adbc.StatusNotFound
-	case p.Status == http.StatusConflict || p.Status == http.StatusGone:
-		return adbc.StatusInvalidState
-	case p.Status == http.StatusNotImplemented:
+	case status == http.StatusMethodNotAllowed || status == http.StatusNotImplemented:
 		return adbc.StatusNotImplemented
-	case p.Status == http.StatusGatewayTimeout:
+	case status == http.StatusConflict || status == http.StatusGone:
+		return adbc.StatusInvalidState
+	case status == http.StatusGatewayTimeout:
 		return adbc.StatusTimeout
-	case p.Status == http.StatusTooManyRequests || p.Status == http.StatusServiceUnavailable ||
-		p.Status == http.StatusBadGateway || p.Status == http.StatusMisdirectedRequest:
+	// 408: the server gave up waiting for the request, which may be retried.
+	case status == http.StatusRequestTimeout || status == http.StatusMisdirectedRequest ||
+		status == http.StatusTooManyRequests ||
+		status == http.StatusBadGateway || status == http.StatusServiceUnavailable:
 		return adbc.StatusIO
-	case p.Status >= 400 && p.Status < 500:
+	case status >= 400 && status < 500:
 		return adbc.StatusInvalidArgument
+	case status == 0:
+		// No status to go by: a failed statement document's error with a
+		// code this driver doesn't know.
+		return adbc.StatusUnknown
 	}
 	return adbc.StatusInternal
 }

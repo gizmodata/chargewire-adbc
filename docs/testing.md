@@ -3,10 +3,10 @@
 | Suite | Where | Needs a server | Tests |
 |---|---|---|---|
 | Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake; a TLS one for the certificate_required alert) | 33 |
-| Go driver unit | `go/warpsql/unit_test.go`, `fakeserver_test.go`, `browser_unit_test.go`, `mtls_unit_test.go`, `plainhttp_test.go`, `close_test.go` | no (in-process fakes; a TLS one for certificate sign-in) | 39 |
-| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 100 |
+| Go driver unit | `go/warpsql/unit_test.go`, `errors_unit_test.go`, `fakeserver_test.go`, `browser_unit_test.go`, `mtls_unit_test.go`, `plainhttp_test.go`, `close_test.go` | no (in-process fakes; a TLS one for certificate sign-in) | 43 |
+| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 102 |
 | Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py`, `test_dbapi_exceptions_unit.py` | no (the C-ABI test needs the built library) | 33 |
-| Python live | `python/tests/test_integration.py`, `test_cancel_integration.py`, `test_polish_integration.py` | yes | 86 |
+| Python live | `python/tests/test_integration.py`, `test_cancel_integration.py`, `test_polish_integration.py`, `test_error_classes_integration.py` | yes | 95 |
 
 (Test functions; parametrized cases and subtests count once.)
 

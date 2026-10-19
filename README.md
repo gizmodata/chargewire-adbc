@@ -92,6 +92,18 @@ failure the driver found in the server's answer (`client_protocol_error`, and
 The error details also carry `warp.request_id`, and `warp.reason` / `warp.cancel_reason`
 when the server gave one (`token_revoked`, `killed`, …).
 
+Each code has the ADBC status that says what to do about it (`go/warpsql/errors.go`): SQL
+that fails, before it runs (`sql_error`) or while it runs (`execution_error`: a division by
+zero, a conversion), is `StatusInvalidArgument`, as in the DuckDB and PostgreSQL ADBC
+drivers, so Python raises `ProgrammingError`; SQLSTATE `42P01` is `StatusNotFound`, `42P07`
+`StatusAlreadyExists` and class `23` (a constraint) `StatusIntegrity` (`IntegrityError`).
+Cancels and timeouts are `StatusCancelled` and `StatusTimeout` (`OperationalError`), sign-in
+failures `StatusUnauthenticated`, missing privileges `StatusUnauthorized`, limits and a
+draining server `StatusIO`. Only a server or driver fault (`internal_error`, an answer that
+breaks the protocol) is `StatusInternal` (`InternalError`). A code the driver doesn't know
+falls back to its HTTP status. The SQLSTATE, when the server sent one, is in the error's
+`SqlState` (Python: `error.sqlstate`).
+
 ### Python
 
 ```python

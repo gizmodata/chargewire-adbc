@@ -452,14 +452,14 @@ func TestFakeFailedDocumentAndExecutionError(t *testing.T) {
 	defer stmt.Close(context.Background())
 	_ = stmt.SetSqlQuery(context.Background(), "UPDATE t SET v = 1/0")
 	_, err := stmt.ExecuteUpdate(context.Background())
-	assertFakeError(t, err, adbc.StatusInternal, "execution_error")
+	assertFakeError(t, err, adbc.StatusInvalidArgument, "execution_error")
 
 	f.setSubmit(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Warp-Statement-Id", "q3")
 		fakeProblem(w, http.StatusUnprocessableEntity, "execution_error")
 	})
 	_, err = stmt.ExecuteUpdate(context.Background())
-	assertFakeError(t, err, adbc.StatusInternal, "execution_error")
+	assertFakeError(t, err, adbc.StatusInvalidArgument, "execution_error")
 	if deleted := f.deletedStatements(2); !slices.Contains(deleted, "q3") {
 		t.Errorf("statements deleted %v, want q3 among them", deleted)
 	}

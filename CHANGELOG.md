@@ -89,6 +89,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A user's SQL that failed while running (`execution_error`, HTTP 422: a division by zero, a
+  failed conversion, `error()`) was reported as ADBC `StatusInternal`, which says the driver
+  or server is broken, so Python raised `InternalError`. It is now `StatusInvalidArgument`
+  (`ProgrammingError`), like `sql_error` and like the DuckDB and PostgreSQL ADBC drivers. The
+  mapping is now one table that covers every code in the spec's error table (§11) and the
+  driver's `client_` codes; other changes: SQLSTATE class `23` on a SQL error is
+  `StatusIntegrity` (`IntegrityError`; Hardcharger sends `23000` for a violated constraint);
+  SQLSTATE `42P01`/`42P07` refine only `sql_error`/`execution_error`, not another code that
+  carries one; `method_not_allowed` (and an unknown code with HTTP 405) is
+  `StatusNotImplemented`, not `StatusInvalidState`; `ingest_part_exists` is
+  `StatusAlreadyExists`; an unknown code with HTTP 408 is `StatusIO` (retryable), and one
+  with no HTTP status at all (inside a failed statement document) is `StatusUnknown`, not
+  `StatusInternal`. Tests: a unit test per code, one that fails when the spec's table
+  (`go/warpsql/testdata/warp-sql-errors.md`, or a `warp-sql.md` named by
+  `WARP_SQL_ADBC_TEST_SPEC`) or the protocol package has a code without a status, live Go
+  tests and Python tests of the DB-API class of a division by zero, a conversion, a failure
+  mid-stream, a syntax error, an unknown table, a duplicate key, a cancel, a timeout and a
+  wrong password.
 - A TLS connection (`warp://`, the default, or `https://`) to a server that speaks plain HTTP
   failed with Go's "server gave HTTP response to HTTPS client", after four tries. It now fails
   at once with what to do: `The server at HOST:PORT speaks plain HTTP, not TLS. Add ?tls=false

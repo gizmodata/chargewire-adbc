@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +17,6 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/gizmodata/warp-sql-adbc/go/internal/protocol"
 )
 
 func TestParseURI(t *testing.T) {
@@ -236,56 +234,6 @@ func TestUploadSpillsWhenLarge(t *testing.T) {
 	}
 	if n, err := readBatches(buf.Bytes()); n != 40 || err != nil {
 		t.Fatalf("streamed body: %d batches, %v", n, err)
-	}
-}
-
-// Every Warp SQL code maps to the ADBC status that says what to do about it;
-// a code the driver does not know falls back to its HTTP status (§12).
-func TestErrorStatuses(t *testing.T) {
-	for code, want := range map[string]adbc.Status{
-		protocol.CodeSQLError: adbc.StatusInvalidArgument, protocol.CodeInvalidCredentials: adbc.StatusUnauthenticated,
-		protocol.CodePermissionDenied: adbc.StatusUnauthorized, protocol.CodeSessionNotFound: adbc.StatusNotFound,
-		protocol.CodeStatementTimeout: adbc.StatusTimeout, protocol.CodeStatementCancelled: adbc.StatusCancelled,
-		protocol.CodeUnsupportedArrowType: adbc.StatusNotImplemented, protocol.CodeResultExpired: adbc.StatusInvalidState,
-		protocol.CodeServerDraining: adbc.StatusIO, protocol.CodeExecutionError: adbc.StatusInternal,
-		protocol.CodeCertificateRequired: adbc.StatusUnauthenticated, protocol.CodeUnknownCertificateIdentity: adbc.StatusUnauthenticated,
-		protocol.CodeCertificateRevoked: adbc.StatusUnauthenticated, protocol.CodeCertificateMismatch: adbc.StatusUnauthenticated,
-		protocol.CodeCertificateIdentityMismatch: adbc.StatusUnauthenticated,
-		protocol.CodeUnsupportedGrantType:        adbc.StatusUnauthenticated, protocol.CodePartitionNotFound: adbc.StatusNotFound,
-		protocol.CodeStatementNotFound: adbc.StatusNotFound, protocol.CodeInternalError: adbc.StatusInternal,
-		protocol.CodeClientProtocolError: adbc.StatusInternal, protocol.CodeClientStatementCancelled: adbc.StatusCancelled,
-	} {
-		if got := statusOfProblem(&protocol.Problem{Code: code}); got != want {
-			t.Errorf("%s -> %v, want %v", code, got, want)
-		}
-	}
-	for sqlstate, want := range map[string]adbc.Status{"42P01": adbc.StatusNotFound, "42P07": adbc.StatusAlreadyExists, "42601": adbc.StatusInvalidArgument} {
-		if got := statusOfProblem(&protocol.Problem{Code: protocol.CodeSQLError, SQLState: sqlstate}); got != want {
-			t.Errorf("sql_error %s -> %v, want %v", sqlstate, got, want)
-		}
-	}
-	for status, want := range map[int]adbc.Status{
-		http.StatusForbidden: adbc.StatusUnauthorized, http.StatusGone: adbc.StatusInvalidState,
-		http.StatusTeapot: adbc.StatusInvalidArgument, http.StatusBadGateway: adbc.StatusIO,
-		http.StatusUnprocessableEntity: adbc.StatusInvalidArgument, http.StatusInternalServerError: adbc.StatusInternal,
-		http.StatusNotFound: adbc.StatusNotFound, http.StatusUnauthorized: adbc.StatusUnauthenticated,
-	} {
-		for _, code := range []string{"a_future_code", protocol.CodeClientHTTPError} {
-			if got := statusOfProblem(&protocol.Problem{Code: code, Status: status}); got != want {
-				t.Errorf("%s with HTTP %d -> %v, want %v", code, status, got, want)
-			}
-		}
-	}
-	err := wrapError(&protocol.Problem{Code: protocol.CodeSQLError, Status: 400, SQLState: "42P01", RequestID: "r_1", Detail: "no table t"}, "ExecuteQuery")
-	adbcErr, ok := errors.AsType[adbc.Error](err)
-	if !ok || string(adbcErr.SqlState[:]) != "42P01" || len(adbcErr.Details) != 2 || ErrorCode(err) != "sql_error" {
-		t.Fatalf("wrapped %+v", adbcErr)
-	}
-	if strings.Count(err.Error(), "no table t") != 1 {
-		t.Errorf("message repeats itself: %s", err)
-	}
-	if wrapError(context.Canceled, "x").(*driverError).adbcErr.Code != adbc.StatusCancelled {
-		t.Error("a cancelled context is not StatusCancelled")
 	}
 }
 
