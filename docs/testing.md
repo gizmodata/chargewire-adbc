@@ -60,7 +60,7 @@ Not ported, and why:
 
 | gizmosql-adbc | Why not |
 |---|---|
-| OAuth/SSO tests (Go `oauth_test.go`, Python `test_oauth_unit.py`, external-auth connect cases) | GizmoSQL's own OAuth server. Warp SQL's browser flow is the optional `oauth_browser` capability, which the reference server does not offer and the driver does not implement yet |
+| OAuth/SSO tests (Go `oauth_test.go`, Python `test_oauth_unit.py`, external-auth connect cases) | GizmoSQL's own OAuth server and its routes. Warp SQL's browser flow (`oauth_browser`, spec §4.3) has its own tests: `browser_unit_test.go`, `browser_integration_test.go` (warp-duckdb with a mock OpenID Connect provider), Python `test_connect_unit.py` and `test_browser_integration.py` |
 | SQL classification unit tests (Go `sqlrouting_test.go`, Python `test_sql_routing_unit.py`, `TestIsDdlDml`) | There is no client-side routing: a Warp SQL server runs every statement on submit |
 | Flight cancel plumbing unit tests (`cancel_test.go`), log filter (`logging_test.go`) | Specific to Flight's `CancelFlightInfo` and its log noise; the Warp SQL equivalents are the protocol and fake-server tests |
 | `TestIntegrationConnectionCancelQuery` | A GizmoSQL extension that cancelled the session's statement from the connection; `AdbcConnectionCancel` cancels connection-level calls, which the C layer does through contexts |

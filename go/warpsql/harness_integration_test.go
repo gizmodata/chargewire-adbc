@@ -136,6 +136,8 @@ func launchServer(binary string, extraArgs []string) (*testServer, error) {
 	}
 	args := []string{"--host", "127.0.0.1", "--port", fmt.Sprint(port), envOr(serverUserFlagEnv, "--username"), testUsername}
 	for _, arg := range extraArgs {
+		// {base_url}: the server's own URL, for flags that need it before it runs.
+		arg = strings.ReplaceAll(arg, "{base_url}", "http://"+server.host)
 		switch arg {
 		case "--tls-cert":
 			server.scheme = "https"

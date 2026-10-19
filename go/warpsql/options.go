@@ -36,8 +36,18 @@ const (
 	// credential, with no password; spec §4.4). "mtls" is accepted for
 	// AuthTypeClientCertificate. The server binds a certificate sign-in's
 	// token to the certificate, and every connection the driver opens
-	// presents it.
+	// presents it. AuthTypeOAuthBrowser signs in through a browser with the
+	// server's identity provider (spec §4.3) when the first connection opens:
+	// see BrowserSignIn.
 	OptionAuthType = "adbc.warp.auth.type"
+
+	// OptionOAuthBrowser is the command that opens the browser sign-in page,
+	// given its URL as the last argument. Default: the system's (open,
+	// xdg-open, rundll32). BrowserNone only prints the URL to stderr.
+	OptionOAuthBrowser = "adbc.warp.oauth.browser"
+	// OptionOAuthTimeoutSeconds is how long the person has to sign in
+	// (default 300).
+	OptionOAuthTimeoutSeconds = "adbc.warp.oauth.timeout_seconds"
 
 	// OptionAccessToken is a Warp SQL access token obtained elsewhere, used
 	// instead of a username and password. It cannot be renewed.
@@ -63,6 +73,11 @@ const (
 const (
 	AuthTypePassword          = "password"
 	AuthTypeClientCertificate = "client_certificate"
+	// AuthTypeOAuthBrowser: browser sign-in (spec §4.3).
+	AuthTypeOAuthBrowser = "oauth_browser"
+	// BrowserNone, as OptionOAuthBrowser, prints the sign-in URL instead of
+	// opening a browser.
+	BrowserNone = "none"
 	// authTypeMTLS is accepted as AuthTypeClientCertificate.
 	authTypeMTLS = "mtls"
 )

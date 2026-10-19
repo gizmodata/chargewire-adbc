@@ -146,6 +146,8 @@ def connect(
     password: Optional[str] = None,
     access_token: Optional[str] = None,
     auth_type: Optional[str] = None,
+    open_browser: Union[bool, str] = True,
+    oauth_timeout_seconds: Optional[float] = None,
     tls_skip_verify: bool = False,
     tls_root_certs: Optional[PemSource] = None,
     tls_client_cert: Optional[PemSource] = None,
@@ -171,7 +173,15 @@ def connect(
         auth_type: ``"password"`` (the default) or ``"client_certificate"``
             (``"mtls"``): sign in with the TLS client certificate
             (``tls_client_cert`` and ``tls_client_key``) and no password. The
-            server binds the token to the certificate.
+            server binds the token to the certificate. ``"oauth_browser"``:
+            sign in through a browser with the server's identity provider
+            (Warp SQL spec §4.3), when the connection opens; the server must
+            list the ``oauth_browser`` capability.
+        open_browser: Browser sign-in: True (the default) opens the system's
+            browser, False prints the sign-in URL to stderr instead, and a
+            string is the command that opens it (the URL is appended).
+        oauth_timeout_seconds: Browser sign-in: how long the person has to
+            sign in (default 300).
         tls_skip_verify: Do not verify the server's certificate (development
             only).
         tls_root_certs: CA certificates to trust, as PEM text or a file path.
@@ -210,6 +220,14 @@ def connect(
     for key, value in credentials.items():
         if value is not None:
             db_kwargs.setdefault(key, value)
+    if open_browser is False:
+        db_kwargs.setdefault(DatabaseOptions.OAUTH_BROWSER.value, "none")
+    elif isinstance(open_browser, str):
+        db_kwargs.setdefault(DatabaseOptions.OAUTH_BROWSER.value, open_browser)
+    if oauth_timeout_seconds is not None:
+        db_kwargs.setdefault(
+            DatabaseOptions.OAUTH_TIMEOUT_SECONDS.value, str(oauth_timeout_seconds)
+        )
     if tls_skip_verify:
         db_kwargs.setdefault(DatabaseOptions.TLS_SKIP_VERIFY.value, "true")
     pem_options = {

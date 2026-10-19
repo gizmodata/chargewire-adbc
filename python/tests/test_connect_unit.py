@@ -81,6 +81,34 @@ class TestConnect:
             "adbc.warp.tls.client_key": key,
         }
 
+    def test_browser_sign_in(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
+        from adbc_driver_warpsql.dbapi import connect
+
+        connect(uri="warp://h:1", auth_type="oauth_browser")
+        assert _db_kwargs(mock_db=mock_db) == {
+            "uri": "warp://h:1",
+            "adbc.warp.auth.type": "oauth_browser",
+        }
+
+    def test_browser_sign_in_options(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
+        from adbc_driver_warpsql.dbapi import connect
+
+        connect(
+            uri="warp://h:1",
+            auth_type="oauth_browser",
+            open_browser=False,
+            oauth_timeout_seconds=60,
+        )
+        assert _db_kwargs(mock_db=mock_db) == {
+            "uri": "warp://h:1",
+            "adbc.warp.auth.type": "oauth_browser",
+            "adbc.warp.oauth.browser": "none",
+            "adbc.warp.oauth.timeout_seconds": "60",
+        }
+        mock_db.reset_mock()
+        connect(uri="warp://h:1", auth_type="oauth_browser", open_browser="firefox --new-window")
+        assert _db_kwargs(mock_db=mock_db)["adbc.warp.oauth.browser"] == "firefox --new-window"
+
     def test_pem_text_and_files(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib, tmp_path):
         from adbc_driver_warpsql.dbapi import connect
 

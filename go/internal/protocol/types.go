@@ -34,6 +34,8 @@ const (
 	CapabilityPartitionedIngest  = "partitioned_ingest"
 	// CapabilityMTLSIdentity: the client_certificate grant (§4.4).
 	CapabilityMTLSIdentity = "mtls_identity"
+	// CapabilityOAuthBrowser: browser sign-in (§4.3).
+	CapabilityOAuthBrowser = "oauth_browser"
 )
 
 // How a result split into partitions spreads its batches over them (§6.10).
@@ -68,7 +70,21 @@ type Discovery struct {
 	Capabilities []string `json:"capabilities"`
 	Auth         struct {
 		GrantTypes []string `json:"grant_types"`
+		// OAuthBrowser describes browser sign-in (§4.3) when the server
+		// offers it.
+		OAuthBrowser *struct {
+			Provider string `json:"provider"`
+		} `json:"oauth_browser"`
 	} `json:"auth"`
+}
+
+// BrowserSignInProvider is the identity provider's name the server gives for
+// browser sign-in (§4.3), or "".
+func (d *Discovery) BrowserSignInProvider() string {
+	if d.Auth.OAuthBrowser == nil {
+		return ""
+	}
+	return d.Auth.OAuthBrowser.Provider
 }
 
 // Has reports whether the server lists capability.

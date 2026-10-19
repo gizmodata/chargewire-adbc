@@ -20,8 +20,14 @@ class DatabaseOptions(enum.Enum):
     #: How to sign in: "password" (the default: username and password, or a token) or
     #: "client_certificate" ("mtls"): the TLS client certificate (TLS_CLIENT_CERT and
     #: TLS_CLIENT_KEY) is the credential, with no password. The server binds the token to
-    #: the certificate.
+    #: the certificate. "oauth_browser": sign in through a browser with the server's
+    #: identity provider (Warp SQL spec §4.3) when the first connection opens.
     AUTH_TYPE = "adbc.warp.auth.type"
+    #: Browser sign-in: the command that opens the sign-in page (its URL is appended);
+    #: default the system's browser; "none" prints the URL to stderr.
+    OAUTH_BROWSER = "adbc.warp.oauth.browser"
+    #: Browser sign-in: how long the person has to sign in, in seconds (default 300).
+    OAUTH_TIMEOUT_SECONDS = "adbc.warp.oauth.timeout_seconds"
     #: A Warp SQL access token obtained elsewhere (used as is, never renewed).
     ACCESS_TOKEN = "adbc.warp.auth.access_token"
     #: An identity provider's token, exchanged for an access token.

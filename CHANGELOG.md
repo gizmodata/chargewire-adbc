@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Browser sign-in (Warp SQL spec §4.3, servers with capability `oauth_browser`):
+  `adbc.warp.auth.type=oauth_browser` signs in through a browser with the server's identity
+  provider when the first connection opens. The driver creates a flow, opens its
+  `authorize_url` (`adbc.warp.oauth.browser`: a command, or `none` to print the URL to stderr;
+  default the system's browser), polls it with its secret at the server's `poll_interval_s`
+  and uses the server's access token it gets once (`adbc.warp.oauth.timeout_seconds`, default
+  300). A refusal fails with status `UNAUTHENTICATED` and the server's code (`access_denied`,
+  `invalid_credentials`, `flow_not_found`) and detail; a server without the capability is
+  refused before any flow is created; a username, password or token beside it is refused.
+  The poll secret and the token are never logged. For drivers built on this one,
+  `warpsql.BrowserSignIn(ctx, options, opener, timeout)` runs the flow and returns the access
+  token, its lifetime and the provider's name, and `warpsql.SystemBrowser(command)` is the
+  default opener. Python: `connect(auth_type="oauth_browser", open_browser=False|"cmd",
+  oauth_timeout_seconds=...)`, `DatabaseOptions.OAUTH_BROWSER`, `OAUTH_TIMEOUT_SECONDS`.
+  Tests: unit tests against a fake server (the token used, the capability required, each
+  failure's code and detail, timeout and cancellation, conflicting credentials, the exported
+  function) and live ones against warp-duckdb with a mock OpenID Connect provider that checks
+  PKCE (a sign-in, the exported token opening a session, a refusal at the provider, an
+  unauthorized user, a server without the capability); Python unit and live tests.
+
 ### Changed
 
 - Python 3.11 is the minimum (`requires-python = ">=3.11"`): pyarrow 26, the floor,

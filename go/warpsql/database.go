@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -30,6 +31,11 @@ type databaseImpl struct {
 	maxAttempts int
 	reconnect   bool
 	defaults    execOptions
+	// Browser sign-in (AuthTypeOAuthBrowser): the opener's command and how
+	// long the person has.
+	browserSignIn  bool
+	browserCommand string
+	browserTimeout time.Duration
 
 	// Set by the first successful Open; the options above are fixed from
 	// then on.
@@ -106,12 +112,22 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 	case OptionAuthType:
 		switch strings.ToLower(value) {
 		case "", AuthTypePassword:
-			d.credentials.ClientCertificate = false
+			d.credentials.ClientCertificate, d.browserSignIn = false, false
 		case AuthTypeClientCertificate, authTypeMTLS:
-			d.credentials.ClientCertificate = true
+			d.credentials.ClientCertificate, d.browserSignIn = true, false
+		case AuthTypeOAuthBrowser:
+			d.credentials.ClientCertificate, d.browserSignIn = false, true
 		default:
-			return invalidOption(key, value, `"password" or "client_certificate" ("mtls")`)
+			return invalidOption(key, value, `"password", "client_certificate" ("mtls") or "oauth_browser"`)
 		}
+	case OptionOAuthBrowser:
+		d.browserCommand = value
+	case OptionOAuthTimeoutSeconds:
+		seconds, err := strconv.ParseFloat(value, 64)
+		if err != nil || seconds <= 0 {
+			return invalidOption(key, value, "a number of seconds above 0")
+		}
+		d.browserTimeout = time.Duration(seconds * float64(time.Second))
 	case OptionAccessToken:
 		d.credentials.AccessToken = value
 	case OptionSubjectToken:
@@ -158,10 +174,17 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 	case adbc.OptionKeyUsername:
 		return d.credentials.Username, nil
 	case OptionAuthType:
-		if d.credentials.ClientCertificate {
+		switch {
+		case d.credentials.ClientCertificate:
 			return AuthTypeClientCertificate, nil
+		case d.browserSignIn:
+			return AuthTypeOAuthBrowser, nil
 		}
 		return AuthTypePassword, nil
+	case OptionOAuthBrowser:
+		return d.browserCommand, nil
+	case OptionOAuthTimeoutSeconds:
+		return strconv.FormatFloat(d.timeoutOrDefault().Seconds(), 'f', -1, 64), nil
 	case OptionTLSSkipVerify:
 		return strconv.FormatBool(d.tls.skipVerify), nil
 	case OptionTLSServerName:
@@ -232,13 +255,22 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 		return nil, nil, d.ErrorHelper.Unauthenticated("the server does not offer client certificate sign-in (capability %s): it needs TLS with client CAs and must list the %s grant (it offers %v)",
 			protocol.CapabilityMTLSIdentity, protocol.GrantClientCertificate, discovery.Auth.GrantTypes)
 	}
-	if grant := d.grantType(); grant != "" && !discovery.SupportsGrant(grant) {
-		transport.CloseIdleConnections()
-		return nil, nil, d.ErrorHelper.Unauthenticated("the server does not accept the %s grant (it offers %v)", grant, discovery.Auth.GrantTypes)
-	}
-	if err := client.Authenticate(ctx); err != nil {
-		transport.CloseIdleConnections()
-		return nil, nil, wrapError(err, "signing in")
+	if d.browserSignIn {
+		signedIn, err := runBrowserSignIn(ctx, client, discovery, openBrowser(d.browserCommand), d.browserTimeout)
+		if err != nil {
+			transport.CloseIdleConnections()
+			return nil, nil, err
+		}
+		client.UseAccessToken(signedIn.AccessToken)
+	} else {
+		if grant := d.grantType(); grant != "" && !discovery.SupportsGrant(grant) {
+			transport.CloseIdleConnections()
+			return nil, nil, d.ErrorHelper.Unauthenticated("the server does not accept the %s grant (it offers %v)", grant, discovery.Auth.GrantTypes)
+		}
+		if err := client.Authenticate(ctx); err != nil {
+			transport.CloseIdleConnections()
+			return nil, nil, wrapError(err, "signing in")
+		}
 	}
 	d.DriverInfo.MustRegister(map[adbc.InfoCode]any{
 		adbc.InfoVendorName:    discovery.Server.Name,
@@ -247,6 +279,17 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 	d.client, d.transport, d.discovery = client, transport, discovery
 	return client, discovery, nil
 }
+
+func (d *databaseImpl) timeoutOrDefault() time.Duration {
+	if d.browserTimeout > 0 {
+		return d.browserTimeout
+	}
+	return DefaultBrowserSignInTimeout
+}
+
+// openBrowser is the opener a database with OptionOAuthBrowser = command
+// uses. Tests replace it.
+var openBrowser = SystemBrowser
 
 // grantType is the token grant the credentials use, or "" for a token issued
 // elsewhere.
@@ -266,10 +309,26 @@ func (d *databaseImpl) grantType() string {
 // certificate sign-in takes no password or token, and needs a client
 // certificate over TLS.
 func (d *databaseImpl) checkCredentials(base *url.URL) error {
+	c := d.credentials
+	if d.browserSignIn {
+		var given []string
+		for _, credential := range []struct {
+			name, value string
+		}{{adbc.OptionKeyUsername, c.Username}, {adbc.OptionKeyPassword, c.Password},
+			{OptionSubjectToken, c.SubjectToken}, {OptionAccessToken, c.AccessToken}} {
+			if credential.value != "" {
+				given = append(given, credential.name)
+			}
+		}
+		if len(given) > 0 {
+			return d.ErrorHelper.InvalidArgument("%s=%s signs in through the browser; do not also set %s",
+				OptionAuthType, AuthTypeOAuthBrowser, strings.Join(given, ", "))
+		}
+		return nil
+	}
 	if !d.credentials.ClientCertificate {
 		return nil
 	}
-	c := d.credentials
 	var given []string
 	for _, credential := range []struct {
 		name, value string
@@ -295,18 +354,28 @@ func (d *databaseImpl) checkCredentials(base *url.URL) error {
 }
 
 func (d *databaseImpl) newTransport(base *url.URL) (*http.Transport, error) {
+	transport, err := transportFor(base, d.tls)
+	if err != nil {
+		return nil, d.ErrorHelper.InvalidArgument("%s", err)
+	}
+	return transport, nil
+}
+
+// transportFor is the HTTP transport for a server at base with these TLS
+// options.
+func transportFor(base *url.URL, options tlsOptions) (*http.Transport, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	// A split result is read over one connection per partition (§6.10).
 	transport.MaxIdleConnsPerHost = maxResultPartitions
 	if base.Scheme == "http" {
-		if d.tls != (tlsOptions{}) {
-			return nil, d.ErrorHelper.InvalidArgument("TLS options were given, but the uri %s is plain HTTP", base.Redacted())
+		if options != (tlsOptions{}) {
+			return nil, fmt.Errorf("TLS options were given, but the uri %s is plain HTTP", base.Redacted())
 		}
 		return transport, nil
 	}
-	config, err := d.tls.config()
+	config, err := options.config()
 	if err != nil {
-		return nil, d.ErrorHelper.InvalidArgument("%s", err)
+		return nil, err
 	}
 	transport.TLSClientConfig = config
 	return transport, nil

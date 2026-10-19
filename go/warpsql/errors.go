@@ -97,14 +97,15 @@ func statusOfProblem(p *protocol.Problem) adbc.Status {
 	}
 	switch p.Code {
 	case protocol.CodeBadRequest, protocol.CodeInvalidOptionValue, protocol.CodeSQLError,
-		protocol.CodePayloadTooLarge, protocol.CodeHeadersTooLarge:
+		protocol.CodePayloadTooLarge, protocol.CodeHeadersTooLarge, protocol.CodeInvalidReturnTo:
 		return adbc.StatusInvalidArgument
 	case protocol.CodeUnknownOption, protocol.CodeNotImplemented, protocol.CodeUnsupportedArrowType:
 		return adbc.StatusNotImplemented
 	case protocol.CodeInvalidCredentials, protocol.CodeInvalidToken, protocol.CodeSessionEnded,
 		protocol.CodeClientCertificateRequired, protocol.CodeUnknownCertificateIdentity,
 		protocol.CodeCertificateRevoked, protocol.CodeCertificateMismatch,
-		protocol.CodeCertificateIdentityMismatch:
+		protocol.CodeCertificateIdentityMismatch, protocol.CodeFlowNotFound, protocol.CodeAccessDenied,
+		protocol.CodeIdentityProviderError:
 		return adbc.StatusUnauthenticated
 	case protocol.CodePermissionDenied, protocol.CodeReadOnly:
 		return adbc.StatusUnauthorized

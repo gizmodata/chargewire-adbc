@@ -33,7 +33,9 @@ with dbapi.connect(
 | `uri` | `warp://host:port[/base-path]` (TLS), `?tls=false` for plain HTTP; `https://` and `http://` URLs work too. `profile://name` names a connection profile. |
 | `username`, `password` | Password sign-in (any characters, `:` included). |
 | `access_token` | A Warp SQL access token obtained elsewhere, instead of a password. |
-| `auth_type` | `"password"` (default) or `"client_certificate"` (`"mtls"`): sign in with `tls_client_cert`/`tls_client_key` alone, no password. The server binds the token to the certificate. |
+| `auth_type` | `"password"` (default), `"client_certificate"` (`"mtls"`): sign in with `tls_client_cert`/`tls_client_key` alone, no password (the server binds the token to the certificate), or `"oauth_browser"`: sign in through a browser with the server's identity provider (servers with capability `oauth_browser`). |
+| `open_browser` | Browser sign-in: `True` (default) opens the system's browser, `False` prints the sign-in URL to stderr, a string is the command that opens it. |
+| `oauth_timeout_seconds` | Browser sign-in: how long the person has to sign in (default 300). |
 | `tls_root_certs` | CA certificates to trust (PEM text or file path). |
 | `tls_client_cert`, `tls_client_key` | Client certificate for mutual TLS (PEM text or path). |
 | `tls_skip_verify` | Skip certificate verification (development only; off unless set). |

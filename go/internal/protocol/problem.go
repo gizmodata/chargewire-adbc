@@ -57,6 +57,12 @@ const (
 	CodeCertificateRevoked          = "certificate_revoked"
 	CodeCertificateMismatch         = "certificate_mismatch"
 	CodeCertificateIdentityMismatch = "certificate_identity_mismatch"
+
+	// Browser sign-in (§4.3).
+	CodeFlowNotFound          = "flow_not_found"
+	CodeInvalidReturnTo       = "invalid_return_to"
+	CodeAccessDenied          = "access_denied"
+	CodeIdentityProviderError = "identity_provider_error"
 )
 
 // Reasons a session_ended error carries (§5.6).
