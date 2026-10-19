@@ -142,7 +142,7 @@ func TestIntegrationIngestTargetCatalogSchemaAndTemporary(t *testing.T) {
 // An upload too big to keep in memory streams (chunked), in many batches,
 // with zstd buffer compression when asked.
 func TestIntegrationIngestLargeStreamedUpload(t *testing.T) {
-	for _, compression := range []string{"none", "zstd"} {
+	for _, compression := range []string{"none", "zstd", "lz4_frame"} {
 		t.Run(compression, func(t *testing.T) {
 			cnxn := openConn(t)
 			execUpdate(t, cnxn, "DROP TABLE IF EXISTS ing_big_"+compression)

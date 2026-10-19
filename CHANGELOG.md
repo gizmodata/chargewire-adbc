@@ -6,7 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- LZ4_FRAME Arrow buffer compression (Warp SQL §8.2, capability
+  `ipc_compression_lz4_frame`), for results and uploads: `adbc.warp.ipc_compression=lz4_frame`.
+  Every request that returns Arrow sends `Warp-IPC-Compression`, each partition's included.
+- `adbc.warp.ipc_compression=auto`, the new default: `lz4_frame` on a link with a round
+  trip under 10 ms, `zstd` on a slower one. The round trip is the discovery request's,
+  timed from its last byte sent to the answer's first.
+- `adbc.warp.ingest.parts=auto`, the new default: 16 parts on a near link, 32 on a far one.
+
 ### Changed
+
+- Compressed record batches are decompressed by the driver, not Arrow's reader: every
+  buffer of a batch at once, straight into one new body, while a goroutine keeps reading
+  the stream's next messages; buffers sent as they are (length -1) are copied. Bodies come
+  from a recycler over the C library's allocator (calloc), which faulted in fresh pages
+  for every batch. Over a 100 Gbit/s LAN, SF10 lineitem in 32 partitions with lz4_frame:
+  0.99 s -> 0.89 s through Python; one stream: 5.8 s -> 3.7 s on a laptop.
+- Results may be split into up to 32 partitions by default (was 8); the server chooses
+  how many by the result's size.
+- Uploads go as 16,384-row slices of larger batches, and in about one part per two
+  slices: SF1 lineitem into Hardcharger over a LAN took 0.45-0.67 s with whole 122,880-row
+  batches (a few of the server's insert threads got one more row group to compress than
+  the others) and 0.31-0.36 s in slices. A small upload no longer opens every part.
 
 - Python 3.11 is the minimum (`requires-python = ">=3.11"`): pyarrow 26, the floor,
   needs 3.11, so on 3.10 the package could never be installed.

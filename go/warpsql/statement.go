@@ -124,8 +124,9 @@ func newStatement(c *connectionImpl) *statementImpl {
 
 func (st *statementImpl) session() *protocol.Session { return st.cnxn.session }
 
-func (st *statementImpl) zstd() bool {
-	return st.opts.compression == "zstd" && st.cnxn.discovery.Has(protocol.CapabilityIPCCompressionZstd)
+// codec is the Arrow buffer compression this statement uses (§8.2), or "".
+func (st *statementImpl) codec() string {
+	return ipcCodec(st.opts.compression, st.cnxn.discovery)
 }
 
 func (st *statementImpl) SetOption(ctx context.Context, key, value string) error {
@@ -331,7 +332,7 @@ func (st *statementImpl) newSubmission(ctx context.Context, arrowResult bool) (*
 	}
 	sub := &protocol.Submission{
 		Arrow: arrowResult, Wait: longPoll, Retain: st.opts.retain, Timeout: st.opts.timeout,
-		QueryTag: st.opts.queryTag, Zstd: st.zstd(),
+		QueryTag: st.opts.queryTag, Compression: st.codec(),
 	}
 	if st.opts.partitions > 1 && st.cnxn.discovery.Has(protocol.CapabilityResultPartitions) {
 		sub.Partitions, sub.AnyOrder = st.opts.partitions, st.opts.anyOrder
@@ -352,7 +353,7 @@ func (st *statementImpl) newSubmission(ctx context.Context, arrowResult bool) (*
 	if err != nil {
 		return nil, nil, err
 	}
-	up, err := encodeUpload(rows, st.alloc, st.zstd())
+	up, err := encodeUpload(rows, st.alloc, st.codec())
 	if err != nil {
 		rows.Release()
 		return nil, nil, wrapError(err, "encoding the parameters")
@@ -676,7 +677,7 @@ func (st *statementImpl) readerConfig(ctx context.Context, exec *execution, part
 	exec.reading.Store(true)
 	ref, _ := exec.statementRef()
 	return resultReaderConfig{
-		ctx: ctx, alloc: st.alloc, session: st.session(), ref: ref, parts: parts, zstd: st.zstd(),
+		ctx: ctx, alloc: st.alloc, session: st.session(), ref: ref, parts: parts, codec: st.codec(),
 		cancelled: exec.cancelled.Load,
 		onEnd: func(bool) {
 			st.end(exec)
@@ -756,25 +757,34 @@ func (st *statementImpl) executeIngest(ctx context.Context) (int64, error) {
 		Table: st.ingest.table, Catalog: st.ingest.catalog, Schema: st.ingest.schema,
 		Mode: st.ingest.mode, Temporary: st.ingest.temporary,
 	}
-	// An upload of two batches or more goes in parts on a server that takes
-	// them (§8.3); otherwise, or with ingest parts = 1, as one stream (§8.1).
+	// An upload of more than one slice goes in parts on a server that takes
+	// them (§8.3), about one part per two slices up to the most parts allowed;
+	// otherwise, or with ingest parts = 1, as one stream (§8.1).
 	ahead := &lookahead{source: rows}
-	if st.opts.ingestParts > 1 && st.cnxn.discovery.Has(protocol.CapabilityPartitionedIngest) {
-		if ahead, err = readAhead(rows, 2); err != nil {
+	parts := 1
+	if most := ingestParts(st.opts.ingestParts, st.cnxn.discovery); most > 1 &&
+		st.cnxn.discovery.Has(protocol.CapabilityPartitionedIngest) {
+		// Enough rows to give every part two slices, or the whole upload.
+		if ahead, err = readAheadRows(rows, int64(2*most*uploadSliceRows)); err != nil {
 			for _, batch := range ahead.ahead {
 				batch.Release()
 			}
 			return -1, wrapError(err, "reading the rows to ingest")
 		}
+		parts = most
+		if ahead.done {
+			slices := int((ahead.rows() + uploadSliceRows - 1) / uploadSliceRows)
+			parts = min(most, (slices+1)/2)
+		}
 	}
 	shared := &sharedBatches{schema: rows.Schema(), l: ahead}
 	defer shared.release()
-	if len(ahead.ahead) >= 2 {
-		return st.ingestInParts(ctx, ir, shared, st.opts.ingestParts)
+	if parts > 1 {
+		return st.ingestInParts(ctx, ir, shared, parts)
 	}
 	single := newPartReader(shared)
 	defer single.Release()
-	up, err := encodeUpload(single, st.alloc, st.zstd())
+	up, err := encodeUpload(single, st.alloc, st.codec())
 	if err != nil {
 		return -1, wrapError(err, "encoding the rows to ingest")
 	}

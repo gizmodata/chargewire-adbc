@@ -11,6 +11,7 @@ package protocol
 import (
 	"encoding/base64"
 	"slices"
+	"time"
 )
 
 // Media types (§2.2).
@@ -29,9 +30,11 @@ const (
 	CapabilityResultRetention    = "result_retention"
 	CapabilityLongPoll           = "long_poll"
 	CapabilityIPCCompressionZstd = "ipc_compression_zstd"
-	CapabilityPartitionedResults = "partitioned_results"
-	CapabilityResultPartitions   = "result_partitions"
-	CapabilityPartitionedIngest  = "partitioned_ingest"
+	// CapabilityIPCCompressionLZ4Frame: Arrow buffers compressed with LZ4_FRAME (§8.2).
+	CapabilityIPCCompressionLZ4Frame = "ipc_compression_lz4_frame"
+	CapabilityPartitionedResults     = "partitioned_results"
+	CapabilityResultPartitions       = "result_partitions"
+	CapabilityPartitionedIngest      = "partitioned_ingest"
 	// CapabilityMTLSIdentity: the client_certificate grant (§4.4).
 	CapabilityMTLSIdentity = "mtls_identity"
 )
@@ -69,6 +72,10 @@ type Discovery struct {
 	Auth         struct {
 		GrantTypes []string `json:"grant_types"`
 	} `json:"auth"`
+	// RTT is how long the discovery request took to answer once sent: about
+	// one network round trip (the server answers it at once). Zero when it
+	// could not be measured.
+	RTT time.Duration `json:"-"`
 }
 
 // Has reports whether the server lists capability.

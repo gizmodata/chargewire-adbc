@@ -133,10 +133,10 @@ Statement options; set on the database or connection they are defaults for its s
 | `adbc.warp.statement.retain_result` | server | Ask the server to keep results for re-reading and resuming |
 | `adbc.warp.statement.timeout_seconds` | none | The server cancels the statement after this long |
 | `adbc.warp.statement.query_tag` | | JSON object recorded with every statement |
-| `adbc.warp.ipc_compression` | `none` | `zstd`: Arrow buffer compression for results and uploads |
-| `adbc.warp.statement.result_partitions` | `8` | Let the server split a large result into up to this many partitions, read at once over separate connections (`1`: one stream) |
+| `adbc.warp.ipc_compression` | `auto` | Arrow buffer compression for results and uploads: `lz4_frame`, `zstd`, `none`, or `auto`: `lz4_frame` on a link with a round trip under 10 ms, `zstd` on a slower one (measured when connecting) |
+| `adbc.warp.statement.result_partitions` | `32` | Let the server split a large result into up to this many partitions, read at once over separate connections (`1`: one stream) |
 | `adbc.warp.statement.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
-| `adbc.warp.ingest.parts` | `8` | Send a bulk ingest of two batches or more over up to this many connections at once, committed as one (`1`: one ordered stream) |
+| `adbc.warp.ingest.parts` | `auto` | Send a bulk ingest over up to this many connections at once, committed as one (`1`: one ordered stream); `auto`: 16 on a near link, 32 on a far one |
 
 Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connection),
 `adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
@@ -157,15 +157,25 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
   holds; with `any`, as they arrive. Every partition must end with its end-of-stream
   marker: if one fails or is cut off (and can't be resumed), the whole result fails with
   the statement's error. `ExecutePartitions` returns the server's partitions. The server
-  decides how many: a result of fewer than two batches comes as one stream, and a server
-  without the capability is never asked, so small queries cost nothing extra.
+  decides how many by the result's size (Hardcharger: one per two batches for a small
+  result, all of them for a large one), and a server without the capability is never
+  asked, so small queries cost nothing extra.
+- **Compressed results** (`ipc_compression`, spec §8.2): the driver asks for the codec
+  on every request that returns Arrow, each partition's included, and decompresses
+  record batches itself: every buffer of a batch at once, straight into one new body,
+  while the connection keeps reading the next messages. Buffers the server sent as they
+  are (length -1) are copied, not decompressed. Message bodies come from a recycler
+  over the C library's allocator, so large results don't fault in fresh pages for every
+  batch.
 - **Partitioned ingest** (by default; `adbc.warp.ingest.parts` above 1, on a server with
-  the `partitioned_ingest` capability, spec §8.3): an upload of two batches or more is
-  opened once, sent as that many parts at once, each over its own connection and taking
-  the next batch from the bound stream, then committed as one. It is all or nothing: if a
+  the `partitioned_ingest` capability, spec §8.3): batches over 16,384 rows are sent as
+  zero-copy slices of that size (the server's insert threads then share the work
+  evenly), and an upload of more than one slice is opened once, sent in parts at once,
+  about one per two slices up to `ingest.parts`, each over its own connection and taking
+  the next slice from the bound stream, then committed as one. It is all or nothing: if a
   part fails (the bound reader breaks, the server refuses a batch, a connection drops), the
   driver aborts the ingest and nothing is written. The rows land in no defined order; set
-  `adbc.warp.ingest.parts=1` to keep the upload's order. A one-batch upload, or a server
+  `adbc.warp.ingest.parts=1` to keep the upload's order. A one-slice upload, or a server
   without the capability, gets one stream (§8.1). Each part keeps up to 4 MiB in memory so a
   part whose answer was lost can be sent again with its `Idempotency-Key`.
 - **Broken downloads** of a retained result resume from the next batch (up to five times).

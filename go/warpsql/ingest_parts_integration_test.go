@@ -151,7 +151,7 @@ func ingestRequests(proxy *faultProxy) (single, opens, parts, commits, aborts in
 // A large upload goes in parts by default (§8.3): every row arrives once,
 // unaltered, committed by one commit.
 func TestIntegrationIngestInParts(t *testing.T) {
-	for _, compression := range []string{"none", "zstd"} {
+	for _, compression := range []string{"none", "zstd", "lz4_frame"} {
 		t.Run(compression, func(t *testing.T) {
 			proxy, cnxn := viaProxy(t, map[string]string{OptionIPCCompression: compression})
 			table := "ing_parts_" + compression
@@ -169,8 +169,51 @@ func TestIntegrationIngestInParts(t *testing.T) {
 			}
 			checkPartsTable(t, cnxn, table, 64*20_000)
 			single, opens, parts, commits, aborts := ingestRequests(proxy)
-			if single != 0 || opens != 1 || parts != defaultIngestParts || commits != 1 || aborts != 0 {
+			if single != 0 || opens != 1 || parts != nearIngestParts || commits != 1 || aborts != 0 {
 				t.Fatalf("requests: %d single, %d opens, %d parts, %d commits, %d aborts", single, opens, parts, commits, aborts)
+			}
+		})
+	}
+}
+
+// The number of parts follows the upload's size: about one per two slices of
+// uploadSliceRows, one stream for a single slice, at most the parts allowed. A
+// large batch is sent as slices, so even a one-batch upload goes in parts.
+func TestIntegrationIngestPartsScaleWithSize(t *testing.T) {
+	for _, tc := range []struct {
+		batches, rows int
+		wantParts     int // 0: one stream
+	}{
+		{1, 10_000, 0},
+		{3, 13_000, 2},                // 39,000 rows: three slices
+		{1, 122_880, 4},               // one batch, eight slices
+		{40, 50_000, nearIngestParts}, // two million rows
+	} {
+		t.Run(fmt.Sprintf("%dx%d", tc.batches, tc.rows), func(t *testing.T) {
+			proxy, cnxn := viaProxy(t, nil)
+			table := fmt.Sprintf("ing_scale_%d_%d", tc.batches, tc.rows)
+			execUpdate(t, cnxn, "DROP TABLE IF EXISTS "+table)
+			batches := partsBatches(tc.batches, tc.rows)
+			defer releaseAll(batches)
+			reader := readerOf(t, batches)
+			defer reader.Release()
+			n, err := ingestStream(t, cnxn, table, reader, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n != int64(tc.batches*tc.rows) {
+				t.Fatalf("ingested %d rows", n)
+			}
+			checkPartsTable(t, cnxn, table, int64(tc.batches*tc.rows))
+			single, opens, parts, commits, _ := ingestRequests(proxy)
+			if tc.wantParts == 0 {
+				if single != 1 || opens != 0 || parts != 0 {
+					t.Fatalf("want one stream: %d single, %d opens, %d parts", single, opens, parts)
+				}
+				return
+			}
+			if single != 0 || opens != 1 || parts != tc.wantParts || commits != 1 {
+				t.Fatalf("want %d parts: %d single, %d opens, %d parts, %d commits", tc.wantParts, single, opens, parts, commits)
 			}
 		})
 	}
@@ -239,10 +282,12 @@ func TestIntegrationIngestWithoutTheCapability(t *testing.T) {
 func TestIntegrationIngestInPartsFailureLeavesNothing(t *testing.T) {
 	proxy, cnxn := viaProxy(t, nil)
 	execUpdate(t, cnxn, "DROP TABLE IF EXISTS ing_parts_fail; DROP TABLE IF EXISTS ing_parts_kept")
-	batches := partsBatches(40, 10_000)
+	// More rows than the driver reads ahead to choose the parts (2 slices per part),
+	// so the reader breaks after the parts are open.
+	batches := partsBatches(80, 10_000)
 	defer releaseAll(batches)
 
-	// The application's reader breaks after 40 batches: create makes nothing.
+	// The application's reader breaks after 80 batches: create makes nothing.
 	reader := &failingReader{RecordReader: readerOf(t, batches)}
 	defer reader.Release()
 	_, err := ingestStream(t, cnxn, "ing_parts_fail", reader, map[string]string{adbc.OptionKeyIngestMode: adbc.OptionValueIngestModeCreate})
@@ -278,8 +323,8 @@ func TestIntegrationIngestInPartsFailureLeavesNothing(t *testing.T) {
 func TestIntegrationIngestPartAnswerLost(t *testing.T) {
 	proxy, cnxn := viaProxy(t, nil)
 	execUpdate(t, cnxn, "DROP TABLE IF EXISTS ing_parts_lost")
-	proxy.add(&faultRule{match: isPost("/parts/3"), times: 1})
-	batches := partsBatches(16, 5_000)
+	proxy.add(&faultRule{match: isPost("/parts/1"), times: 1})
+	batches := partsBatches(16, 5_000) // 80,000 rows: five slices, three parts
 	defer releaseAll(batches)
 	reader := readerOf(t, batches)
 	defer reader.Release()
@@ -291,7 +336,7 @@ func TestIntegrationIngestPartAnswerLost(t *testing.T) {
 		t.Fatalf("ingested %d rows", n)
 	}
 	checkPartsTable(t, cnxn, "ing_parts_lost", 16*5_000)
-	if _, _, parts, _, _ := ingestRequests(proxy); parts != defaultIngestParts+1 {
-		t.Fatalf("%d part requests, want %d (one sent again)", parts, defaultIngestParts+1)
+	if _, _, parts, _, _ := ingestRequests(proxy); parts != 3+1 {
+		t.Fatalf("%d part requests, want %d (one sent again)", parts, 3+1)
 	}
 }

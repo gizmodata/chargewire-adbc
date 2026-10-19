@@ -131,6 +131,25 @@ func TestDiscoverChecksTheProtocol(t *testing.T) {
 	}
 }
 
+// Discover measures about one round trip: from the request's last byte to the
+// answer's first.
+func TestDiscoverMeasuresTheRoundTrip(t *testing.T) {
+	const delay = 40 * time.Millisecond
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(delay) // stands in for the network
+		writeJSON(w, http.StatusOK, map[string]any{"protocol": "warp-sql", "protocol_versions": []string{"1"}})
+	}))
+	defer slow.Close()
+	base, _ := url.Parse(slow.URL + "/warp")
+	doc, err := NewClient(Config{BaseURL: base}).Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.RTT < delay || doc.RTT > delay+2*time.Second {
+		t.Fatalf("RTT %v, want about %v", doc.RTT, delay)
+	}
+}
+
 func TestAuthenticateFailsWithTheServersCode(t *testing.T) {
 	f := newFake(t)
 	err := f.client(Credentials{Username: "joe", Password: "wrong"}, 1).Authenticate(context.Background())

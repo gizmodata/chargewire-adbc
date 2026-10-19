@@ -75,7 +75,7 @@ upload sent again arriving every time, directly and through the proxy (which rea
 request body to its end, so it loses no answer itself); retried status polls;
 failures mid-stream; lost sessions (replaced with options replayed, temporary state
 reported, refused inside a transaction, commit refused, reconnect off, prepared statement
-re-prepared, retained result lost); partitions read on another connection; zstd results and
+re-prepared, retained result lost); partitions read on another connection; zstd and lz4_frame results and
 uploads; query tags; ingest modes, temporary tables, target catalog/schema, a 2M-row
 streamed upload; GetObjects at every depth with LIKE patterns and escaping; GetTableSchema
 resolution; GetInfo; current catalog/schema; transactions; TLS, mutual TLS, server name,

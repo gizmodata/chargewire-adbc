@@ -26,9 +26,11 @@ type lookahead struct {
 	done   bool // the source ended while reading ahead
 }
 
-func readAhead(source array.RecordReader, n int) (*lookahead, error) {
+// readAheadRows reads batches from source until they hold at least n rows or
+// the source ends (done).
+func readAheadRows(source array.RecordReader, n int64) (*lookahead, error) {
 	l := &lookahead{source: source}
-	for len(l.ahead) < n {
+	for l.rows() < n {
 		if !source.Next() {
 			l.done = true
 			return l, source.Err()
@@ -38,6 +40,15 @@ func readAhead(source array.RecordReader, n int) (*lookahead, error) {
 		l.ahead = append(l.ahead, batch)
 	}
 	return l, nil
+}
+
+// rows counts the rows read ahead.
+func (l *lookahead) rows() int64 {
+	var n int64
+	for _, batch := range l.ahead {
+		n += batch.NumRows()
+	}
+	return n
 }
 
 // sharedBatches is one upload's batches, taken one at a time by the readers
@@ -50,24 +61,39 @@ type sharedBatches struct {
 }
 
 // next returns the next batch, retained for the caller, or nil at the end.
+// uploadSliceRows is the most rows one uploaded batch carries: larger batches go as
+// zero-copy slices of this size. The server inserts each batch on one of its threads,
+// and DuckDB compresses a thread's rows in row groups of 122,880 on that thread, so with
+// large batches a few threads that took one more than the others decide when the insert
+// ends: SF1 lineitem (49 batches of 122,880 rows over 32 threads) took 0.35-0.58 s on a
+// LAN, in steps of one row group's compression; in 16,384-row slices, 0.35 s every time.
+const uploadSliceRows = 16384
+
 func (s *sharedBatches) next() (arrow.RecordBatch, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return nil, s.err
 	}
-	if len(s.l.ahead) > 0 {
-		batch := s.l.ahead[0]
-		s.l.ahead = s.l.ahead[1:]
-		return batch, nil
+	if len(s.l.ahead) == 0 {
+		if s.l.done || !s.l.source.Next() {
+			s.l.done = true
+			s.err = s.l.source.Err()
+			return nil, s.err
+		}
+		batch := s.l.source.RecordBatch()
+		batch.Retain()
+		s.l.ahead = append(s.l.ahead, batch)
 	}
-	if s.l.done || !s.l.source.Next() {
-		s.l.done = true
-		s.err = s.l.source.Err()
-		return nil, s.err
+	batch := s.l.ahead[0]
+	s.l.ahead = s.l.ahead[1:]
+	if rows := batch.NumRows(); rows > uploadSliceRows {
+		first := batch.NewSlice(0, uploadSliceRows)
+		rest := batch.NewSlice(uploadSliceRows, rows)
+		batch.Release()
+		s.l.ahead = append([]arrow.RecordBatch{rest}, s.l.ahead...)
+		return first, nil
 	}
-	batch := s.l.source.RecordBatch()
-	batch.Retain()
 	return batch, nil
 }
 
@@ -142,7 +168,7 @@ func (st *statementImpl) ingestInParts(ctx context.Context, ir protocol.IngestRe
 		wg.Go(func() {
 			rows := newPartReader(shared)
 			defer rows.Release()
-			up, err := encodeUploadWithLimit(rows, st.alloc, st.zstd(), partUploadReplayLimit)
+			up, err := encodeUploadWithLimit(rows, st.alloc, st.codec(), partUploadReplayLimit)
 			if err == nil {
 				_, err = session.IngestPart(partsCtx, handle, part, up.body)
 				err = up.finish(err)

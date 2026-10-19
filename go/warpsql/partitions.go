@@ -69,10 +69,9 @@ func (c *connectionImpl) ReadPartition(ctx context.Context, serialized []byte) (
 	if err != nil {
 		return nil, c.ErrorHelper.InvalidArgument("%s", err)
 	}
-	zstd := c.defaults.compression == "zstd" && c.discovery.Has(protocol.CapabilityIPCCompressionZstd)
 	return newResultReader(resultReaderConfig{
 		ctx: ctx, alloc: c.Alloc, session: c.session,
 		ref:   protocol.StatementRef{SessionID: descriptor.SessionID, StatementID: descriptor.StatementID},
-		parts: []resultPart{part}, zstd: zstd, cancelled: func() bool { return false },
+		parts: []resultPart{part}, codec: ipcCodec(c.defaults.compression, c.discovery), cancelled: func() bool { return false },
 	}, nil)
 }
