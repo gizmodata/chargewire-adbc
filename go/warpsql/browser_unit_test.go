@@ -197,6 +197,40 @@ func TestBrowserSignInFailuresSayWhy(t *testing.T) {
 	}
 }
 
+// Spec 1.0 (§4.3.2, §12): a failed flow's code arrives in a 200 poll answer,
+// so the error has no HTTP status; an unknown code is a generic sign-in
+// failure (still StatusUnauthenticated); a failed flow without an error gets
+// a client_ code; an unknown flow state is not terminal, so polling goes on.
+func TestBrowserSignInV1Rules(t *testing.T) {
+	for _, c := range []struct {
+		answer map[string]any
+		code   string
+	}{
+		{map[string]any{"state": "failed", "error": map[string]any{"code": "a_later_failure", "detail": "x"}}, "a_later_failure"},
+		{map[string]any{"state": "failed", "error": map[string]any{"code": "identity_provider_error", "detail": "x"}}, "identity_provider_error"},
+		{map[string]any{"state": "failed"}, protocol.CodeClientSignInFailed},
+	} {
+		fastBrowser(t)
+		f := newFakeBrowserServer(t, true, pending, c.answer)
+		_, _, err := openWith(t, browserOptions(f))
+		if adbcStatus(err) != adbc.StatusUnauthenticated || ErrorCode(err) != c.code {
+			t.Fatalf("%s: got %v (code %q)", c.code, err, ErrorCode(err))
+		}
+		if p, ok := errors.AsType[*protocol.Problem](err); !ok || p.Status != 0 {
+			t.Fatalf("%s: problem %+v, want no HTTP status", c.code, p)
+		}
+	}
+	fastBrowser(t)
+	f := newFakeBrowserServer(t, true, map[string]any{"state": "a_state_from_a_later_version"},
+		map[string]any{"state": "awaiting_consent"}, complete)
+	if _, _, err := openWith(t, browserOptions(f)); err != nil {
+		t.Fatalf("an unknown flow state stopped the sign-in: %v", err)
+	}
+	if f.polls != 3 || len(f.sessions) != 1 {
+		t.Fatalf("%d polls, %d sessions; want 3 and 1", f.polls, len(f.sessions))
+	}
+}
+
 func TestBrowserSignInTimesOutAndCancels(t *testing.T) {
 	fastBrowser(t)
 	f := newFakeBrowserServer(t, true, pending)

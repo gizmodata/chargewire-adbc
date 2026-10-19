@@ -190,17 +190,31 @@ func runBrowserSignIn(ctx context.Context, client *protocol.Client, discovery *p
 				ExpiresIn: time.Duration(state.ExpiresIn) * time.Second,
 				Provider:  discovery.BrowserSignInProvider()}, nil
 		case protocol.FlowFailed:
-			problem := &protocol.Problem{Status: http.StatusUnauthorized, Code: protocol.CodeInvalidCredentials,
-				Detail: "the sign-in failed"}
-			if state.Error != nil {
-				if state.Error.Code != "" {
-					problem.Code = state.Error.Code
-				}
-				if state.Error.Detail != "" {
-					problem.Detail = state.Error.Detail
-				}
-			}
-			return nil, wrapError(problem, "browser sign-in")
+			return nil, flowFailure(state)
+		}
+		// pending, or a state a later version adds: not terminal, keep
+		// polling (§12).
+	}
+}
+
+// flowFailure is a failed flow's error (§4.3.2). Its code came inside a 200
+// poll answer, so the error carries no HTTP status. Whatever the code (an
+// unknown one is a generic failure, §12), the sign-in failed: the status is
+// StatusUnauthenticated.
+func flowFailure(state *protocol.BrowserFlowState) error {
+	problem := &protocol.Problem{Code: protocol.CodeClientSignInFailed,
+		Detail: "the sign-in failed, and the server gave no reason"}
+	if state.Error != nil {
+		if state.Error.Code != "" {
+			problem.Code = state.Error.Code
+		}
+		if state.Error.Detail != "" {
+			problem.Detail = state.Error.Detail
 		}
 	}
+	err := wrapError(problem, "browser sign-in")
+	if wrapped, ok := err.(*driverError); ok {
+		wrapped.adbcErr.Code = adbc.StatusUnauthenticated
+	}
+	return err
 }

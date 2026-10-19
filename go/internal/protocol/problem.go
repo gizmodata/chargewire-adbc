@@ -66,7 +66,10 @@ const (
 	CodeCertificateMismatch         = "certificate_mismatch"
 	CodeCertificateIdentityMismatch = "certificate_identity_mismatch"
 
-	// Browser sign-in (§4.3).
+	// Browser sign-in (§4.3). flow_not_found (404) and invalid_return_to
+	// (400) are responses' codes; access_denied and identity_provider_error
+	// (and invalid_credentials) arrive as a failed flow's error.code inside a
+	// 200 poll answer, never as a status (§4.3.2).
 	CodeFlowNotFound          = "flow_not_found"
 	CodeInvalidReturnTo       = "invalid_return_to"
 	CodeAccessDenied          = "access_denied"
@@ -86,6 +89,9 @@ const (
 	// cancelled statement document without its error.
 	CodeClientStatementFailed    = "client_statement_failed"
 	CodeClientStatementCancelled = "client_statement_cancelled"
+	// CodeClientSignInFailed: a failed browser sign-in flow without its
+	// error (§4.3.2).
+	CodeClientSignInFailed = "client_sign_in_failed"
 )
 
 // Reasons an invalid_token (§4.2) or session_ended (§5.6) error carries. The

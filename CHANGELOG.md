@@ -31,6 +31,10 @@ All notable changes to this project are documented here. The format follows
   access token or through the browser: its connections send the new token from their next
   request on (a wrapper that renews or shares tokens needs no new database). On a database
   that signs in another way it is refused (`INVALID_STATE`).
+- `adbc.warp.session.transaction` (read-only, connection; Python
+  `ConnectionOptions.SESSION_TRANSACTION`): the session's transaction as the server reports
+  it (`none`, `open`, `aborted`, or `unknown`), which sees SQL `BEGIN` and `COMMIT` too.
+- The live-test servers (Go and Python) run with a `HOME` of their own.
 
 ### Changed
 
@@ -60,7 +64,13 @@ All notable changes to this project are documented here. The format follows
   - Partitions on other servers: the driver sends `Warp-Result-Locations: remote` only to a
     server listing `result_locations`, refuses a location it did not ask for or one that
     would drop TLS (the access token goes along), and reads remote partitions at once with
-    the others (they were read one after another).
+    the others (they were read one after another). On the streamed path it finds them in the
+    statement document (§6.2).
+  - Browser sign-in follows the same rules: an unknown flow `state` keeps polling; a failed
+    flow's `error.code` (`access_denied`, `invalid_credentials`, `identity_provider_error`,
+    or an unknown one, which is a generic failure) is `StatusUnauthenticated` with no HTTP
+    status attached (it arrives in a 200 poll answer); a failed flow without an error is
+    `client_sign_in_failed`, and a malformed flow or token answer `client_protocol_error`.
   - Partitioned ingest commits with `{"part_count": n}` (was `{"parts": n}`).
   - `adbc.warp.statement.query_tag` must be a JSON object (`null` was accepted); it is sent
     compact and ASCII-escaped (`\uXXXX`), refused over 4,096 bytes, and now also labels
@@ -116,10 +126,6 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
-- `adbc.warp.session.transaction` (read-only, connection; Python
-  `ConnectionOptions.SESSION_TRANSACTION`): the session's transaction as the server reports
-  it (`none`, `open`, `aborted`, or `unknown`), which sees SQL `BEGIN` and `COMMIT` too.
-- The live-test servers (Go and Python) run with a `HOME` of their own.
 - `warpsql.NewDriverWithName(alloc, displayName)`: the driver under another GetInfo driver
   name, for drivers built on this one (hardcharger-adbc).
 - Partitioned ingest (Warp SQL spec §8.3): `adbc.warp.ingest.parts` (default 8). On a

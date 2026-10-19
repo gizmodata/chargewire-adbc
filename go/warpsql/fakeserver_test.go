@@ -317,6 +317,28 @@ func TestFakePartitionsAcrossServers(t *testing.T) {
 	}
 }
 
+// On the streamed path the answer is partition 0; a client that sent
+// Warp-Result-Locations finds partitions 1 to k-1 in the statement document,
+// here on another server (§6.2).
+func TestFakeStreamedPartitionsAcrossServers(t *testing.T) {
+	remote := newFakeWarp(t)
+	f := newFakeWarp(t)
+	f.capabilities = append(f.capabilities, "result_partitions", "result_locations")
+	f.partitions = 3
+	f.order = "any"
+	f.remote = remote.server.URL + "/warp"
+	f.streamSplit = map[string]string{"Warp-Result-Partitions": "3", "Warp-Result-Order": "any"}
+	values, err := f.query(t, f.connect(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(values)
+	wantSequence(t, values, 3, f.batches)
+	if len(remote.fromBatch) != 2 || len(f.fromBatch) != 0 {
+		t.Fatalf("the remote served %d partitions and this server %d result requests; want 2 and 0", len(remote.fromBatch), len(f.fromBatch))
+	}
+}
+
 // Without result_locations the driver never sends Warp-Result-Locations, and
 // a location it did not ask for is a protocol error: the access token is not
 // sent to a server nobody named (§6.2).

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -604,6 +605,15 @@ func (st *statementImpl) ExecuteQuery(ctx context.Context) (rdr array.RecordRead
 		for i := range parts {
 			parts[i] = resultPart{index: i}
 		}
+		if sub.RemoteLocations {
+			// Partitions 1 to k-1 may be on other servers: their locations
+			// are in the statement document (§6.2).
+			ref, _ := exec.statementRef()
+			if parts, err = st.streamedPartLocations(execCtx, ref, k); err != nil {
+				resp.Body.Close()
+				return nil, -1, st.fail(exec, err, "ExecuteQuery")
+			}
+		}
 		reader, err := newPartitionedReader(st.readerConfig(execCtx, exec, parts), order, resp.Body)
 		if err != nil {
 			return nil, -1, err
@@ -615,6 +625,49 @@ func (st *statementImpl) ExecuteQuery(ctx context.Context) (rdr array.RecordRead
 		return nil, -1, err
 	}
 	return reader, -1, nil
+}
+
+// maxLocationPolls bounds the status reads that wait for a streamed split
+// result's document to list its partitions.
+const maxLocationPolls = 20
+
+// streamedPartLocations reads where the k partitions of a streamed split
+// result are, from the statement document (§6.2). The server has split the
+// result by the time it answers with the split headers, so the document lists
+// all k partitions, possibly after a short wait.
+func (st *statementImpl) streamedPartLocations(ctx context.Context, ref protocol.StatementRef, k int) ([]resultPart, error) {
+	var wait time.Duration
+	for range maxLocationPolls {
+		doc, err := st.session().Status(ctx, ref, wait)
+		if err != nil {
+			return nil, err
+		}
+		if doc.Failed() {
+			return nil, statementError(doc)
+		}
+		if doc.Result != nil && len(doc.Result.Partitions) >= k {
+			if len(doc.Result.Partitions) != k {
+				return nil, protocol.ProtocolError("the result's Warp-Result-Partitions is %d, but its document lists %d partitions",
+					k, len(doc.Result.Partitions))
+			}
+			parts, err := resultParts(doc.Result, true, st.cnxn.client.BaseURL())
+			if err != nil {
+				return nil, err
+			}
+			for i, part := range parts {
+				if part.index != i {
+					return nil, protocol.ProtocolError("the result's partitions are not numbered 0 to %d", k-1)
+				}
+			}
+			parts[0].location = nil // partition 0 is the streamed answer itself
+			return parts, nil
+		}
+		if doc.State.Terminal() {
+			break
+		}
+		wait = time.Second
+	}
+	return nil, protocol.ProtocolError("statement %s's result is split into %d partitions, but its document does not list them", ref.StatementID, k)
 }
 
 // awaitDocument reads a statement document from resp and waits for the

@@ -4,7 +4,6 @@ package protocol
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,7 +27,9 @@ func (f *BrowserFlow) PollInterval() time.Duration {
 
 // BrowserFlowState is a poll's answer (§4.3.2).
 type BrowserFlowState struct {
-	State       string `json:"state"` // pending, complete, failed
+	// State is pending, complete or failed, or a state a later version adds,
+	// which is not terminal: keep polling (§12).
+	State       string `json:"state"`
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
 	ExpiresIn   int64  `json:"expires_in"`
@@ -38,7 +39,7 @@ type BrowserFlowState struct {
 	} `json:"error"`
 }
 
-// Browser flow states (§4.3.2).
+// Browser flow states (§4.3.2). Open, like every enumeration (§12).
 const (
 	FlowPending  = "pending"
 	FlowComplete = "complete"
@@ -62,7 +63,7 @@ func (c *Client) StartBrowserSignIn(ctx context.Context, returnTo string) (*Brow
 		return nil, err
 	}
 	if flow.FlowID == "" || flow.PollSecret == "" || flow.AuthorizeURL == "" {
-		return nil, errors.New("the server's browser sign-in answer lacks flow_id, poll_secret or authorize_url")
+		return nil, ProtocolError("the server's browser sign-in answer lacks flow_id, poll_secret or authorize_url")
 	}
 	return flow, nil
 }
@@ -80,14 +81,8 @@ func (c *Client) PollBrowserSignIn(ctx context.Context, flow *BrowserFlow) (*Bro
 	if _, err := c.doJSON(ctx, req, state); err != nil {
 		return nil, err
 	}
-	switch state.State {
-	case FlowPending, FlowFailed:
-	case FlowComplete:
-		if state.AccessToken == "" || !strings.EqualFold(state.TokenType, "bearer") {
-			return nil, errors.New("the browser sign-in completed without a bearer token")
-		}
-	default:
-		return nil, errors.New("unexpected browser sign-in state " + `"` + state.State + `"`)
+	if state.State == FlowComplete && (state.AccessToken == "" || !strings.EqualFold(state.TokenType, "bearer")) {
+		return nil, ProtocolError("the browser sign-in completed without a bearer token")
 	}
 	return state, nil
 }
