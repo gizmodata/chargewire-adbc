@@ -27,6 +27,10 @@ All notable changes to this project are documented here. The format follows
   function) and live ones against warp-duckdb with a mock OpenID Connect provider that checks
   PKCE (a sign-in, the exported token opening a session, a refusal at the provider, an
   unauthorized user, a server without the capability); Python unit and live tests.
+- `adbc.warp.auth.access_token` can be set again on an open database that signs in with an
+  access token or through the browser: its connections send the new token from their next
+  request on (a wrapper that renews or shares tokens needs no new database). On a database
+  that signs in another way it is refused (`INVALID_STATE`).
 
 ### Changed
 

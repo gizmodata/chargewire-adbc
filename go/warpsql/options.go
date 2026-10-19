@@ -50,7 +50,9 @@ const (
 	OptionOAuthTimeoutSeconds = "adbc.warp.oauth.timeout_seconds"
 
 	// OptionAccessToken is a Warp SQL access token obtained elsewhere, used
-	// instead of a username and password. It cannot be renewed.
+	// instead of a username and password. The driver cannot renew it, but it
+	// may be set again on an open database that signs in with a token (or
+	// through the browser): its connections send the new one from then on.
 	OptionAccessToken = "adbc.warp.auth.access_token"
 	// OptionSubjectToken is an identity provider's token (for example an
 	// OpenID Connect ID token) exchanged for an access token with the

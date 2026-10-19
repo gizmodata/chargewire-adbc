@@ -136,7 +136,7 @@ Database options (with the standard `uri`, `username`, `password` and `adbc.tele
 | `adbc.warp.auth.type` | `password` | `oauth_browser`: browser sign-in (below). `client_certificate` (or `mtls`): sign in with the TLS client certificate alone, no password (spec §4.4; servers with capability `mtls_identity`). Needs the client certificate and key; refuses a username, password or token beside it. The token is bound to the certificate and renewed like a password sign-in's |
 | `adbc.warp.oauth.browser` | system browser | With `auth.type` `oauth_browser` (spec §4.3: sign in through a browser with the server's identity provider, when the first connection opens; servers with capability `oauth_browser`): the command that opens the sign-in page (its URL appended), or `none` to print the URL to stderr. The token it yields can't be renewed: once it expires, open a new database |
 | `adbc.warp.oauth.timeout_seconds` | `300` | How long the person has to complete a browser sign-in |
-| `adbc.warp.auth.access_token` | | An access token issued elsewhere (used as is, never renewed) |
+| `adbc.warp.auth.access_token` | | An access token issued elsewhere (used as is, never renewed by the driver; may be set again on an open database that signs in with a token or through the browser) |
 | `adbc.warp.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
 | `adbc.warp.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
 | `adbc.warp.session.reconnect` | `true` | Replace a session the server lost (see below) |

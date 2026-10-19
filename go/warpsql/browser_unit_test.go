@@ -259,3 +259,48 @@ func TestBrowserSignInFunction(t *testing.T) {
 		t.Fatalf("bad uri: got %v", err)
 	}
 }
+
+// An open database's access token can be replaced (a wrapper that renews or
+// shares tokens); one that signs in with a password can't take one.
+func TestAccessTokenCanBeReplacedOnAnOpenDatabase(t *testing.T) {
+	fastBrowser(t)
+	f := newFakeBrowserServer(t, true, complete)
+	db, _, err := openWith(t, browserOptions(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	setter := db.(adbc.GetSetOptionsWithContext)
+	if err := setter.SetOption(ctx, OptionAccessToken, "replacement"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := setter.SetOption(ctx, OptionAccessToken, ""); adbcStatus(err) != adbc.StatusInvalidArgument {
+		t.Fatalf("an empty token: %v", err)
+	}
+	f.mu.Lock()
+	sessions := append([]string(nil), f.sessions...)
+	f.mu.Unlock()
+	if len(sessions) != 2 || sessions[1] != "Bearer replacement" {
+		t.Fatalf("sessions opened with %v", sessions)
+	}
+
+	password := newFakeWarp(t)
+	pdb, err := NewDriver(nil).NewDatabaseWithContext(ctx, map[string]string{adbc.OptionKeyURI: password.server.URL,
+		adbc.OptionKeyUsername: "u", adbc.OptionKeyPassword: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = pdb.Close(ctx) }()
+	if c, err := pdb.Open(ctx); err == nil {
+		_ = c.Close(ctx)
+	} else {
+		t.Fatal(err)
+	}
+	err = pdb.(adbc.GetSetOptionsWithContext).SetOption(ctx, OptionAccessToken, "x")
+	if adbcStatus(err) != adbc.StatusInvalidState || !strings.Contains(err.Error(), "signs in another way") {
+		t.Fatalf("a password database: %v", err)
+	}
+}

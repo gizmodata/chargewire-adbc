@@ -102,3 +102,13 @@ func (c *Client) UseAccessToken(token string) {
 	c.credentials = Credentials{AccessToken: token}
 	c.renewAt = time.Time{}
 }
+
+// ReplaceAccessToken sends token from now on in place of the token issued
+// elsewhere that the client uses. Safe while the client is in use; only for
+// a client whose credentials are such a token.
+func (c *Client) ReplaceAccessToken(token string) {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	c.token = token
+	c.renewAt = time.Time{}
+}

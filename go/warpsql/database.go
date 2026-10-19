@@ -96,6 +96,9 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 	if handled, err := d.defaults.set(key, value); handled {
 		return err
 	}
+	if key == OptionAccessToken && d.opened() {
+		return d.replaceAccessToken(value)
+	}
 	if d.opened() {
 		return d.ErrorHelper.InvalidState("option %s must be set before the first connection is opened", key)
 	}
@@ -278,6 +281,24 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 	})
 	d.client, d.transport, d.discovery = client, transport, discovery
 	return client, discovery, nil
+}
+
+// replaceAccessToken gives an open database a new access token, when it signs
+// in with one (OptionAccessToken, or a browser sign-in): its connections send
+// it from their next request on, and Open uses it.
+func (d *databaseImpl) replaceAccessToken(token string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.credentials.AccessToken == "" && !d.browserSignIn {
+		return d.ErrorHelper.InvalidState("%s can be replaced only on a database that signs in with an access token "+
+			"or through the browser; this one signs in another way", OptionAccessToken)
+	}
+	if token == "" {
+		return d.ErrorHelper.InvalidArgument("%s cannot be empty", OptionAccessToken)
+	}
+	d.credentials.AccessToken = token
+	d.client.ReplaceAccessToken(token)
+	return nil
 }
 
 func (d *databaseImpl) timeoutOrDefault() time.Duration {
