@@ -124,6 +124,12 @@ func newStatement(c *connectionImpl) *statementImpl {
 
 func (st *statementImpl) session() *protocol.Session { return st.cnxn.session }
 
+// remoteLocations reports whether the driver asks for partitions held by
+// other servers (capability result_locations, §6.2).
+func (st *statementImpl) remoteLocations() bool {
+	return st.cnxn.discovery.Has(protocol.CapabilityResultLocations)
+}
+
 func (st *statementImpl) zstd() bool {
 	return st.opts.compression == "zstd" && st.cnxn.discovery.Has(protocol.CapabilityIPCCompressionZstd)
 }
@@ -336,6 +342,9 @@ func (st *statementImpl) newSubmission(ctx context.Context, arrowResult bool) (*
 	if st.opts.partitions > 1 && st.cnxn.discovery.Has(protocol.CapabilityResultPartitions) {
 		sub.Partitions, sub.AnyOrder = st.opts.partitions, st.opts.anyOrder
 	}
+	// The driver reads partitions from other servers, so it says so where the
+	// server can place them there (§6.2); elsewhere it must not.
+	sub.RemoteLocations = st.remoteLocations()
 	if st.params == nil {
 		body, err := protocol.SubmitDocument(st.query, nil)
 		if err != nil {
@@ -422,6 +431,13 @@ func preparedGone(err error) bool {
 // caller's context ended, the statement it was waiting for is stopped on the
 // server too.
 func (st *statementImpl) fail(exec *execution, err error, op string) error {
+	if p, ok := errors.AsType[*protocol.Problem](err); ok && p.StatementID != "" && exec.sub != nil {
+		// The error response names the statement it ended (§6.1): it exists
+		// on the server and is freed like any other.
+		if _, known := exec.statementRef(); !known {
+			exec.setRef(protocol.StatementRef{SessionID: exec.sub.SessionID(), StatementID: p.StatementID})
+		}
+	}
 	if !exec.cancelled.Load() && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 		_ = st.stopOnServer(ctx, exec)
@@ -483,10 +499,13 @@ func (st *statementImpl) stopOnServer(ctx context.Context, exec *execution) erro
 	return wrapError(err, "Cancel")
 }
 
-// unsupported reports a server without the endpoint that was called.
+// unsupported reports a server without the endpoint that was called: its
+// codes for that, or the statuses with no problem document (a proxy's answer).
 func unsupported(err error) bool {
 	return protocol.HasCode(err, protocol.CodeNotFound) || protocol.HasCode(err, protocol.CodeMethodNotAllowed) ||
-		protocol.HasCode(err, protocol.CodeNotImplemented)
+		protocol.HasCode(err, protocol.CodeNotImplemented) ||
+		(protocol.HasCode(err, protocol.CodeClientHTTPError) &&
+			protocol.HasStatus(err, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented))
 }
 
 // abandonActive ends what a new execution or Close invalidates: a statement
@@ -573,7 +592,12 @@ func (st *statementImpl) ExecuteQuery(ctx context.Context) (rdr array.RecordRead
 		return st.queryResult(execCtx, exec, doc)
 	}
 	exec.setRef(protocol.StatementRef{SessionID: sub.SessionID(), StatementID: resp.Header.Get("Warp-Statement-Id")})
-	if k, order, split := splitHeaders(resp); split {
+	k, order, err := splitHeaders(resp)
+	if err != nil {
+		resp.Body.Close()
+		return nil, -1, st.fail(exec, err, "ExecuteQuery")
+	}
+	if k > 1 {
 		// A split result (§6.10): this body is partition 0; the others are read
 		// at once, each over its own connection.
 		parts := make([]resultPart, k)
@@ -637,14 +661,20 @@ func (st *statementImpl) queryResult(ctx context.Context, exec *execution, doc *
 		reader, err := array.NewRecordReader(arrow.NewSchema(nil, nil), nil)
 		return reader, rowsAffected(doc.Result), err
 	}
-	parts, err := resultParts(doc.Result)
+	parts, err := resultParts(doc.Result, st.remoteLocations(), st.cnxn.client.BaseURL())
 	if err != nil {
 		return nil, -1, st.fail(exec, err, "ExecuteQuery")
 	}
-	if order := doc.Result.PartitionOrder; len(parts) > 1 &&
-		(order == protocol.PartitionOrderInterleaved || order == protocol.PartitionOrderAny) {
-		// A result split on this server is read all at once (§6.10).
-		// Partitions on other servers (§6.2) are still read one after another.
+	if len(parts) > 1 {
+		// A split result is read all at once, every partition over its own
+		// connection, on this server or another (§6.10, §6.2). Its order
+		// must be stated, never guessed.
+		order := doc.Result.PartitionOrder
+		if !knownPartitionOrder(order) {
+			return nil, -1, st.fail(exec, protocol.ProtocolError("statement %s's result has %d partitions, but its "+
+				"partition_order is %q, not %q or %q", doc.StatementID, len(parts), order,
+				protocol.PartitionOrderInterleaved, protocol.PartitionOrderAny), "ExecuteQuery")
+		}
 		reader, err := newPartitionedReader(st.readerConfig(ctx, exec, parts), order, nil)
 		if err != nil {
 			return nil, -1, err
@@ -754,7 +784,7 @@ func (st *statementImpl) executeIngest(ctx context.Context) (int64, error) {
 	defer rows.Release()
 	ir := protocol.IngestRequest{
 		Table: st.ingest.table, Catalog: st.ingest.catalog, Schema: st.ingest.schema,
-		Mode: st.ingest.mode, Temporary: st.ingest.temporary,
+		Mode: st.ingest.mode, Temporary: st.ingest.temporary, QueryTag: st.opts.queryTag,
 	}
 	// An upload of two batches or more goes in parts on a server that takes
 	// them (§8.3); otherwise, or with ingest parts = 1, as one stream (§8.1).
@@ -812,6 +842,10 @@ func (st *statementImpl) ExecutePartitions(ctx context.Context) (schema *arrow.S
 		return nil, adbc.Partitions{}, -1, wrapError(err, "ExecutePartitions")
 	}
 	if schema, err = readSchema(schemaBytes, st.alloc); err != nil {
+		return nil, adbc.Partitions{}, -1, wrapError(err, "ExecutePartitions")
+	}
+	if _, err := resultParts(doc.Result, st.remoteLocations(), st.cnxn.client.BaseURL()); err != nil {
+		st.free(exec)
 		return nil, adbc.Partitions{}, -1, wrapError(err, "ExecutePartitions")
 	}
 	ref, _ := exec.statementRef()

@@ -121,6 +121,10 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
     extra_args = extra_args or []
     port = _free_port()
     password = secrets.token_urlsafe(nbytes=12) + ":p@ss:word"
+    # A HOME of its own, so the server never sees this machine's DuckDB secrets or
+    # configuration.
+    home = log.parent / f"home-{port}"
+    home.mkdir(parents=True, exist_ok=True)
     with log.open(mode="ab") as out:
         process = subprocess.Popen(
             args=[
@@ -133,7 +137,7 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
                 USERNAME,
                 *[_mtls_flag(arg=arg) for arg in extra_args],
             ],
-            env={**os.environ, SERVER_PASSWORD_ENV: password},
+            env={**os.environ, SERVER_PASSWORD_ENV: password, "HOME": str(home)},
             stdout=out,
             stderr=subprocess.STDOUT,
         )

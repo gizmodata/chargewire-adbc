@@ -91,6 +91,11 @@ const (
 	// OptionSessionReplacements is how often the connection's session was
 	// lost and replaced.
 	OptionSessionReplacements = "adbc.warp.session.replacements"
+	// OptionSessionTransaction is the session's transaction as the server
+	// reports it (§5.2): "none", "open", "aborted", or "unknown" for a value
+	// this driver doesn't know. It sees SQL BEGIN and COMMIT too. Reading it
+	// costs a request.
+	OptionSessionTransaction = "adbc.warp.session.transaction"
 )
 
 // Statement options. They can also be set on the database or the connection,
@@ -108,8 +113,10 @@ const (
 	// OptionStatementTimeout is the seconds (fractions allowed) after which
 	// the server cancels a statement; 0 means none.
 	OptionStatementTimeout = "adbc.warp.statement.timeout_seconds"
-	// OptionQueryTag is a JSON object recorded with every statement, for
-	// observability on the server.
+	// OptionQueryTag is a JSON object recorded with every statement and
+	// ingest, for observability on the server (Warp-Query-Tag, §2.5). It is
+	// sent compact and in ASCII (other characters as \u escapes), and may be
+	// at most 4,096 bytes so; reading the option back gives that form.
 	OptionQueryTag = "adbc.warp.statement.query_tag"
 	// OptionIPCCompression is "zstd" or "none" (default): Arrow buffer
 	// compression for results and uploads, used when the server offers it.
@@ -204,9 +211,12 @@ func (o *execOptions) set(key, value string) (bool, error) {
 		o.timeout = time.Duration(seconds * float64(time.Second))
 	case OptionQueryTag:
 		if value != "" {
-			if err := protocol.ValidQueryTag(value); err != nil {
-				return true, invalidOption(key, value, "a JSON object")
+			tag, err := protocol.NormalizeQueryTag(value)
+			if err != nil {
+				return true, invalidOption(key, value, fmt.Sprintf("a JSON object of at most %d bytes as sent (%v)",
+					protocol.MaxQueryTagBytes, err))
 			}
+			value = tag
 		}
 		o.queryTag = value
 	case OptionResultPartitions:

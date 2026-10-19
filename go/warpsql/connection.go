@@ -60,6 +60,13 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return c.session.ID(), nil
 	case OptionSessionReplacements:
 		return strconv.Itoa(c.session.Replacements()), nil
+	case OptionSessionTransaction:
+		// The server's view (§5.2), which includes SQL BEGIN and COMMIT.
+		transaction, err := c.session.Transaction(ctx)
+		if err != nil {
+			return "", wrapError(err, "reading the session's transaction")
+		}
+		return transaction, nil
 	}
 	return c.ConnectionImplBase.GetOption(ctx, key)
 }
@@ -76,7 +83,7 @@ func (c *connectionImpl) SetOption(ctx context.Context, key, value string) error
 		return err
 	}
 	switch key {
-	case OptionSessionID, OptionSessionReplacements:
+	case OptionSessionID, OptionSessionReplacements, OptionSessionTransaction:
 		return c.ErrorHelper.InvalidArgument("option %s is read-only", key)
 	case adbc.OptionKeyReadOnly, adbc.OptionKeyIsolationLevel:
 		return c.ErrorHelper.NotImplemented("option %s is not supported by Warp SQL", key)

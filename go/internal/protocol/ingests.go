@@ -29,10 +29,20 @@ type ingestTarget struct {
 	Temporary bool   `json:"temporary"`
 }
 
+// ingestDocument is an ingest's document (§8.3), and the answer to its open
+// and its commit.
 type ingestDocument struct {
-	IngestID     string `json:"ingest_id"`
-	State        string `json:"state"`
-	RowsIngested int64  `json:"rows_ingested"`
+	IngestID     string       `json:"ingest_id"`
+	State        string       `json:"state"`
+	Parts        []ingestPart `json:"parts"`
+	RowsIngested int64        `json:"rows_ingested"`
+	Error        *Problem     `json:"error"`
+}
+
+// ingestPart is a part whose upload finished (§8.3).
+type ingestPart struct {
+	Part         int   `json:"part"`
+	RowsReceived int64 `json:"rows_received"`
 }
 
 // OpenIngest opens a partitioned ingest into ir's target (ir.Body is unused).
@@ -45,6 +55,9 @@ func (s *Session) OpenIngest(ctx context.Context, ir IngestRequest) (IngestHandl
 		return IngestHandle{}, err
 	}
 	header := http.Header{"Idempotency-Key": {NewIdempotencyKey()}}
+	if ir.QueryTag != "" {
+		header.Set("Warp-Query-Tag", ir.QueryTag)
+	}
 	var sessionID string
 	resp, err := s.do(ctx, ScopeStatement, "", func(id string) (*Request, error) {
 		sessionID = id
@@ -59,8 +72,7 @@ func (s *Session) OpenIngest(ctx context.Context, ir IngestRequest) (IngestHandl
 		return IngestHandle{}, err
 	}
 	if doc.IngestID == "" {
-		return IngestHandle{}, &Problem{Status: resp.StatusCode, Code: "protocol_error",
-			Detail: "the server opened an ingest without an ingest_id"}
+		return IngestHandle{}, ProtocolError("the server opened an ingest without an ingest_id")
 	}
 	return IngestHandle{SessionID: sessionID, ID: doc.IngestID}, nil
 }
@@ -84,7 +96,7 @@ func (s *Session) IngestPart(ctx context.Context, h IngestHandle, part int, body
 // CommitIngest commits parts 0..parts-1 as one and returns the rows written.
 // Committing again answers with the same result, so it is safe to retry.
 func (s *Session) CommitIngest(ctx context.Context, h IngestHandle, parts int) (int64, error) {
-	body, err := JSONBody(map[string]int{"parts": parts})
+	body, err := JSONBody(map[string]int{"part_count": parts})
 	if err != nil {
 		return 0, err
 	}

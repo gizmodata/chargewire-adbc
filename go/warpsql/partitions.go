@@ -5,7 +5,6 @@ package warpsql
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/url"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -32,11 +31,18 @@ func encodePartition(ref protocol.StatementRef, partition protocol.Partition) ([
 }
 
 // resultParts lists a result's partitions. A partition held by another server
-// is fetched from its location (§6.2).
-func resultParts(result *protocol.Result) ([]resultPart, error) {
+// is fetched from its location (§6.2), which only a client that asked for
+// remote locations may be given. base is the server's own base URL: a
+// location must not downgrade its TLS, since the request carries the access
+// token.
+func resultParts(result *protocol.Result, remoteAllowed bool, base *url.URL) ([]resultPart, error) {
 	parts := make([]resultPart, 0, len(result.Partitions))
 	for _, partition := range result.Partitions {
-		part, err := newResultPart(partition.Index, partition.Location)
+		if partition.Location != nil && !remoteAllowed {
+			return nil, protocol.ProtocolError("partition %d is on another server (%q), but the driver did not send "+
+				"Warp-Result-Locations: remote", partition.Index, *partition.Location)
+		}
+		part, err := newResultPart(partition.Index, partition.Location, base)
 		if err != nil {
 			return nil, err
 		}
@@ -45,12 +51,16 @@ func resultParts(result *protocol.Result) ([]resultPart, error) {
 	return parts, nil
 }
 
-func newResultPart(index int, location *string) (resultPart, error) {
+func newResultPart(index int, location *string, base *url.URL) (resultPart, error) {
 	part := resultPart{index: index}
 	if location != nil {
 		u, err := url.Parse(*location)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			return resultPart{}, fmt.Errorf("partition %d has an invalid location %q", index, *location)
+			return resultPart{}, protocol.ProtocolError("partition %d has an invalid location %q", index, *location)
+		}
+		if base != nil && base.Scheme == "https" && u.Scheme != "https" {
+			return resultPart{}, protocol.ProtocolError("partition %d is at %q, which is not TLS, though the server is: "+
+				"the driver does not send the access token there", index, *location)
 		}
 		part.location = u
 	}
@@ -65,7 +75,7 @@ func (c *connectionImpl) ReadPartition(ctx context.Context, serialized []byte) (
 	if err := json.Unmarshal(serialized, &descriptor); err != nil || descriptor.Version != partitionDescriptorVersion {
 		return nil, c.ErrorHelper.InvalidArgument("not a Warp SQL partition descriptor")
 	}
-	part, err := newResultPart(descriptor.Partition, descriptor.Location)
+	part, err := newResultPart(descriptor.Partition, descriptor.Location, c.client.BaseURL())
 	if err != nil {
 		return nil, c.ErrorHelper.InvalidArgument("%s", err)
 	}

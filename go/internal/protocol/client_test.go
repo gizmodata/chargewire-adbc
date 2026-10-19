@@ -250,7 +250,7 @@ func TestRetryAfterIsHonoured(t *testing.T) {
 }
 
 // A client error is not retried, and an unstructured error body still has a
-// code.
+// code: a client_ one, with the response's status (§11).
 func TestErrorsWithoutProblemDocuments(t *testing.T) {
 	f := newFake(t)
 	calls := atomic.Int32{}
@@ -259,7 +259,7 @@ func TestErrorsWithoutProblemDocuments(t *testing.T) {
 		http.Error(w, "<html>request entity too large</html>", http.StatusRequestEntityTooLarge)
 	})
 	_, err := f.client(Credentials{AccessToken: "x"}, 4).Do(context.Background(), &Request{Method: http.MethodGet, Path: "/v1/proxy", Idempotent: true, Anonymous: true})
-	if !HasCode(err, CodePayloadTooLarge) || calls.Load() != 1 {
+	if !HasCode(err, CodeClientHTTPError) || !HasStatus(err, http.StatusRequestEntityTooLarge) || calls.Load() != 1 {
 		t.Fatalf("%d calls: %v", calls.Load(), err)
 	}
 }

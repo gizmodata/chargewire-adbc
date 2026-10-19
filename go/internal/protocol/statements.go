@@ -3,6 +3,7 @@
 package protocol
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,8 +12,11 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // StatementRef names a statement: statements live in the session that ran
@@ -56,7 +60,8 @@ type Submission struct {
 	Retain *bool
 	// Timeout, when positive, is the statement timeout (§6.9).
 	Timeout time.Duration
-	// QueryTag is a JSON object recorded with the statement.
+	// QueryTag is a JSON object recorded with the statement, as
+	// NormalizeQueryTag returns it.
 	QueryTag string
 	// Zstd accepts Arrow buffer compression (§8.2).
 	Zstd bool
@@ -65,6 +70,10 @@ type Submission struct {
 	// order doesn't matter.
 	Partitions int
 	AnyOrder   bool
+	// RemoteLocations says the client reads partitions held by other servers
+	// (Warp-Result-Locations: remote, capability result_locations, §6.2).
+	// Without it the server gives every partition on itself.
+	RemoteLocations bool
 
 	key       string
 	sessionID string
@@ -114,6 +123,9 @@ func (s *Submission) request(arrow, async bool) *Request {
 		if s.AnyOrder {
 			header.Set("Warp-Result-Order", "any")
 		}
+	}
+	if s.RemoteLocations {
+		header.Set("Warp-Result-Locations", "remote")
 	}
 	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
 		if info.Err == nil {
@@ -291,6 +303,8 @@ type IngestRequest struct {
 	Temporary bool
 	// Body is the Arrow IPC stream.
 	Body *Body
+	// QueryTag labels the ingest, as NormalizeQueryTag returns it.
+	QueryTag string
 }
 
 // Ingest uploads rows into a table and returns how many were written.
@@ -306,6 +320,9 @@ func (s *Session) Ingest(ctx context.Context, ir IngestRequest) (int64, error) {
 		query.Set("temporary", "true")
 	}
 	header := http.Header{"Idempotency-Key": {NewIdempotencyKey()}}
+	if ir.QueryTag != "" {
+		header.Set("Warp-Query-Tag", ir.QueryTag)
+	}
 	resp, err := s.do(ctx, ScopeStatement, "", func(id string) (*Request, error) {
 		return &Request{Method: http.MethodPost, Path: sessionPath(id) + "/ingest", Query: query, Header: header,
 			Body: ir.Body, Idempotent: true}, nil
@@ -348,16 +365,48 @@ func DecodeStatementDocument(resp *http.Response) (*StatementDocument, error) {
 		return nil, err
 	}
 	if doc.StatementID == "" {
-		return nil, fmt.Errorf("the server answered %s without a statement id", resp.Request.URL.Path)
+		return nil, ProtocolError("the server answered %s without a statement id", resp.Request.URL.Path)
 	}
 	return doc, nil
 }
 
-// ValidQueryTag checks that tag is a JSON object, as Warp-Query-Tag requires.
-func ValidQueryTag(tag string) error {
-	var object map[string]any
-	if err := json.Unmarshal([]byte(tag), &object); err != nil {
-		return fmt.Errorf("a query tag must be a JSON object: %w", err)
+// MaxQueryTagBytes is the longest Warp-Query-Tag, serialized (§2.5).
+const MaxQueryTagBytes = 4096
+
+// NormalizeQueryTag checks that tag is a JSON object and returns it as
+// Warp-Query-Tag carries it (§2.5): compact, in ASCII (every other character,
+// and DEL, as a \u escape, so the header carries no raw UTF-8 or control
+// byte), at most MaxQueryTagBytes long. Escaping keeps the text's meaning.
+func NormalizeQueryTag(tag string) (string, error) {
+	if !utf8.ValidString(tag) {
+		return "", errors.New("a query tag must be UTF-8 text")
 	}
-	return nil
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(tag), &object); err != nil || object == nil {
+		return "", errors.New("a query tag must be a JSON object")
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(tag)); err != nil {
+		return "", errors.New("a query tag must be a JSON object")
+	}
+	var out strings.Builder
+	for _, r := range compact.String() {
+		switch {
+		case r == 0x7f:
+			out.WriteString(`\u007f`)
+		case r < utf8.RuneSelf:
+			out.WriteRune(r)
+		default:
+			// Non-ASCII characters occur only inside JSON strings, where a
+			// \u escape (a UTF-16 surrogate pair above U+FFFF) means the same.
+			for _, unit := range utf16.Encode([]rune{r}) {
+				fmt.Fprintf(&out, `\u%04x`, unit)
+			}
+		}
+	}
+	if out.Len() > MaxQueryTagBytes {
+		return "", fmt.Errorf("a query tag is at most %d bytes as sent (ASCII, non-ASCII characters escaped); this one is %d",
+			MaxQueryTagBytes, out.Len())
+	}
+	return out.String(), nil
 }

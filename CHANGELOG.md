@@ -34,6 +34,46 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Warp SQL protocol 1.0.0.** The driver follows the protocol's first stable version (spec
+  1.0.0), with no fallbacks for the draft's names:
+  - Discovery has no `draft` field and no `result_retention` / `partitioned_results`
+    capabilities (retention is core: the driver may ask, and reads `retained`). Unknown
+    capabilities are ignored.
+  - Enumerations are open (§12): a statement or ingest state the driver doesn't know is not
+    terminal (it keeps polling), an unknown `reason` / `cancel_reason` is a generic one, an
+    unknown code is handled by its HTTP status. The code lists now hold every 1.0 code
+    (`unsupported_grant_type`, `partition_not_found`, `internal_error`, …);
+    `client_certificate_required` is now `certificate_required`.
+  - Codes the driver makes up start with `client_`: `client_protocol_error` (was
+    `protocol_error`), `client_http_error` for an error status without a problem document (a
+    proxy's page; it used to borrow a server code from the status, such as
+    `payload_too_large` or `execution_error`), and `client_statement_failed` /
+    `client_statement_cancelled` for a failed or cancelled document without its error.
+  - A statement cancelled or failed by the time the server answers its submit is an error
+    response (409 `statement_cancelled` with `cancel_reason`, 422 `execution_error`, …) naming
+    the statement in `Warp-Statement-Id`: the driver reports it (`StatusCancelled` for a
+    cancel) and frees that statement. A `failed`/`cancelled` document is still an error
+    whatever the status. 502 and 421 without a known code are now `StatusIO`.
+  - A split result must state its order: `Warp-Result-Partitions` above 1 without a
+    known `Warp-Result-Order` (or a document's `partition_order`) is `client_protocol_error`,
+    no longer read as `any`.
+  - Partitions on other servers: the driver sends `Warp-Result-Locations: remote` only to a
+    server listing `result_locations`, refuses a location it did not ask for or one that
+    would drop TLS (the access token goes along), and reads remote partitions at once with
+    the others (they were read one after another).
+  - Partitioned ingest commits with `{"part_count": n}` (was `{"parts": n}`).
+  - `adbc.warp.statement.query_tag` must be a JSON object (`null` was accepted); it is sent
+    compact and ASCII-escaped (`\uXXXX`), refused over 4,096 bytes, and now also labels
+    ingests.
+  - `invalid_token` is answered by signing in again (once) only without a reason, with
+    `token_expired` or with an unknown reason; after `token_revoked`, `credentials_changed`
+    or `principal_dropped` the error comes back with its reason (error detail
+    `warp.reason`; `warp.cancel_reason` for cancels). A session ended with `token_expired`
+    is replaced only after a new token; with a token issued elsewhere it is not replaced.
+  - A TLS alert `certificate_required` / `certificate_revoked` at the handshake is reported
+    as that refusal (`StatusUnauthenticated`, code `certificate_required` /
+    `certificate_revoked`), not as an unreachable server (`StatusIO`).
+  - `Retry-After` is read as delta-seconds only.
 - Python 3.11 is the minimum (`requires-python = ">=3.11"`): pyarrow 26, the floor,
   needs 3.11, so on 3.10 the package could never be installed.
 
@@ -76,6 +116,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `adbc.warp.session.transaction` (read-only, connection; Python
+  `ConnectionOptions.SESSION_TRANSACTION`): the session's transaction as the server reports
+  it (`none`, `open`, `aborted`, or `unknown`), which sees SQL `BEGIN` and `COMMIT` too.
+- The live-test servers (Go and Python) run with a `HOME` of their own.
 - `warpsql.NewDriverWithName(alloc, displayName)`: the driver under another GetInfo driver
   name, for drivers built on this one (hardcharger-adbc).
 - Partitioned ingest (Warp SQL spec §8.3): `adbc.warp.ingest.parts` (default 8). On a

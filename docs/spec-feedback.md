@@ -1,5 +1,9 @@
 # Spec and server findings
 
+> History: these were found against the spec's draft 0.1.0. The protocol is now version 1
+> (spec 1.0.0), which changed some names quoted below (for example, server-info keys are
+> Flight SQL `SqlInfo` names such as `sql_transactions_supported`).
+
 What building the driver found in the Warp SQL spec (draft 0.1.0) and in `warp-duckdb`
 (warp-sql commit `d07e697`). **All sixteen are resolved in warp-sql `188cd84`**; each item
 names the commit that fixed it and what the driver does now. The repros below show the

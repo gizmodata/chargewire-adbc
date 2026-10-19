@@ -889,6 +889,19 @@ class TestTransactions:
                 cur.execute(operation="SELECT count(*), sum(v) FROM test_tx_parts")
                 assert cur.fetchone() == (200_000, 199_999 * 200_000 // 2)
 
+    def test_session_transaction_is_the_servers_view(self, warp_server):
+        # The server's session document says where the session stands, SQL BEGIN included.
+        key = ConnectionOptions.SESSION_TRANSACTION.value
+        with connect(server=warp_server) as conn:
+            assert conn.adbc_connection.get_option(key=key) == "none"
+            with conn.cursor() as cur:
+                cur.execute(operation="BEGIN TRANSACTION")
+                assert conn.adbc_connection.get_option(key=key) == "open"
+                cur.execute(operation="ROLLBACK")
+            assert conn.adbc_connection.get_option(key=key) == "none"
+        with connect(server=warp_server, autocommit=False) as conn:
+            assert conn.adbc_connection.get_option(key=key) == "open"
+
 
 class TestPartitionsAndOptions:
     def test_partitions_read_on_another_connection(self, warp_server):

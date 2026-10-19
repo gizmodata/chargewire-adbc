@@ -25,8 +25,8 @@ A native [ADBC](https://arrow.apache.org/adbc/) driver for the
 [Warp SQL protocol](https://github.com/gizmodata/warp-sql), written in Go, with Python
 bindings.
 
-It is a **generic** driver: it talks to any server that implements the Warp SQL spec
-(draft 0.1.0), not one particular database. Compiled to a C shared library, one
+It is a **generic** driver: it talks to any server that implements the Warp SQL protocol,
+version 1 (spec 1.0.0), not one particular database. Compiled to a C shared library, one
 implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and JavaScript.
 
 - ⚡ **Arrow end to end:** results stream from the server as Arrow IPC straight into
@@ -86,7 +86,11 @@ reader, _, err := stmt.ExecuteQuery(ctx)
 ```
 
 `warpsql.ErrorCode(err)` returns the server's error code (`sql_error`,
-`session_not_found`, …) behind any error the driver returns.
+`session_not_found`, …) behind any error the driver returns, or a `client_` code for a
+failure the driver found in the server's answer (`client_protocol_error`, and
+`client_http_error` for an error status without a problem document, such as a proxy's).
+The error details also carry `warp.request_id`, and `warp.reason` / `warp.cancel_reason`
+when the server gave one (`token_revoked`, `killed`, …).
 
 ### Python
 
@@ -148,13 +152,15 @@ Statement options; set on the database or connection they are defaults for its s
 | `adbc.warp.statement.async` | `false` | Submit, poll, then read a retained, resumable result |
 | `adbc.warp.statement.retain_result` | server | Ask the server to keep results for re-reading and resuming |
 | `adbc.warp.statement.timeout_seconds` | none | The server cancels the statement after this long |
-| `adbc.warp.statement.query_tag` | | JSON object recorded with every statement |
+| `adbc.warp.statement.query_tag` | | JSON object recorded with every statement and ingest; sent compact, in ASCII (other characters as `\u` escapes), at most 4,096 bytes so |
 | `adbc.warp.ipc_compression` | `none` | `zstd`: Arrow buffer compression for results and uploads |
 | `adbc.warp.statement.result_partitions` | `8` | Let the server split a large result into up to this many partitions, read at once over separate connections (`1`: one stream) |
 | `adbc.warp.statement.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
 | `adbc.warp.ingest.parts` | `8` | Send a bulk ingest of two batches or more over up to this many connections at once, committed as one (`1`: one ordered stream) |
 
-Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connection),
+Read-only: `adbc.warp.session.id`, `adbc.warp.session.replacements` and
+`adbc.warp.session.transaction` (connection; the server's view, which sees SQL `BEGIN` too:
+`none`, `open`, `aborted`, or `unknown`),
 `adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
 `adbc.ingest.*` options; the transaction options are the standard ones.
 
@@ -172,7 +178,11 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
   batches come back in the server's order (round robin over the partitions), so `ORDER BY`
   holds; with `any`, as they arrive. Every partition must end with its end-of-stream
   marker: if one fails or is cut off (and can't be resumed), the whole result fails with
-  the statement's error. `ExecutePartitions` returns the server's partitions. The server
+  the statement's error. A split result that doesn't say its order (`Warp-Result-Order`, or
+  `partition_order`) is refused as a protocol error, never guessed. On a server with the
+  `result_locations` capability the driver also reads partitions held by other servers
+  (it sends `Warp-Result-Locations: remote` only there, and never sends the access token to
+  a location that would drop TLS). `ExecutePartitions` returns the server's partitions. The server
   decides how many: a result of fewer than two batches comes as one stream, and a server
   without the capability is never asked, so small queries cost nothing extra.
 - **Partitioned ingest** (by default; `adbc.warp.ingest.parts` above 1, on a server with
@@ -193,14 +203,19 @@ Read-only: `adbc.warp.session.id` and `adbc.warp.session.replacements` (connecti
   idempotent writes are retried after transport errors and 429/502/503/504 (honouring
   `Retry-After`). Commit and rollback are never retried. Uploads up to 16 MiB are kept in
   memory so they can be retried; larger ones stream (chunked) and are sent once.
-- **Tokens** are renewed before they expire and, once, when the server refuses one.
-- **Lost sessions** (`session_not_found`, or `session_ended` because a token expired) are
-  replaced by a new session with the options the driver set, and the loss is reported,
+- **Tokens** are renewed before they expire and, once, when the server refuses one
+  (`invalid_token` without a reason, with `token_expired`, or with a reason the driver
+  doesn't know). After `token_revoked`, `credentials_changed` or `principal_dropped` the
+  driver does not sign in again on its own: the error carries the reason.
+- **Lost sessions** (`session_not_found`, or `session_ended` because a token expired, after
+  getting a new token) are replaced by a new session with the options the driver set, and the loss is reported,
   not hidden: a warning is logged, `adbc.warp.session.replacements` counts it, and errors
   from work in the replacement say it ran there. Inside a transaction nothing runs on the
   replacement (it would commit half a transaction): the operation fails with the
   transaction named as lost. A prepared statement is prepared again; a retained result is
-  gone. With `adbc.warp.session.reconnect=false` the connection stays broken.
+  gone. With `adbc.warp.session.reconnect=false` the connection stays broken. A session
+  ended for any other reason (`killed` by an administrator, credentials changed, …) is an
+  error with the reason, and is not replaced.
 - **Cancel** (`AdbcStatementCancel`, Python's `adbc_cancel()` and Ctrl+C, closing the
   statement while it runs, or a Go context ending) stops the statement on the server with
   `POST …/cancel`. When its answer has not arrived yet, the driver cancels the session's

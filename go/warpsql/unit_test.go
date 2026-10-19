@@ -248,9 +248,12 @@ func TestErrorStatuses(t *testing.T) {
 		protocol.CodeStatementTimeout: adbc.StatusTimeout, protocol.CodeStatementCancelled: adbc.StatusCancelled,
 		protocol.CodeUnsupportedArrowType: adbc.StatusNotImplemented, protocol.CodeResultExpired: adbc.StatusInvalidState,
 		protocol.CodeServerDraining: adbc.StatusIO, protocol.CodeExecutionError: adbc.StatusInternal,
-		protocol.CodeClientCertificateRequired: adbc.StatusUnauthenticated, protocol.CodeUnknownCertificateIdentity: adbc.StatusUnauthenticated,
+		protocol.CodeCertificateRequired: adbc.StatusUnauthenticated, protocol.CodeUnknownCertificateIdentity: adbc.StatusUnauthenticated,
 		protocol.CodeCertificateRevoked: adbc.StatusUnauthenticated, protocol.CodeCertificateMismatch: adbc.StatusUnauthenticated,
 		protocol.CodeCertificateIdentityMismatch: adbc.StatusUnauthenticated,
+		protocol.CodeUnsupportedGrantType:        adbc.StatusUnauthenticated, protocol.CodePartitionNotFound: adbc.StatusNotFound,
+		protocol.CodeStatementNotFound: adbc.StatusNotFound, protocol.CodeInternalError: adbc.StatusInternal,
+		protocol.CodeClientProtocolError: adbc.StatusInternal, protocol.CodeClientStatementCancelled: adbc.StatusCancelled,
 	} {
 		if got := statusOfProblem(&protocol.Problem{Code: code}); got != want {
 			t.Errorf("%s -> %v, want %v", code, got, want)
@@ -263,10 +266,14 @@ func TestErrorStatuses(t *testing.T) {
 	}
 	for status, want := range map[int]adbc.Status{
 		http.StatusForbidden: adbc.StatusUnauthorized, http.StatusGone: adbc.StatusInvalidState,
-		http.StatusTeapot: adbc.StatusInvalidArgument, http.StatusBadGateway: adbc.StatusInternal,
+		http.StatusTeapot: adbc.StatusInvalidArgument, http.StatusBadGateway: adbc.StatusIO,
+		http.StatusUnprocessableEntity: adbc.StatusInvalidArgument, http.StatusInternalServerError: adbc.StatusInternal,
+		http.StatusNotFound: adbc.StatusNotFound, http.StatusUnauthorized: adbc.StatusUnauthenticated,
 	} {
-		if got := statusOfProblem(&protocol.Problem{Code: "a_future_code", Status: status}); got != want {
-			t.Errorf("unknown code with HTTP %d -> %v, want %v", status, got, want)
+		for _, code := range []string{"a_future_code", protocol.CodeClientHTTPError} {
+			if got := statusOfProblem(&protocol.Problem{Code: code, Status: status}); got != want {
+				t.Errorf("%s with HTTP %d -> %v, want %v", code, status, got, want)
+			}
 		}
 	}
 	err := wrapError(&protocol.Problem{Code: protocol.CodeSQLError, Status: 400, SQLState: "42P01", RequestID: "r_1", Detail: "no table t"}, "ExecuteQuery")

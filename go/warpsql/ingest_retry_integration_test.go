@@ -151,7 +151,7 @@ func TestIntegrationIngestAnswerToARetryArrives(t *testing.T) {
 					RowsIngested int64 `json:"rows_ingested"`
 				}
 				c.mustCall(t, http.MethodPost, sessionPath+"/ingests/"+ingest.IngestID+"/commit", "", "application/json",
-					[]byte(`{"parts":1}`), &committed)
+					[]byte(`{"part_count":1}`), &committed)
 				if committed.RowsIngested != retryRows {
 					t.Fatalf("committed %d rows, want %d", committed.RowsIngested, retryRows)
 				}

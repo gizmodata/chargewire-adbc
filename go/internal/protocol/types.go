@@ -4,8 +4,8 @@
 // messages and Arrow IPC bodies over plain HTTP. It knows nothing about ADBC;
 // the warpsql package builds the ADBC driver on top of it.
 //
-// The spec this follows is warp-sql/spec/warp-sql.md (draft 0.1.0). Section
-// numbers in comments (§6.7, ...) refer to it.
+// The spec this follows is warp-sql/spec/warp-sql.md, version 1 (1.0.0).
+// Section numbers in comments (§6.7, ...) refer to it.
 package protocol
 
 import (
@@ -20,18 +20,23 @@ const (
 	MediaTypeArrowStream = "application/vnd.apache.arrow.stream"
 )
 
-// Optional capabilities a server lists in its discovery document (§3.1, §10).
-// A client must not use one the server does not list.
+// Optional capabilities a server lists in its discovery document (§3.1).
+// A client must not use one the server does not list, and ignores names it
+// doesn't know. (Result retention is core: any server may be asked, and may
+// decline, §6.5.)
 const (
 	CapabilityPreparedStatements = "prepared_statements"
 	CapabilityTransactions       = "transactions"
 	CapabilityIngest             = "ingest"
-	CapabilityResultRetention    = "result_retention"
+	CapabilityPartitionedIngest  = "partitioned_ingest"
 	CapabilityLongPoll           = "long_poll"
 	CapabilityIPCCompressionZstd = "ipc_compression_zstd"
-	CapabilityPartitionedResults = "partitioned_results"
-	CapabilityResultPartitions   = "result_partitions"
-	CapabilityPartitionedIngest  = "partitioned_ingest"
+	// CapabilityResultPartitions: results split over several partitions on
+	// this server, read at once (§6.10).
+	CapabilityResultPartitions = "result_partitions"
+	// CapabilityResultLocations: partitions held by other servers, given
+	// only to a client that sends Warp-Result-Locations: remote (§6.2).
+	CapabilityResultLocations = "result_locations"
 	// CapabilityMTLSIdentity: the client_certificate grant (§4.4).
 	CapabilityMTLSIdentity = "mtls_identity"
 	// CapabilityOAuthBrowser: browser sign-in (§4.3).
@@ -62,7 +67,6 @@ const (
 type Discovery struct {
 	Protocol         string   `json:"protocol"`
 	ProtocolVersions []string `json:"protocol_versions"`
-	Draft            string   `json:"draft"`
 	Server           struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
@@ -106,9 +110,32 @@ type tokenResponse struct {
 
 // SessionDocument describes a session (§5.1).
 type SessionDocument struct {
-	SessionID    string         `json:"session_id"`
-	Options      map[string]any `json:"options"`
-	IdleTimeoutS int64          `json:"idle_timeout_s"`
+	SessionID string         `json:"session_id"`
+	Options   map[string]any `json:"options"`
+	// Transaction is the session's transaction: TransactionNone, Open or
+	// Aborted, or a value a later version adds (§12).
+	Transaction  string `json:"transaction"`
+	IdleTimeoutS int64  `json:"idle_timeout_s"`
+}
+
+// A session's transaction (§5.1).
+const (
+	TransactionNone    = "none"
+	TransactionOpen    = "open"
+	TransactionAborted = "aborted"
+	// TransactionUnknown is what the driver reports for a value it doesn't
+	// know, or none at all (§12).
+	TransactionUnknown = "unknown"
+)
+
+// TransactionState is the session's transaction as the driver reports it:
+// one of the version 1 values, else TransactionUnknown.
+func (d *SessionDocument) TransactionState() string {
+	switch d.Transaction {
+	case TransactionNone, TransactionOpen, TransactionAborted:
+		return d.Transaction
+	}
+	return TransactionUnknown
 }
 
 // optionsResult is the answer to PATCH /warp/v1/sessions/{id} (§5.3): the
@@ -118,7 +145,8 @@ type optionsResult struct {
 	Errors  map[string]Problem `json:"errors"`
 }
 
-// StatementState is a statement's lifecycle state (§6.2).
+// StatementState is a statement's lifecycle state (§6.2). The set is open:
+// a state this driver doesn't know is not terminal (§12).
 type StatementState string
 
 const (
@@ -143,6 +171,12 @@ type StatementDocument struct {
 	Result       *Result        `json:"result"`
 }
 
+// Failed reports a statement that ended without succeeding: a client must
+// treat it as the statement's error whatever the response's status (§6.2).
+func (d *StatementDocument) Failed() bool {
+	return d.State == StateFailed || d.State == StateCancelled
+}
+
 // Result kinds (§6.2).
 const (
 	ResultRows   = "rows"
@@ -155,7 +189,7 @@ type Result struct {
 	Schema     string      `json:"schema"`
 	Partitions []Partition `json:"partitions"`
 	// PartitionOrder is "interleaved" or "any" for a result split into
-	// several partitions on this server (§6.10), empty otherwise.
+	// several partitions (§6.10), empty for one partition.
 	PartitionOrder string `json:"partition_order"`
 	Retained       bool   `json:"retained"`
 	ExpiresAt      string `json:"expires_at"`
@@ -168,8 +202,9 @@ func (r *Result) SchemaBytes() ([]byte, error) {
 }
 
 // Partition is one piece of a row result (§6.2). Location, when set, is the
-// base URL of the server that holds it; Batches and Rows are known only once
-// the partition is complete.
+// base URL of the server that holds it (only for a client that sent
+// Warp-Result-Locations: remote); Batches and Rows are known only once the
+// partition is complete.
 type Partition struct {
 	Index    int     `json:"index"`
 	Location *string `json:"location"`
@@ -186,6 +221,16 @@ type PreparedDocument struct {
 	ResultSchema    *string `json:"result_schema"`
 	ResultKind      *string `json:"result_kind"`
 }
+
+// A partitioned ingest's state (§8.3). Open: a state this driver doesn't
+// know is not terminal (§12).
+const (
+	IngestOpen       = "open"
+	IngestCommitting = "committing"
+	IngestCommitted  = "committed"
+	IngestFailed     = "failed"
+	IngestAborted    = "aborted"
+)
 
 // ingestResult is the answer to POST …/ingest (§8.1).
 type ingestResult struct {

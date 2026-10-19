@@ -45,6 +45,9 @@ class ConnectionOptions(enum.Enum):
     SESSION_ID = "adbc.warp.session.id"
     #: How often the connection's session was lost and replaced.
     SESSION_REPLACEMENTS = "adbc.warp.session.replacements"
+    #: The session's transaction as the server reports it: "none", "open", "aborted",
+    #: or "unknown" (a value this driver doesn't know). Reading it costs a request.
+    SESSION_TRANSACTION = "adbc.warp.session.transaction"
 
 
 class StatementOptions(enum.Enum):

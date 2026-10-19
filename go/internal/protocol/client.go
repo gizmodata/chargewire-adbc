@@ -102,6 +102,12 @@ func NewClient(cfg Config) *Client {
 	return client
 }
 
+// BaseURL is the server's base path (§2.1).
+func (c *Client) BaseURL() *url.URL {
+	u := *c.base
+	return &u
+}
+
 // Request is one protocol call.
 type Request struct {
 	Method string
@@ -132,8 +138,9 @@ type Request struct {
 //
 // Do retries what is safe to retry: transport failures and 429/502/503/504
 // answers to idempotent requests (honouring Retry-After), with backoff and
-// jitter. A request refused for an expired token is sent again once with a
-// fresh token, when the credentials can obtain one.
+// jitter. A request refused with invalid_token is sent again once with a
+// fresh token, when the credentials can obtain one and the refusal's reason
+// allows it (§4.2).
 func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 	backoff := gadgets.Backoff{Start: 200 * time.Millisecond, Max: 5 * time.Second, Mul: 2}
 	renewed := false
@@ -155,6 +162,12 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+			if refusal := tlsAlertProblem(err); refusal != nil {
+				// The server refused the client certificate at the handshake
+				// (§4.4): that refusal, not an unreachable server.
+				refusal.Detail += ": " + err.Error()
+				return nil, refusal
+			}
 			if !req.Idempotent || !canRepeat || permanent(err) {
 				return nil, &TransportError{Op: req.Method + " " + req.Path, Err: err}
 			}
@@ -169,9 +182,10 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 		}
 		problem := readProblem(resp)
 		switch {
-		case problem.Code == CodeInvalidToken && !renewed && !req.Anonymous && c.credentials.grant() != nil && req.Body.Replayable():
+		case problem.Code == CodeInvalidToken && renewable(problem.Reason) && !renewed && !req.Anonymous &&
+			c.credentials.grant() != nil && req.Body.Replayable():
 			// The token expired or the server forgot it: get a new one and
-			// send the request again (§4.2). This is not a retry of the
+			// send the request again, once (§4.2). This is not a retry of the
 			// operation, which the server refused before running it.
 			renewed = true
 			if err := c.renewToken(ctx, token); err != nil {
@@ -192,6 +206,19 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 		}
 		return nil, problem
 	}
+}
+
+// renewable reports an invalid_token reason after which signing in again may
+// help (§4.2): none, token_expired, or one this driver doesn't know. After
+// token_revoked, credentials_changed or principal_dropped someone withdrew the
+// access on purpose, or the old credentials fail too: the refusal and its
+// reason go to the caller instead.
+func renewable(reason string) bool {
+	switch reason {
+	case ReasonTokenRevoked, ReasonCredentialsChanged, ReasonPrincipalDropped:
+		return false
+	}
+	return true
 }
 
 // permanent reports a transport error that sending again cannot cure: the
@@ -382,7 +409,11 @@ func (c *Client) renewToken(ctx context.Context, stale string) error {
 	if c.token != stale && c.tokenFresh() {
 		return nil
 	}
-	body, err := JSONBody(c.credentials.grant())
+	grant := c.credentials.grant()
+	if grant == nil {
+		return errors.New("a new access token is needed, but the driver was given a token issued elsewhere, which it cannot renew")
+	}
+	body, err := JSONBody(grant)
 	if err != nil {
 		return err
 	}

@@ -94,7 +94,10 @@ func (s *Session) Replacements() int {
 	return s.replacements
 }
 
-// InTransaction reports whether the driver turned autocommit off.
+// InTransaction reports whether the driver turned autocommit off. It decides
+// what may run again on a replacement session, when the old session (and
+// what the server knew about its transaction) is gone; Transaction asks the
+// server.
 func (s *Session) InTransaction() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -154,8 +157,12 @@ func (e *SessionReplacedError) Error() string {
 func (e *SessionReplacedError) Unwrap() error { return e.Err }
 
 // lost reports whether err says the session is gone in a way a new session
-// cures. A session ended for any other reason (killed by an administrator,
-// credentials changed, principal dropped) stays an error.
+// cures: the server doesn't have it, or it ended because its token expired,
+// which a new token cures (§5.6). A session ended for any other reason stays
+// an error: killed by an administrator, or a reason this driver doesn't know
+// (§5.6 allows a new session then, but the driver leaves that to the
+// application), and credentials changed, principal dropped or token revoked
+// (signing in again on its own is not the driver's call, §4.2).
 func lost(err error) bool {
 	p, ok := errors.AsType[*Problem](err)
 	if !ok {
@@ -176,7 +183,8 @@ func (s *Session) replace(ctx context.Context, failedID string, cause error) (st
 		return s.id, nil
 	}
 	if p, ok := errors.AsType[*Problem](cause); ok && p.Code == CodeSessionEnded {
-		// §5.6: get a new access token before creating a new session.
+		// §5.6: get a new access token before creating a new session. A
+		// token issued elsewhere can't be replaced, so no session is made.
 		if err := s.client.renewToken(ctx, s.client.currentToken()); err != nil {
 			return "", err
 		}
@@ -257,6 +265,18 @@ func (s *Session) Get(ctx context.Context) (*SessionDocument, error) {
 	}
 	doc := &SessionDocument{}
 	return doc, decodeJSON(resp, doc)
+}
+
+// Transaction reads the session's transaction from the server (§5.2):
+// TransactionNone, Open or Aborted, or TransactionUnknown for a value this
+// driver doesn't know. The server sees SQL BEGIN and COMMIT too, so this is
+// what the session's state is, not what the driver asked for.
+func (s *Session) Transaction(ctx context.Context) (string, error) {
+	doc, err := s.Get(ctx)
+	if err != nil {
+		return "", err
+	}
+	return doc.TransactionState(), nil
 }
 
 // OptionError is an option the server refused (§5.3).

@@ -267,7 +267,7 @@ func (r *resultReader) recover(streamErr error) error {
 	switch {
 	case doc.State == protocol.StateFailed:
 		return wrapError(statementError(doc), "the statement failed")
-	case doc.State == protocol.StateCancelled && doc.CancelReason != "client":
+	case doc.State == protocol.StateCancelled && doc.CancelReason != protocol.CancelReasonClient:
 		return wrapError(statementError(doc), "the statement was cancelled")
 	case !retained:
 		return ioError("reading the result: the result stream broke off (%v); the server did not retain the result, so it "+

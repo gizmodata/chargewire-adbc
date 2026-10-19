@@ -19,11 +19,19 @@ const (
 	ErrorDetailCode = "warp.code"
 	// ErrorDetailRequestID is the server's request id, for its logs.
 	ErrorDetailRequestID = "warp.request_id"
+	// ErrorDetailReason is why a token or session stopped working
+	// (invalid_token §4.2, session_ended §5.6), e.g. "token_revoked".
+	ErrorDetailReason = "warp.reason"
+	// ErrorDetailCancelReason is why a statement was cancelled (§6.2).
+	ErrorDetailCancelReason = "warp.cancel_reason"
 )
 
 // ErrorCode returns the Warp SQL error code (§11) behind an error the driver
-// returned, such as "sql_error" or "session_not_found", or "" when the error
-// did not come from the server.
+// returned, such as "sql_error" or "session_not_found": the server's, or one
+// beginning with "client_" for a failure the driver found in the server's
+// answer (client_protocol_error, client_http_error for an error status
+// without a problem document). It is "" for errors with no answer behind them
+// (a connection that failed, an invalid option).
 func ErrorCode(err error) string {
 	if p, ok := errors.AsType[*protocol.Problem](err); ok {
 		return p.Code
@@ -47,6 +55,12 @@ func wrapError(err error, op string) error {
 		adbcErr.Details = append(adbcErr.Details, &adbc.TextErrorDetail{Name: ErrorDetailCode, Detail: p.Code})
 		if p.RequestID != "" {
 			adbcErr.Details = append(adbcErr.Details, &adbc.TextErrorDetail{Name: ErrorDetailRequestID, Detail: p.RequestID})
+		}
+		if p.Reason != "" {
+			adbcErr.Details = append(adbcErr.Details, &adbc.TextErrorDetail{Name: ErrorDetailReason, Detail: p.Reason})
+		}
+		if p.CancelReason != "" {
+			adbcErr.Details = append(adbcErr.Details, &adbc.TextErrorDetail{Name: ErrorDetailCancelReason, Detail: p.CancelReason})
 		}
 	}
 	return &driverError{adbcErr: adbcErr, cause: err}
@@ -102,28 +116,33 @@ func statusOfProblem(p *protocol.Problem) adbc.Status {
 	case protocol.CodeUnknownOption, protocol.CodeNotImplemented, protocol.CodeUnsupportedArrowType:
 		return adbc.StatusNotImplemented
 	case protocol.CodeInvalidCredentials, protocol.CodeInvalidToken, protocol.CodeSessionEnded,
-		protocol.CodeClientCertificateRequired, protocol.CodeUnknownCertificateIdentity,
+		protocol.CodeUnsupportedGrantType, protocol.CodeCertificateRequired, protocol.CodeUnknownCertificateIdentity,
 		protocol.CodeCertificateRevoked, protocol.CodeCertificateMismatch,
 		protocol.CodeCertificateIdentityMismatch, protocol.CodeFlowNotFound, protocol.CodeAccessDenied,
 		protocol.CodeIdentityProviderError:
 		return adbc.StatusUnauthenticated
 	case protocol.CodePermissionDenied, protocol.CodeReadOnly:
 		return adbc.StatusUnauthorized
-	case protocol.CodeSessionNotFound, protocol.CodeStatementNotFound, protocol.CodePreparedNotFound, protocol.CodeNotFound:
+	case protocol.CodeSessionNotFound, protocol.CodeStatementNotFound, protocol.CodePreparedNotFound,
+		protocol.CodeIngestNotFound, protocol.CodePartitionNotFound, protocol.CodeNotFound:
 		return adbc.StatusNotFound
 	case protocol.CodeResultNotReady, protocol.CodeResultNotResumable, protocol.CodeResultExpired,
-		protocol.CodeMethodNotAllowed:
+		protocol.CodeMethodNotAllowed, protocol.CodeIngestIncomplete, protocol.CodeIngestPartExists,
+		protocol.CodeIngestExpired:
 		return adbc.StatusInvalidState
 	case protocol.CodeStatementTimeout:
 		return adbc.StatusTimeout
-	case protocol.CodeStatementCancelled:
+	case protocol.CodeStatementCancelled, protocol.CodeClientStatementCancelled:
 		return adbc.StatusCancelled
 	case protocol.CodeSessionElsewhere, protocol.CodeTooManySessions, protocol.CodeResultQuotaExceeded,
 		protocol.CodeRateLimited, protocol.CodeServerDraining:
 		return adbc.StatusIO
-	case protocol.CodeExecutionError, protocol.CodeIdempotencyKeyReused:
+	case protocol.CodeExecutionError, protocol.CodeIdempotencyKeyReused, protocol.CodeInternalError,
+		protocol.CodeClientProtocolError, protocol.CodeClientStatementFailed:
 		return adbc.StatusInternal
 	}
+	// An unknown code, or an error status without a problem document
+	// (client_http_error): the HTTP status decides (§12).
 	switch {
 	case p.Status == http.StatusUnauthorized:
 		return adbc.StatusUnauthenticated
@@ -137,7 +156,8 @@ func statusOfProblem(p *protocol.Problem) adbc.Status {
 		return adbc.StatusNotImplemented
 	case p.Status == http.StatusGatewayTimeout:
 		return adbc.StatusTimeout
-	case p.Status == http.StatusTooManyRequests || p.Status == http.StatusServiceUnavailable:
+	case p.Status == http.StatusTooManyRequests || p.Status == http.StatusServiceUnavailable ||
+		p.Status == http.StatusBadGateway || p.Status == http.StatusMisdirectedRequest:
 		return adbc.StatusIO
 	case p.Status >= 400 && p.Status < 500:
 		return adbc.StatusInvalidArgument
@@ -145,14 +165,19 @@ func statusOfProblem(p *protocol.Problem) adbc.Status {
 	return adbc.StatusInternal
 }
 
-// statementError is the error of a failed or cancelled statement (§6.2).
+// statementError is the error of a failed or cancelled statement (§6.2). A
+// document without its error gets a client_ code: the server sent none.
 func statementError(doc *protocol.StatementDocument) error {
 	if doc.Error != nil {
+		if doc.Error.CancelReason == "" {
+			doc.Error.CancelReason = doc.CancelReason
+		}
 		return doc.Error
 	}
-	code := protocol.CodeExecutionError
+	code := protocol.CodeClientStatementFailed
 	if doc.State == protocol.StateCancelled {
-		code = protocol.CodeStatementCancelled
+		code = protocol.CodeClientStatementCancelled
 	}
-	return &protocol.Problem{Code: code, Detail: fmt.Sprintf("statement %s %s", doc.StatementID, doc.State)}
+	return &protocol.Problem{Code: code, CancelReason: doc.CancelReason,
+		Detail: fmt.Sprintf("statement %s %s, and the server sent no error", doc.StatementID, doc.State)}
 }

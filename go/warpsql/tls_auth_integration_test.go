@@ -105,9 +105,12 @@ func TestIntegrationMutualTLS(t *testing.T) {
 	if got := scalarInt(t, cnxn, "SELECT 1"); got != 1 {
 		t.Fatal(got)
 	}
+	// Without a client certificate the server refuses the handshake with the
+	// TLS alert certificate_required, which the driver reports as that
+	// refusal, not as an unreachable server (§4.4).
 	options := server.options()
 	options[OptionTLSRootCerts] = ca.caPEM
-	assertStatus(t, openErr(t, options), adbc.StatusIO, "")
+	assertStatus(t, openErr(t, options), adbc.StatusUnauthenticated, "certificate_required")
 	options[OptionTLSClientCert] = ca.clientCertPEM
 	assertStatus(t, openErr(t, options), adbc.StatusInvalidArgument, "") // a certificate without its key
 }

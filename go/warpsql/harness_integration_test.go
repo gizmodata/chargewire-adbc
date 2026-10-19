@@ -89,6 +89,7 @@ type testServer struct {
 	host     string // host:port
 	password string
 	scheme   string
+	home     string // the server's own HOME, removed when it stops
 	log      *syncBuffer
 }
 
@@ -146,8 +147,16 @@ func launchServer(binary string, extraArgs []string) (*testServer, error) {
 		}
 		args = append(args, arg)
 	}
+	// A HOME of its own, so the server never sees this machine's DuckDB
+	// secrets or configuration.
+	home, err := os.MkdirTemp("", "warp-sql-adbc-server-home-")
+	if err != nil {
+		return nil, err
+	}
+	server.home = home
 	server.cmd = exec.Command(binary, args...)
-	server.cmd.Env = append(os.Environ(), envOr(serverPasswordEnvEnv, "WARP_DUCKDB_PASSWORD")+"="+server.password)
+	server.cmd.Env = append(os.Environ(), envOr(serverPasswordEnvEnv, "WARP_DUCKDB_PASSWORD")+"="+server.password,
+		"HOME="+home)
 	server.cmd.Stdout, server.cmd.Stderr = server.log, server.log
 	if err := server.cmd.Start(); err != nil {
 		return nil, err
@@ -184,6 +193,7 @@ func (s *testServer) waitUp() error {
 }
 
 func (s *testServer) stop() {
+	defer os.RemoveAll(s.home)
 	if s.cmd.Process == nil {
 		return
 	}

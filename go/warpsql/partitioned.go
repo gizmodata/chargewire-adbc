@@ -26,17 +26,34 @@ const partitionBuffer = 2
 const causeWait = 2 * time.Second
 
 // splitHeaders reads how a streamed result was split (§6.10): the partition
-// count and order, and whether there is more than one partition.
-func splitHeaders(resp *http.Response) (int, string, bool) {
-	k, err := strconv.Atoi(resp.Header.Get("Warp-Result-Partitions"))
-	if err != nil || k < 2 || k > maxResultPartitions {
-		return 1, "", false
+// count k and, when k is more than 1, the order. A result split in more than
+// one partition must say how in both headers: a missing or unknown order is a
+// protocol error, never guessed.
+func splitHeaders(resp *http.Response) (int, string, error) {
+	value := resp.Header.Get("Warp-Result-Partitions")
+	if value == "" {
+		return 1, "", nil
+	}
+	k, err := strconv.Atoi(value)
+	if err != nil || k < 1 || k > maxResultPartitions {
+		return 0, "", protocol.ProtocolError("the result's Warp-Result-Partitions is %q, not a partition count from 1 to %d",
+			value, maxResultPartitions)
+	}
+	if k == 1 {
+		return 1, "", nil
 	}
 	order := resp.Header.Get("Warp-Result-Order")
-	if order != protocol.PartitionOrderInterleaved {
-		order = protocol.PartitionOrderAny
+	if !knownPartitionOrder(order) {
+		return 0, "", protocol.ProtocolError("the result is split into %d partitions, but its Warp-Result-Order is %q, "+
+			"not %q or %q", k, order, protocol.PartitionOrderInterleaved, protocol.PartitionOrderAny)
 	}
-	return k, order, true
+	return k, order, nil
+}
+
+// knownPartitionOrder reports an order of version 1 (§6.10). A later version
+// adds orders only for clients that ask for them (§12).
+func knownPartitionOrder(order string) bool {
+	return order == protocol.PartitionOrderInterleaved || order == protocol.PartitionOrderAny
 }
 
 // partitionedReader reads a result split into partitions (§6.10): every

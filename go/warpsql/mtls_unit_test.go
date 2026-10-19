@@ -60,7 +60,7 @@ func newFakeMTLS(t *testing.T, offer bool) *fakeMTLS {
 		f.mu.Unlock()
 		switch {
 		case peer == "":
-			fakeProblem(w, http.StatusUnauthorized, protocol.CodeClientCertificateRequired)
+			fakeProblem(w, http.StatusUnauthorized, protocol.CodeCertificateRequired)
 		case peer != f.allowed:
 			fakeProblem(w, http.StatusUnauthorized, protocol.CodeUnknownCertificateIdentity)
 		default:
