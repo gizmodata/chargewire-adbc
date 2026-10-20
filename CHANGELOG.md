@@ -109,6 +109,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `AdbcStatementCancel` from another thread (Python's Ctrl-C handler) could cancel the
+  caller's *next* statement instead: the C shim cancelled the blocked call's context first,
+  which unblocked the caller before the server had been asked to stop anything, and when the
+  statement's id was not known yet the session-wide cancel then landed on the statement the
+  caller had moved on to (`SELECT 42` answered 409 `statement_cancelled`, reason `client`,
+  about 1 run in 20 of the Ctrl-C test). The shim now asks the server first and cancels the
+  context after. The Go API (`Statement.Cancel`) already had that order.
 - A user's SQL that failed while running (`execution_error`, HTTP 422: a division by zero, a
   failed conversion, `error()`) was reported as ADBC `StatusInternal`, which says the driver
   or server is broken, so Python raised `InternalError`. It is now `StatusInvalidArgument`

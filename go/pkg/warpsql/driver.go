@@ -1532,17 +1532,23 @@ func WarpSQLStatementCancel(stmt *C.struct_AdbcStatement, err *C.struct_AdbcErro
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	active := st.executionContext.CancelContext()
 	canceler, ok := st.stmt.(driverbase.StatementCanceler)
 	if !ok {
-		if active {
+		if st.executionContext.CancelContext() {
 			return C.ADBC_STATUS_OK
 		}
 		setErr(err, "AdbcStatementCancel: no active query to cancel")
 		return C.ADBC_STATUS_INVALID_STATE
 	}
 
-	if e := canceler.Cancel(context.Background()); e != nil {
+	// The server first, then the blocked call's context. Cancelling the context first
+	// unblocks the caller (Python's SIGINT handler runs this on another thread) before the
+	// server has been asked to stop anything; the caller's next statement then reaches the
+	// server ahead of a session-wide cancel (used while this statement's id is still
+	// unknown) and is the one cancelled.
+	e := canceler.Cancel(context.Background())
+	active := st.executionContext.CancelContext()
+	if e != nil {
 		var adbcErr adbc.Error
 		if active && errors.As(e, &adbcErr) && adbcErr.Code == adbc.StatusInvalidState {
 			return C.ADBC_STATUS_OK
