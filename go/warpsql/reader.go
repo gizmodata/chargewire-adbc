@@ -35,70 +35,14 @@ func ioError(format string, args ...any) error {
 	return adbc.Error{Code: adbc.StatusIO, Msg: fmt.Sprintf("[%s] "+format, append([]any{driverName}, args...)...)}
 }
 
-// byteCounter counts the bytes read through it and keeps the last eight.
-type byteCounter struct {
-	r    io.Reader
-	n    int64
-	tail [8]byte
-}
-
-func (c *byteCounter) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	if n > 0 {
-		c.n += int64(n)
-		if n >= len(c.tail) {
-			copy(c.tail[:], p[n-len(c.tail):n])
-		} else {
-			copy(c.tail[:], c.tail[n:])
-			copy(c.tail[len(c.tail)-n:], p[:n])
-		}
-	}
-	return n, err
-}
-
-// eosMessageReader tells a complete stream from a cut one. Arrow's message
-// reader reports io.EOF both for the end-of-stream marker and for a stream
-// that simply stops between two messages; only the first is a complete
-// result, so the bytes after the last message are checked for the marker.
-type eosMessageReader struct {
-	ipc.MessageReader
-	counter  *byteCounter
-	boundary int64 // offset where the last message ended
-}
-
-var (
-	eosMarker       = []byte{0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0}
-	legacyEOSMarker = []byte{0, 0, 0, 0}
-)
-
-func (m *eosMessageReader) Message() (*ipc.Message, error) {
-	msg, err := m.MessageReader.Message()
-	if err == nil {
-		m.boundary = m.counter.n
-		return msg, nil
-	}
-	if errors.Is(err, io.EOF) && !m.sawEOS() {
-		return nil, errIncompleteStream
-	}
-	return msg, err
-}
-
-func (m *eosMessageReader) sawEOS() bool {
-	switch m.counter.n - m.boundary {
-	case int64(len(eosMarker)):
-		return bytes.Equal(m.counter.tail[:], eosMarker)
-	case int64(len(legacyEOSMarker)):
-		return bytes.Equal(m.counter.tail[4:], legacyEOSMarker)
-	}
-	return false
-}
+// eosMarker is the end-of-stream marker that ends a complete Arrow stream.
+var eosMarker = []byte{0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0}
 
 // newIPCReader reads an Arrow IPC stream, treating a stream without its
-// end-of-stream marker as an error.
+// end-of-stream marker as an error, and decompressing compressed record
+// batches in parallel (framedReader).
 func newIPCReader(body io.Reader, alloc memory.Allocator) (*ipc.Reader, error) {
-	counter := &byteCounter{r: body}
-	messages := &eosMessageReader{MessageReader: ipc.NewMessageReader(counter, ipc.WithAllocator(alloc)), counter: counter}
-	return ipc.NewReaderFromMessageReader(messages, ipc.WithAllocator(alloc))
+	return ipc.NewReaderFromMessageReader(newFramedReader(body, alloc), ipc.WithAllocator(alloc))
 }
 
 // readSchema decodes a schema embedded in JSON: an IPC stream with only the
@@ -128,7 +72,7 @@ type resultReader struct {
 	alloc   memory.Allocator
 	session *protocol.Session
 	ref     protocol.StatementRef
-	zstd    bool
+	codec   string // the Arrow buffer compression asked for, or ""
 	schema  *arrow.Schema
 
 	parts   []resultPart
@@ -157,7 +101,7 @@ type resultReaderConfig struct {
 	session   *protocol.Session
 	ref       protocol.StatementRef
 	parts     []resultPart
-	zstd      bool
+	codec     string
 	cancelled func() bool
 	onEnd     func(finished bool)
 }
@@ -167,7 +111,7 @@ type resultReaderConfig struct {
 func newResultReader(cfg resultReaderConfig, first io.ReadCloser) (*resultReader, error) {
 	r := &resultReader{
 		ctx: cfg.ctx, alloc: cfg.alloc, session: cfg.session, ref: cfg.ref, parts: cfg.parts,
-		zstd: cfg.zstd, cancelled: cfg.cancelled, onEnd: cfg.onEnd,
+		codec: cfg.codec, cancelled: cfg.cancelled, onEnd: cfg.onEnd,
 	}
 	r.refs.Store(1)
 	if first != nil {
@@ -213,7 +157,7 @@ func (r *resultReader) open() error {
 	part := r.parts[r.part]
 	for attempt := 0; ; attempt++ {
 		resp, err := r.session.Result(r.ctx, protocol.ResultRequest{
-			Ref: r.ref, Partition: part.index, FromBatch: r.batches, Location: part.location, Zstd: r.zstd,
+			Ref: r.ref, Partition: part.index, FromBatch: r.batches, Location: part.location, Compression: r.codec,
 		})
 		if protocol.HasCode(err, protocol.CodeResultNotReady) && attempt < maxResumes {
 			// No schema yet: wait for the statement to make progress (§6.4).

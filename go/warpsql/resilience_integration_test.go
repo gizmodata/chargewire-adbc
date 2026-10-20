@@ -77,8 +77,8 @@ func TestIntegrationResumeAsyncResult(t *testing.T) {
 // off resumes from its next batch, and the result comes back whole, in order.
 func TestIntegrationResumeSplitResult(t *testing.T) {
 	for name, options := range map[string]map[string]string{
-		"streamed": {OptionRetainResult: "true"},
-		"async":    {OptionAsync: "true"},
+		"streamed": {OptionRetainResult: "true", OptionResultPartitions: "4"},
+		"async":    {OptionAsync: "true", OptionResultPartitions: "4"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			proxy, cnxn := viaProxy(t, options)
@@ -382,13 +382,50 @@ func TestIntegrationPartitions(t *testing.T) {
 	assertStatus(t, err, adbc.StatusInvalidArgument, "")
 }
 
-// zstd buffer compression is asked for, used, and transparent (§8.2).
-func TestIntegrationZstdResults(t *testing.T) {
-	proxy, cnxn := viaProxy(t, map[string]string{OptionIPCCompression: "zstd", OptionAsync: "true"})
-	checkBig(t, queryTable(t, cnxn, bigQuery))
-	fetches := proxy.requests(isResultFetch)
-	if len(fetches) == 0 || fetches[0].Header.Get("Warp-IPC-Compression") != "zstd" {
-		t.Fatal("the driver did not ask for zstd")
+// Arrow buffer compression is asked for on every request that returns the
+// result (the submit and each partition), used, and transparent (§8.2); auto
+// picks lz4_frame on a near link (here: loopback).
+func TestIntegrationCompressedResults(t *testing.T) {
+	for _, tc := range []struct{ option, want string }{
+		{"zstd", "zstd"}, {"lz4_frame", "lz4_frame"}, {"auto", "lz4_frame"}, {"none", ""},
+	} {
+		for _, async := range []string{"false", "true"} {
+			t.Run(tc.option+"/async="+async, func(t *testing.T) {
+				proxy, cnxn := viaProxy(t, map[string]string{OptionIPCCompression: tc.option, OptionAsync: async,
+					OptionResultPartitions: "4"})
+				checkBig(t, queryTable(t, cnxn, bigQuery+" ORDER BY i"))
+				carriesResult := func(r *http.Request) bool {
+					return isResultFetch(r) || (async == "false" && isPost("/statements")(r))
+				}
+				asked := proxy.requests(carriesResult)
+				answered := proxy.responses(func(r *http.Request) bool { return carriesResult(r) })
+				if len(asked) < 2 || len(answered) != len(asked) {
+					t.Fatalf("%d result requests, %d answers: want a split result", len(asked), len(answered))
+				}
+				for _, r := range asked {
+					if got := r.Header.Get("Warp-IPC-Compression"); got != tc.want {
+						t.Errorf("%s %s asked for %q, want %q", r.Method, r.URL, got, tc.want)
+					}
+				}
+				want := tc.want
+				if want == "" {
+					want = "none"
+				}
+				arrowAnswers := 0
+				for _, resp := range answered {
+					if resp.Header.Get("Content-Type") != protocol.MediaTypeArrowStream {
+						continue // the async submit's document
+					}
+					arrowAnswers++
+					if got := resp.Header.Get("Warp-IPC-Compression"); got != want {
+						t.Errorf("%s answered with %q, want %q", resp.Request.URL, got, want)
+					}
+				}
+				if arrowAnswers < 2 {
+					t.Fatalf("%d Arrow answers, want every partition's", arrowAnswers)
+				}
+			})
+		}
 	}
 }
 

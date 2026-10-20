@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"runtime"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
@@ -51,19 +52,19 @@ func (w *spillWriter) Write(p []byte) (int, error) {
 	return w.pipe.Write(p)
 }
 
-// encodeUpload encodes rows as an Arrow IPC stream, with zstd buffer
-// compression when asked (§8.2). It returns once the body is complete in
-// memory, or once it outgrows the limit and must stream.
-func encodeUpload(rows array.RecordReader, alloc memory.Allocator, zstd bool) (*upload, error) {
-	return encodeUploadWithLimit(rows, alloc, zstd, uploadReplayLimit)
+// encodeUpload encodes rows as an Arrow IPC stream, with buffer compression
+// in codec ("lz4_frame", "zstd"; "" for none, §8.2). It returns once the body
+// is complete in memory, or once it outgrows the limit and must stream.
+func encodeUpload(rows array.RecordReader, alloc memory.Allocator, codec string) (*upload, error) {
+	return encodeUploadWithLimit(rows, alloc, codec, uploadReplayLimit)
 }
 
 // encodeUploadWithLimit is encodeUpload keeping at most limit bytes in memory.
-func encodeUploadWithLimit(rows array.RecordReader, alloc memory.Allocator, zstd bool, limit int) (*upload, error) {
+func encodeUploadWithLimit(rows array.RecordReader, alloc memory.Allocator, codec string, limit int) (*upload, error) {
 	w := &spillWriter{limit: limit, spilled: make(chan *io.PipeReader, 1)}
 	encoded := make(chan error, 1)
 	go func() {
-		err := writeIPC(w, rows, alloc, zstd)
+		err := writeIPC(w, rows, alloc, codec)
 		if w.pipe != nil {
 			w.pipe.CloseWithError(err) // nil: the request reads EOF after the end-of-stream marker
 		}
@@ -87,10 +88,25 @@ func encodeUploadWithLimit(rows array.RecordReader, alloc memory.Allocator, zstd
 	}
 }
 
-func writeIPC(w io.Writer, rows array.RecordReader, alloc memory.Allocator, zstd bool) error {
+// compressConcurrency is how many of a batch's buffers are compressed at once.
+var compressConcurrency = min(runtime.NumCPU(), 8)
+
+// minSpaceSavings: a buffer compression would shrink by less than this is sent
+// as it is, so the server doesn't spend time decompressing it.
+const minSpaceSavings = 0.1
+
+func writeIPC(w io.Writer, rows array.RecordReader, alloc memory.Allocator, codec string) error {
 	options := []ipc.Option{ipc.WithSchema(rows.Schema()), ipc.WithAllocator(alloc)}
-	if zstd {
-		options = append(options, ipc.WithZstd())
+	switch codec {
+	case codecLZ4Frame:
+		options = append(options, ipc.WithLZ4(), ipc.WithMinSpaceSavings(minSpaceSavings))
+	case codecZstd:
+		options = append(options, ipc.WithZstd(), ipc.WithMinSpaceSavings(minSpaceSavings))
+	}
+	if codec != "" {
+		// A batch's columns are compressed at once; a partitioned ingest's parts
+		// each run their own writer as well.
+		options = append(options, ipc.WithCompressConcurrency(compressConcurrency))
 	}
 	writer := ipc.NewWriter(w, options...)
 	for rows.Next() {

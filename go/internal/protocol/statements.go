@@ -63,8 +63,9 @@ type Submission struct {
 	// QueryTag is a JSON object recorded with the statement, as
 	// NormalizeQueryTag returns it.
 	QueryTag string
-	// Zstd accepts Arrow buffer compression (§8.2).
-	Zstd bool
+	// Compression is the Warp-IPC-Compression header: the Arrow buffer
+	// codecs accepted, in order of preference (§8.2); empty: none.
+	Compression string
 	// Partitions, when more than 1, lets the server split the result into up
 	// to that many partitions, read at once (§6.10); AnyOrder says the rows'
 	// order doesn't matter.
@@ -115,8 +116,8 @@ func (s *Submission) request(arrow, async bool) *Request {
 	if s.QueryTag != "" {
 		header.Set("Warp-Query-Tag", s.QueryTag)
 	}
-	if s.Zstd {
-		header.Set("Warp-IPC-Compression", "zstd")
+	if s.Compression != "" {
+		header.Set("Warp-IPC-Compression", s.Compression)
 	}
 	if s.Partitions > 1 {
 		header.Set("Warp-Result-Partitions", strconv.Itoa(s.Partitions))
@@ -214,7 +215,8 @@ type ResultRequest struct {
 	FromBatch int64
 	// Location is the partition's server, when not this one.
 	Location *url.URL
-	Zstd     bool
+	// Compression is the Warp-IPC-Compression header, as in Submission.
+	Compression string
 }
 
 // Result opens a result stream. The caller closes the body.
@@ -227,8 +229,8 @@ func (s *Session) Result(ctx context.Context, rr ResultRequest) (*http.Response,
 		query.Set("from_batch", strconv.FormatInt(rr.FromBatch, 10))
 	}
 	header := http.Header{"Accept": {MediaTypeArrowStream}}
-	if rr.Zstd {
-		header.Set("Warp-IPC-Compression", "zstd")
+	if rr.Compression != "" {
+		header.Set("Warp-IPC-Compression", rr.Compression)
 	}
 	req := &Request{Method: http.MethodGet, Path: rr.Ref.path() + "/result", Query: query, Header: header,
 		Idempotent: true, BaseURL: rr.Location}

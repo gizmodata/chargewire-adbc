@@ -11,6 +11,7 @@ package protocol
 import (
 	"encoding/base64"
 	"slices"
+	"time"
 )
 
 // Media types (§2.2).
@@ -37,6 +38,8 @@ const (
 	// CapabilityResultLocations: partitions held by other servers, given
 	// only to a client that sends Warp-Result-Locations: remote (§6.2).
 	CapabilityResultLocations = "result_locations"
+	// CapabilityIPCCompressionLZ4Frame: Arrow buffers compressed with LZ4_FRAME (§8.2).
+	CapabilityIPCCompressionLZ4Frame = "ipc_compression_lz4_frame"
 	// CapabilityMTLSIdentity: the client_certificate grant (§4.4).
 	CapabilityMTLSIdentity = "mtls_identity"
 	// CapabilityOAuthBrowser: browser sign-in (§4.3).
@@ -80,6 +83,10 @@ type Discovery struct {
 			Provider string `json:"provider"`
 		} `json:"oauth_browser"`
 	} `json:"auth"`
+	// RTT is how long the discovery request took to answer once sent: about
+	// one network round trip (the server answers it at once). Zero when it
+	// could not be measured.
+	RTT time.Duration `json:"-"`
 }
 
 // BrowserSignInProvider is the identity provider's name the server gives for

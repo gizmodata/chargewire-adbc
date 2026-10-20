@@ -17,6 +17,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/gizmodata/warp-sql-adbc/go/internal/protocol"
 )
 
 func TestParseURI(t *testing.T) {
@@ -74,6 +75,85 @@ func TestExecOptions(t *testing.T) {
 	}
 	if handled, _ := o.set("adbc.something.else", "x"); handled {
 		t.Error("an unknown key was handled")
+	}
+}
+
+func TestCompressionOption(t *testing.T) {
+	o := defaultExecOptions()
+	if got, _ := o.get(OptionIPCCompression); got != "auto" {
+		t.Fatalf("default %q, want auto", got)
+	}
+	for value, want := range map[string]string{"LZ4_FRAME": "lz4_frame", "zstd": "zstd", "none": "none", "": "auto", "auto": "auto"} {
+		if _, err := o.set(OptionIPCCompression, value); err != nil {
+			t.Fatalf("set(%q): %v", value, err)
+		}
+		if got, _ := o.get(OptionIPCCompression); got != want {
+			t.Errorf("set(%q) reads back %q, want %q", value, got, want)
+		}
+	}
+}
+
+// The codec a statement uses: the option's, when the server offers it; for
+// auto, lz4_frame on a near link and zstd on a far one.
+func TestIPCCodec(t *testing.T) {
+	both := &protocol.Discovery{Capabilities: []string{protocol.CapabilityIPCCompressionZstd, protocol.CapabilityIPCCompressionLZ4Frame}}
+	zstdOnly := &protocol.Discovery{Capabilities: []string{protocol.CapabilityIPCCompressionZstd}}
+	neither := &protocol.Discovery{}
+	cases := []struct {
+		setting   string
+		discovery *protocol.Discovery
+		rtt       time.Duration
+		want      string
+	}{
+		{"auto", both, 90 * time.Microsecond, "lz4_frame"},
+		{"auto", both, 9 * time.Millisecond, "lz4_frame"},
+		{"auto", both, 10 * time.Millisecond, "zstd"},
+		{"auto", both, 46 * time.Millisecond, "zstd"},
+		{"auto", both, 0, "lz4_frame"}, // not measured: treated as near
+		{"auto", zstdOnly, time.Millisecond, ""},
+		{"auto", neither, 46 * time.Millisecond, ""},
+		{"lz4_frame", both, 46 * time.Millisecond, "lz4_frame"},
+		{"lz4_frame", zstdOnly, 0, ""},
+		{"zstd", both, 0, "zstd"},
+		{"zstd", neither, 0, ""},
+		{"none", both, 46 * time.Millisecond, ""},
+	}
+	for _, c := range cases {
+		d := *c.discovery
+		d.RTT = c.rtt
+		if got := ipcCodec(c.setting, &d); got != c.want {
+			t.Errorf("ipcCodec(%s, %v, rtt %v) = %q, want %q", c.setting, d.Capabilities, c.rtt, got, c.want)
+		}
+	}
+}
+
+// Ingest parts: a number as set, and for auto more on a far link.
+func TestIngestParts(t *testing.T) {
+	o := defaultExecOptions()
+	for value, want := range map[string]int{"auto": autoIngestParts, "AUTO": autoIngestParts, "": autoIngestParts, "1": 1, "64": 64} {
+		if _, err := o.set(OptionIngestParts, value); err != nil || o.ingestParts != want {
+			t.Errorf("set(%q): %d, %v", value, o.ingestParts, err)
+		}
+	}
+	for _, bad := range []string{"0", "257", "many"} {
+		if _, err := o.set(OptionIngestParts, bad); err == nil {
+			t.Errorf("set(%q) accepted", bad)
+		}
+	}
+	for _, c := range []struct {
+		setting int
+		rtt     time.Duration
+		want    int
+	}{
+		{autoIngestParts, 90 * time.Microsecond, nearIngestParts},
+		{autoIngestParts, 0, nearIngestParts},
+		{autoIngestParts, 46 * time.Millisecond, farIngestParts},
+		{4, 46 * time.Millisecond, 4},
+		{1, 0, 1},
+	} {
+		if got := ingestParts(c.setting, &protocol.Discovery{RTT: c.rtt}); got != c.want {
+			t.Errorf("ingestParts(%d, %v) = %d, want %d", c.setting, c.rtt, got, c.want)
+		}
 	}
 }
 
@@ -203,7 +283,7 @@ func int64Reader(t *testing.T, batches, rows int) array.RecordReader {
 func TestUploadSpillsWhenLarge(t *testing.T) {
 	small := int64Reader(t, 2, 100)
 	defer small.Release()
-	up, err := encodeUpload(small, memory.DefaultAllocator, false)
+	up, err := encodeUpload(small, memory.DefaultAllocator, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +296,7 @@ func TestUploadSpillsWhenLarge(t *testing.T) {
 
 	large := int64Reader(t, 40, 100_000) // 32 MB
 	defer large.Release()
-	up, err = encodeUpload(large, memory.DefaultAllocator, false)
+	up, err = encodeUpload(large, memory.DefaultAllocator, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,10 +335,11 @@ func TestDatabaseOptions(t *testing.T) {
 	if got, _ := options.GetOption(context.Background(), OptionStatementTimeout); got != "2" {
 		t.Errorf("default statement timeout %q", got)
 	}
-	// Results are split and ingests sent in parts by default (8 each).
-	for _, key := range []string{OptionResultPartitions, OptionIngestParts} {
-		if got, _ := options.GetOption(context.Background(), key); got != "8" {
-			t.Errorf("default %s %q", key, got)
+	// Results are split (up to 32 partitions) and ingests sent in parts (as many as
+	// the link suits) by default.
+	for key, want := range map[string]string{OptionResultPartitions: "32", OptionIngestParts: "auto"} {
+		if got, _ := options.GetOption(context.Background(), key); got != want {
+			t.Errorf("default %s %q, want %q", key, got, want)
 		}
 	}
 	if err := options.SetOption(context.Background(), OptionIngestParts, "1"); err != nil {

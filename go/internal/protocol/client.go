@@ -341,9 +341,35 @@ func (e *TransportError) Unwrap() error { return e.Err }
 // protocol version 1.
 func (c *Client) Discover(ctx context.Context) (*Discovery, error) {
 	doc := &Discovery{}
-	if _, err := c.doJSON(ctx, &Request{Method: http.MethodGet, Path: "", Idempotent: true, Anonymous: true}, doc); err != nil {
+	// The time from the request's last byte to the answer's first is about one
+	// round trip: the server answers discovery at once.
+	var mu sync.Mutex
+	var wrote time.Time
+	var rtt time.Duration
+	trace := &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				mu.Lock()
+				wrote = time.Now()
+				mu.Unlock()
+			}
+		},
+		GotFirstResponseByte: func() {
+			mu.Lock()
+			if !wrote.IsZero() {
+				if d := time.Since(wrote); rtt == 0 || d < rtt {
+					rtt = d
+				}
+			}
+			mu.Unlock()
+		},
+	}
+	if _, err := c.doJSON(ctx, &Request{Method: http.MethodGet, Path: "", Idempotent: true, Anonymous: true, Trace: trace}, doc); err != nil {
 		return nil, err
 	}
+	mu.Lock()
+	doc.RTT = rtt
+	mu.Unlock()
 	if doc.Protocol != "warp-sql" {
 		return nil, fmt.Errorf("%s does not describe a Warp SQL server (protocol %q)", c.base.Redacted(), doc.Protocol)
 	}

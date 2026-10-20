@@ -118,34 +118,43 @@ const (
 	// sent compact and in ASCII (other characters as \u escapes), and may be
 	// at most 4,096 bytes so; reading the option back gives that form.
 	OptionQueryTag = "adbc.warp.statement.query_tag"
-	// OptionIPCCompression is "zstd" or "none" (default): Arrow buffer
-	// compression for results and uploads, used when the server offers it.
+	// OptionIPCCompression is the Arrow buffer compression for results and
+	// uploads (§8.2): "auto" (default), "lz4_frame", "zstd" or "none". A codec
+	// the server doesn't offer is not used. "auto" chooses per link, from the
+	// round trip measured when connecting: on a fast, near link the bytes
+	// compression saves cost more CPU than they are worth; on a far one
+	// bandwidth is scarce and zstd's smaller results win.
 	OptionIPCCompression = "adbc.warp.ipc_compression"
 	// OptionResultPartitions is the most partitions a query's result may be
-	// split into (default 8; 1: never). A server that offers it splits a
+	// split into (default 32; 1: never). A server that offers it splits a
 	// large result, and the driver reads the partitions at once, each over
 	// its own connection (§6.10): one TCP connection carries what one network
 	// flow allows, and decoding spreads over several cores. The server
-	// decides: a result of fewer than two batches comes as one stream, and a
-	// server without the capability is never asked.
+	// decides how many by the result's size (Hardcharger: a few batches get a
+	// partition per two batches, a large result all of them), and a server
+	// without the capability is never asked.
 	OptionResultPartitions = "adbc.warp.statement.result_partitions"
 	// OptionResultOrder is "preserve" (default) or "any". With "preserve" a
 	// split result comes back in the server's order (round robin over the
 	// partitions); with "any" batches come in whichever order they arrive.
 	OptionResultOrder = "adbc.warp.statement.result_order"
 	// OptionIngestParts is the most connections one bulk ingest is sent over
-	// at once (default 8; 1: one stream). On a server that offers it, an
-	// upload of two batches or more is a partitioned ingest (§8.3): its
-	// batches are spread over the parts, which are committed as one, all or
-	// nothing. The rows then land in no defined order; set 1 to keep the
-	// upload's order.
+	// at once: "auto" (default) or 1 to 256 (1: one stream). On a server that
+	// offers it, an upload of more than one slice (uploadSliceRows) is a
+	// partitioned ingest (§8.3): its batches are spread over the parts, which
+	// are committed as one, all or nothing. A small upload uses fewer parts,
+	// about one per two slices. "auto" is 16 parts on a near link and 32 on a
+	// far one, where each connection carries less. The rows then land in no
+	// defined order; set 1 to keep the upload's order.
 	OptionIngestParts = "adbc.warp.ingest.parts"
 )
 
 // Defaults of the options above.
 const (
-	defaultResultPartitions = 8
-	defaultIngestParts      = 8
+	defaultResultPartitions = 32
+	autoIngestParts         = 0 // OptionIngestParts "auto": nearIngestParts or farIngestParts
+	nearIngestParts         = 16
+	farIngestParts          = 32
 )
 
 // Statement options, read-only.
@@ -172,15 +181,15 @@ type execOptions struct {
 	retain      *bool
 	timeout     time.Duration
 	queryTag    string
-	compression string
-	partitions  int  // 0 or 1: one partition
-	anyOrder    bool // the rows' order doesn't matter
-	ingestParts int  // 0 or 1: one stream
+	compression string // codecAuto, codecLZ4Frame, codecZstd or codecNone
+	partitions  int    // 0 or 1: one partition
+	anyOrder    bool   // the rows' order doesn't matter
+	ingestParts int    // autoIngestParts, or 1 (one stream) to maxIngestParts
 }
 
 // defaultExecOptions are the statement options' defaults.
 func defaultExecOptions() execOptions {
-	return execOptions{partitions: defaultResultPartitions, ingestParts: defaultIngestParts}
+	return execOptions{compression: codecAuto, partitions: defaultResultPartitions, ingestParts: autoIngestParts}
 }
 
 // set applies one statement option; it reports false for keys it does not
@@ -226,9 +235,13 @@ func (o *execOptions) set(key, value string) (bool, error) {
 		}
 		o.partitions = n
 	case OptionIngestParts:
+		if v := strings.ToLower(value); v == "" || v == codecAuto {
+			o.ingestParts = autoIngestParts
+			return true, nil
+		}
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 1 || n > maxIngestParts {
-			return true, invalidOption(key, value, fmt.Sprintf("a whole number from 1 to %d", maxIngestParts))
+			return true, invalidOption(key, value, fmt.Sprintf(`"auto" or a whole number from 1 to %d`, maxIngestParts))
 		}
 		o.ingestParts = n
 	case OptionResultOrder:
@@ -241,13 +254,13 @@ func (o *execOptions) set(key, value string) (bool, error) {
 			return true, invalidOption(key, value, `"preserve" or "any"`)
 		}
 	case OptionIPCCompression:
-		switch strings.ToLower(value) {
-		case "", "none":
-			o.compression = ""
-		case "zstd":
-			o.compression = "zstd"
+		switch v := strings.ToLower(value); v {
+		case "", codecAuto:
+			o.compression = codecAuto
+		case codecNone, codecLZ4Frame, codecZstd:
+			o.compression = v
 		default:
-			return true, invalidOption(key, value, `"zstd" or "none"`)
+			return true, invalidOption(key, value, `"auto", "lz4_frame", "zstd" or "none"`)
 		}
 	default:
 		return false, nil
@@ -272,16 +285,16 @@ func (o *execOptions) get(key string) (string, bool) {
 	case OptionResultPartitions:
 		return strconv.Itoa(max(o.partitions, 1)), true
 	case OptionIngestParts:
-		return strconv.Itoa(max(o.ingestParts, 1)), true
+		if o.ingestParts == autoIngestParts {
+			return codecAuto, true
+		}
+		return strconv.Itoa(o.ingestParts), true
 	case OptionResultOrder:
 		if o.anyOrder {
 			return "any", true
 		}
 		return "preserve", true
 	case OptionIPCCompression:
-		if o.compression == "" {
-			return "none", true
-		}
 		return o.compression, true
 	}
 	return "", false

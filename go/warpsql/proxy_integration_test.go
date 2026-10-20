@@ -21,9 +21,10 @@ import (
 type faultProxy struct {
 	server *httptest.Server
 
-	mu    sync.Mutex
-	rules []*faultRule
-	seen  []*http.Request
+	mu      sync.Mutex
+	rules   []*faultRule
+	seen    []*http.Request
+	answers []*http.Response // the server's answers (headers only), in order
 }
 
 type faultRule struct {
@@ -42,6 +43,10 @@ func newFaultProxy(t *testing.T, server *testServer) *faultProxy {
 	reverse := httputil.NewSingleHostReverseProxy(target)
 	reverse.FlushInterval = -1
 	reverse.ModifyResponse = func(resp *http.Response) error {
+		proxy.mu.Lock()
+		proxy.answers = append(proxy.answers, &http.Response{StatusCode: resp.StatusCode, Header: resp.Header.Clone(),
+			Request: resp.Request.Clone(resp.Request.Context())})
+		proxy.mu.Unlock()
 		rule := proxy.take(resp.Request)
 		switch {
 		case rule == nil:
@@ -142,6 +147,19 @@ func (p *faultProxy) requests(match func(*http.Request) bool) []*http.Request {
 	var out []*http.Request
 	for _, r := range p.seen {
 		if match(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// responses returns the recorded answers to requests that match.
+func (p *faultProxy) responses(match func(*http.Request) bool) []*http.Response {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []*http.Response
+	for _, r := range p.answers {
+		if match(r.Request) {
 			out = append(out, r)
 		}
 	}
