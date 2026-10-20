@@ -44,7 +44,8 @@ type Session struct {
 	id           string
 	options      map[string]any // the options set through this Session, replayed on a replacement
 	replacements int
-	closed       bool // Close was called: never replace it
+	closed       bool // Close or Detach was called: never replace it
+	attached     bool // AttachSession: another connection created it
 }
 
 // OpenSession creates a session (§5.1). With reconnect, a session the server
@@ -60,6 +61,35 @@ func (c *Client) OpenSession(ctx context.Context, options map[string]any, reconn
 	}
 	s.id = doc.SessionID
 	return s, nil
+}
+
+// AttachSession uses the existing session id instead of creating one: it reads
+// the session (§5.2) to check that the server has it for this principal. A
+// session of another principal is session_not_found too (§9.2). An attached
+// session is never replaced: the driver doesn't know what its creator set on
+// it, and replacing it would hide that the session the caller named is gone.
+func (c *Client) AttachSession(ctx context.Context, id string) (*Session, error) {
+	if id == "" {
+		return nil, errors.New("no session id to attach to")
+	}
+	doc := &SessionDocument{}
+	req := &Request{Method: http.MethodGet, Path: sessionPath(id), Idempotent: true}
+	if _, err := c.doJSON(ctx, req, doc); err != nil {
+		return nil, err
+	}
+	if doc.SessionID != "" && doc.SessionID != id {
+		return nil, fmt.Errorf("the server answered for session %s with session %s", id, doc.SessionID)
+	}
+	options := maps.Clone(doc.Options)
+	if options == nil {
+		options = map[string]any{}
+	}
+	return &Session{client: c, id: id, options: options, attached: true}, nil
+}
+
+// Attached reports whether the session came from AttachSession.
+func (s *Session) Attached() bool {
+	return s.attached
 }
 
 func (s *Session) create(ctx context.Context) (*SessionDocument, error) {
@@ -349,6 +379,15 @@ func (s *Session) Close(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+// Detach stops using the session without ending it on the server: its
+// transaction, temporary tables and settings stay for whoever attaches to it
+// next, until it is closed or idles out. A detached session is never replaced.
+func (s *Session) Detach() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
 }
 
 // Commit ends the current transaction (§5.5). It is never retried: a commit

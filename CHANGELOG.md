@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Attaching to an existing session: `adbc.warp.session.id` set on the database makes its
+  connections use that session instead of creating one, inside its open transaction if it has
+  one. Opening checks it with `GET /warp/v1/sessions/{id}`; an id the server doesn't have, or
+  another user's session, fails with `session_not_found` (`NotFound`) and no session is
+  created. An attached session is never replaced when the server loses it.
+  `adbc.warp.session.close_on_release` (database and connection option) says whether closing
+  the connection ends the session: by default `true` for a session the connection created and
+  `false` for an attached one, so a transaction can be handed from one process to another. A
+  session lives on one server instance: behind a load balancer, attaching works only when
+  routing reaches that instance (the README says more).
 - Browser sign-in (Warp SQL spec §4.3, servers with capability `oauth_browser`):
   `adbc.warp.auth.type=oauth_browser` signs in through a browser with the server's identity
   provider when the first connection opens. The driver creates a flow, opens its

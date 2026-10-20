@@ -69,6 +69,31 @@ const (
 	// the old session (an open transaction, a pending result) fails either
 	// way; this decides whether the connection is usable afterwards.
 	OptionSessionReconnect = "adbc.warp.session.reconnect"
+
+	// OptionSessionID, set on the database before its first connection
+	// opens, makes every connection attach to that existing session instead
+	// of creating one: the driver reads the session (GET
+	// /warp/v1/sessions/{id}) to check that the server has it for this
+	// principal, and the connection then works in it, inside its open
+	// transaction if it has one. The credentials must sign in as the
+	// session's principal (typically OptionAccessToken with the token its
+	// creator used). An id the server doesn't have, or another principal's,
+	// is session_not_found (StatusNotFound). An attached session is never
+	// replaced when the server loses it. On a connection the option is the
+	// current session id, read-only.
+	//
+	// A session lives on the server instance that created it: behind a load
+	// balancer with several instances, attaching works only when the request
+	// reaches that instance (affinity by client address does not, when the
+	// attaching client's address differs).
+	//
+	// OptionSessionCloseOnRelease ("true"/"false") says whether closing the
+	// connection ends the session on the server. Default: "true" for a
+	// session the connection created, "false" for one it attached to, which
+	// then stays (with its transaction) for the next client until it is
+	// closed or idles out. Set on the database, it applies to its new
+	// connections; on a connection, it can be changed at any time.
+	OptionSessionCloseOnRelease = "adbc.warp.session.close_on_release"
 )
 
 // Values of OptionAuthType.
@@ -84,7 +109,8 @@ const (
 	authTypeMTLS = "mtls"
 )
 
-// Connection options, read-only.
+// Connection options, read-only. OptionSessionID is a database option too
+// (attach to a session), and OptionSessionCloseOnRelease a connection option.
 const (
 	// OptionSessionID is the connection's current server session id.
 	OptionSessionID = "adbc.warp.session.id"

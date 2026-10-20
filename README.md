@@ -156,6 +156,8 @@ Database options (with the standard `uri`, `username`, `password` and `adbc.tele
 | `adbc.warp.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
 | `adbc.warp.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
 | `adbc.warp.session.reconnect` | `true` | Replace a session the server lost (see below) |
+| `adbc.warp.session.id` | | Attach every connection to this existing session instead of creating one ([below](#attaching-to-an-existing-session)) |
+| `adbc.warp.session.close_on_release` | `true` for a created session, `false` for an attached one | Whether closing a connection ends its session on the server; also a connection option, settable any time |
 
 Statement options; set on the database or connection they are defaults for its statements:
 
@@ -170,11 +172,53 @@ Statement options; set on the database or connection they are defaults for its s
 | `adbc.warp.statement.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
 | `adbc.warp.ingest.parts` | `auto` | Send a bulk ingest over up to this many connections at once, committed as one (`1`: one ordered stream); `auto`: 16 on a near link, 32 on a far one |
 
-Read-only: `adbc.warp.session.id`, `adbc.warp.session.replacements` and
+Read-only on a connection: `adbc.warp.session.id`, `adbc.warp.session.replacements` and
 `adbc.warp.session.transaction` (connection; the server's view, which sees SQL `BEGIN` too:
 `none`, `open`, `aborted`, or `unknown`),
 `adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
 `adbc.ingest.*` options; the transaction options are the standard ones.
+
+### Attaching to an existing session
+
+A session (its open transaction, temporary tables and settings) can outlive the connection
+that created it and be picked up by another process: a job runner that begins a transaction
+in one step and commits it in the next, or a client that reconnects after a restart. The
+first connection sets `adbc.warp.session.close_on_release=false`, so closing it leaves the
+session on the server, and passes on `adbc.warp.session.id` (read it from the connection).
+The second sets that id on its database, with credentials for the same user (the session
+belongs to the user who created it, spec §9.2), typically the same
+`adbc.warp.auth.access_token`:
+
+```go
+// Process 1: begin, then hand the session on.
+_ = cnxn.(adbc.GetSetOptionsWithContext).SetOption(ctx, warpsql.OptionSessionCloseOnRelease, "false")
+// ... BEGIN TRANSACTION; INSERT ... (not committed)
+id, _ := cnxn.(adbc.GetSetOptionsWithContext).GetOption(ctx, warpsql.OptionSessionID)
+_ = cnxn.Close(ctx) // the session and its transaction stay on the server
+
+// Process 2: attach and finish.
+db, _ := warpsql.NewDriver(memory.DefaultAllocator).NewDatabaseWithContext(ctx, map[string]string{
+	adbc.OptionKeyURI:         "warp://db.example.com",
+	warpsql.OptionAccessToken: token,
+	warpsql.OptionSessionID:   id,
+})
+cnxn, err := db.Open(ctx) // GET /warp/v1/sessions/{id}: no new session is created
+// ... sees the uncommitted rows; COMMIT
+```
+
+Opening checks the session with `GET /warp/v1/sessions/{id}`. An id the server doesn't have
+fails with `session_not_found` (status `NotFound`), and so does another user's session: the
+server answers the two the same way, so ids can't be probed. An attached session is never
+replaced when the server loses it later. Closing an attached connection leaves the session
+alive (`close_on_release` defaults to `false` for it) until a connection that set
+`close_on_release=true` closes it or it idles out (the server's idle timeout).
+
+**Several server instances:** a session lives in the memory of the one instance that created
+it. Behind a load balancer, attaching works only if the second client's requests reach that
+instance. Affinity by client IP address won't route them there when the second client's
+address differs from the first's (another host, another NAT, a CI runner), and the server
+answers `session_not_found` (or `session_elsewhere`, from a server that knows where it is).
+Route by something both clients send, or connect both to the instance's own address.
 
 ## 🧠 How it behaves
 

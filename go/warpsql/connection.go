@@ -32,9 +32,12 @@ type connectionImpl struct {
 	// running counts the connection's statements between submit and the end
 	// of their result.
 	running atomic.Int32
+	// closeOnRelease: Close ends the session (OptionSessionCloseOnRelease).
+	closeOnRelease atomic.Bool
 }
 
-func newConnection(db *databaseImpl, client *protocol.Client, discovery *protocol.Discovery, session *protocol.Session) driverbase.Connection {
+func newConnection(db *databaseImpl, client *protocol.Client, discovery *protocol.Discovery, session *protocol.Session,
+	closeOnRelease bool) driverbase.Connection {
 	c := &connectionImpl{
 		ConnectionImplBase: driverbase.NewConnectionImplBase(&db.DatabaseImplBase),
 		db:                 db,
@@ -44,6 +47,7 @@ func newConnection(db *databaseImpl, client *protocol.Client, discovery *protoco
 		defaults:           db.defaults,
 		janitor:            newJanitor(db.Logger),
 	}
+	c.closeOnRelease.Store(closeOnRelease)
 	return driverbase.NewConnectionBuilder(c).
 		WithAutocommitSetter(c).
 		WithCurrentNamespacer(c).
@@ -60,6 +64,8 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return c.session.ID(), nil
 	case OptionSessionReplacements:
 		return strconv.Itoa(c.session.Replacements()), nil
+	case OptionSessionCloseOnRelease:
+		return strconv.FormatBool(c.closeOnRelease.Load()), nil
 	case OptionSessionTransaction:
 		// The server's view (§5.2), which includes SQL BEGIN and COMMIT.
 		transaction, err := c.session.Transaction(ctx)
@@ -83,8 +89,18 @@ func (c *connectionImpl) SetOption(ctx context.Context, key, value string) error
 		return err
 	}
 	switch key {
-	case OptionSessionID, OptionSessionReplacements, OptionSessionTransaction:
+	case OptionSessionID:
+		return c.ErrorHelper.InvalidArgument("option %s is read-only on a connection; to attach to a session, "+
+			"set it on the database before its first connection opens", key)
+	case OptionSessionReplacements, OptionSessionTransaction:
 		return c.ErrorHelper.InvalidArgument("option %s is read-only", key)
+	case OptionSessionCloseOnRelease:
+		b, err := parseBool(key, value)
+		if err != nil {
+			return err
+		}
+		c.closeOnRelease.Store(b)
+		return nil
 	case adbc.OptionKeyReadOnly, adbc.OptionKeyIsolationLevel:
 		return c.ErrorHelper.NotImplemented("option %s is not supported by Warp SQL", key)
 	}
@@ -149,12 +165,19 @@ func (c *connectionImpl) NewStatement(ctx context.Context) (adbc.StatementWithCo
 }
 
 // Close ends the session, which also stops its running statements and frees
-// their results on the server. Ending it is best-effort: when the server
+// their results on the server, unless OptionSessionCloseOnRelease is false (by
+// default for an attached session): then the session stays on the server, its
+// transaction open, for the next connection that attaches to it. Ending it is
+// best-effort: when the server
 // can't be reached or refuses (it stopped, the network is down), Close still
 // succeeds after at most closeTimeout, and the session ends on the server when
 // it idles out. Whatever the connection holds locally is released either way.
 func (c *connectionImpl) Close(ctx context.Context) error {
 	c.janitor.close()
+	if !c.closeOnRelease.Load() {
+		c.session.Detach()
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 	defer cancel()
 	if err := c.session.Close(ctx); err != nil {

@@ -31,6 +31,11 @@ type databaseImpl struct {
 	maxAttempts int
 	reconnect   bool
 	defaults    execOptions
+	// attachSession is the session every connection attaches to
+	// (OptionSessionID); "" creates one per connection.
+	attachSession string
+	// closeOnRelease is OptionSessionCloseOnRelease when it was set.
+	closeOnRelease *bool
 	// Browser sign-in (AuthTypeOAuthBrowser): the opener's command and how
 	// long the person has.
 	browserSignIn  bool
@@ -161,6 +166,18 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 			return err
 		}
 		d.reconnect = b
+	case OptionSessionID:
+		d.attachSession = value
+	case OptionSessionCloseOnRelease:
+		if value == "" {
+			d.closeOnRelease = nil
+			return nil
+		}
+		b, err := parseBool(key, value)
+		if err != nil {
+			return err
+		}
+		d.closeOnRelease = &b
 	default:
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}
@@ -196,6 +213,12 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return strconv.Itoa(d.maxAttempts), nil
 	case OptionSessionReconnect:
 		return strconv.FormatBool(d.reconnect), nil
+	case OptionSessionID:
+		return d.attachSession, nil
+	case OptionSessionCloseOnRelease:
+		if d.closeOnRelease != nil {
+			return strconv.FormatBool(*d.closeOnRelease), nil
+		}
 	case adbc.OptionKeyTelemetryTraceParent:
 		return d.GetTraceParent(), nil
 	}
@@ -213,11 +236,31 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 	if err != nil {
 		return nil, err
 	}
+	if d.attachSession != "" {
+		session, err := client.AttachSession(ctx, d.attachSession)
+		if err != nil {
+			op := "attaching to session " + d.attachSession
+			if protocol.HasCode(err, protocol.CodeSessionNotFound) {
+				op += " (the server doesn't have it for this user: it ended or idled out, it belongs to " +
+					"another user, or it lives on another server instance)"
+			}
+			return nil, wrapError(err, op)
+		}
+		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(false)), nil
+	}
 	session, err := client.OpenSession(ctx, nil, d.reconnect)
 	if err != nil {
 		return nil, wrapError(err, "opening a session")
 	}
-	return newConnection(d, client, discovery, session), nil
+	return newConnection(d, client, discovery, session, d.closeOnReleaseOr(true)), nil
+}
+
+// closeOnReleaseOr is OptionSessionCloseOnRelease, or def when it is unset.
+func (d *databaseImpl) closeOnReleaseOr(def bool) bool {
+	if d.closeOnRelease != nil {
+		return *d.closeOnRelease
+	}
+	return def
 }
 
 func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol.Discovery, error) {
