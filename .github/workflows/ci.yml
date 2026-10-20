@@ -4,9 +4,10 @@ name: warp-sql-adbc-ci
 # live-server suites (Go and Python) against hardcharger-server. Also the release gate:
 # release.yml calls it on the tagged commit.
 #
-# The live suites' server comes from the image ghcr.io/gizmodata/hardcharger (private until
-# launch), pulled with this workflow's GITHUB_TOKEN: the package grants this repository read
-# access (package settings, Manage Actions access); no personal token. HARDCHARGER_IMAGE
+# The live suites' server comes from the image ghcr.io/gizmodata/hardcharger, pulled with this
+# workflow's GITHUB_TOKEN. While the image is private that works only once the package grants
+# this repository read access (package settings, Manage Actions access); no personal token.
+# Once the image is public the login is unnecessary but harmless. HARDCHARGER_IMAGE
 # must be a build whose server splits results (--max-result-partitions). The suites fail,
 # never skip, without a server, and the Go suite fails when no integration test ran.
 
@@ -61,6 +62,10 @@ jobs:
       - name: Unit tests
         working-directory: go
         run: make test
+
+      - name: Third-party notices are current (scripts/third_party_notices.sh)
+        if: runner.os == 'Linux'
+        run: scripts/third_party_notices.sh --check
 
       - uses: mlugg/setup-zig@v2
         if: runner.os == 'Linux'

@@ -188,7 +188,8 @@ jobs:
           ref="${GITHUB_REF_NAME//\//-}"  # a branch name may hold slashes
           PKG="libadbc_driver_warpsql-${ref}-${{ matrix.platform }}"
           mkdir -p "dist/$PKG"
-          cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} packaging/warpsql.toml.in LICENSE "dist/$PKG/"
+          cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} packaging/warpsql.toml.in LICENSE \
+            python/src/adbc_driver_warpsql/THIRD_PARTY_NOTICES "dist/$PKG/"
           tar -C dist -czf "dist/$PKG.tar.gz" "$PKG"
           if [ "${{ matrix.library-only }}" != true ]; then cp python/dist/*.whl dist/; fi
 

@@ -6,11 +6,11 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-adbc_driver_warpsql = ["libadbc_driver_warpsql.*"]
+adbc_driver_warpsql = ["libadbc_driver_warpsql.*", "THIRD_PARTY_NOTICES"]
 
 [project]
 name = "adbc-driver-warpsql"
-version = "0.1.0.dev0"
+version = "1.0.0"
 description = "Python ADBC driver for the Warp SQL protocol (SQL over HTTP with Arrow), backed by a native Go driver"
 readme = "README.md"
 license = "Apache-2.0"
@@ -19,7 +19,7 @@ authors = [
     { name = "GizmoData", email = "support@gizmodata.com" },
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Topic :: Database",

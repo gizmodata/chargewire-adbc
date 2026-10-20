@@ -36,8 +36,20 @@ implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and Ja
 - 🛑 **Cancel that really cancels:** Ctrl+C or a Go context stops the statement on the server.
 - 🔐 **TLS by default**, mutual TLS and token exchange for SSO.
 
-> **Status: in development, unreleased (0.1.0.dev0).** Tested against `warp-duckdb`, the
-> reference server, and [Hardcharger](https://github.com/gizmodata/hardcharger).
+> **Status: 1.0.0, for Warp SQL protocol 1.0.0.** Tested against `warp-duckdb`, the reference
+> server, and [Hardcharger](https://github.com/gizmodata/hardcharger) 2.0.0.
+
+## 📥 Install
+
+```bash
+pip install adbc-driver-warpsql
+```
+
+The wheel carries the driver's shared library for Linux (amd64, arm64; glibc 2.17 or newer),
+macOS (arm64, amd64) and Windows (amd64). Go applications `go get
+github.com/gizmodata/warp-sql-adbc/go`. Every other ADBC language loads the library from a
+[GitHub Release](https://github.com/gizmodata/warp-sql-adbc/releases) through a driver manifest
+(`packaging/warpsql.toml.in`).
 
 ## 📂 Layout
 
@@ -297,10 +309,11 @@ with `scripts/check_glibc.sh`, and installed and loaded on Oracle Linux 8). Then
 Release with the tag's CHANGELOG section, and PyPI from the `pypi` environment (trusted
 publishing, after an approval). Before tagging: set the version in `python/pyproject.toml`
 and `python/src/adbc_driver_warpsql/_version.py`, move `[Unreleased]` into a dated section,
-and make sure the workflow's `HARDCHARGER_IMAGE` is a build whose server splits
-results. The live suites pull `hardcharger-server` from the private image
-`ghcr.io/gizmodata/hardcharger` with the workflow's `GITHUB_TOKEN` (the package grants this
-repository read access).
+regenerate `THIRD_PARTY_NOTICES` if a Go dependency moved (`scripts/third_party_notices.sh`;
+CI checks it), and make sure the workflow's `HARDCHARGER_IMAGE` is a build whose server splits
+results. The live suites pull `hardcharger-server` from `ghcr.io/gizmodata/hardcharger` with the
+workflow's `GITHUB_TOKEN`; while that image is private, the package must grant this repository
+read access.
 
 ## 📦 Dependencies
 
@@ -314,7 +327,10 @@ repository read access).
 
 ## 📄 License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE). The shared library links the Go runtime and the Go modules
+listed, with their licenses, in
+[THIRD_PARTY_NOTICES](python/src/adbc_driver_warpsql/THIRD_PARTY_NOTICES), which ships in
+every wheel and library tarball.
 
 ---
 

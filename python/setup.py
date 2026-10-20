@@ -3,7 +3,7 @@
 The package is pure Python but ships the prebuilt Go shared library
 (``libadbc_driver_warpsql``), so wheels are platform-specific while staying
 ``py3-none`` (no CPython ABI dependency), e.g.
-``adbc_driver_warpsql-0.1.0-py3-none-macosx_11_0_arm64.whl``.
+``adbc_driver_warpsql-1.0.0-py3-none-macosx_11_0_arm64.whl``.
 
 ``has_ext_modules`` makes setuptools use the platlib layout, so package
 files land at the wheel root instead of a ``.data/purelib/`` tree, which a
