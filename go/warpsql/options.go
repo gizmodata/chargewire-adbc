@@ -53,7 +53,18 @@ const (
 	// instead of a username and password. The driver cannot renew it, but it
 	// may be set again on an open database that signs in with a token (or
 	// through the browser): its connections send the new one from then on.
+	//
+	// GetOption reads the access token in use, on the database and on its
+	// connections (they share it): the one the driver got by signing in,
+	// renewed first when it is about to expire, or the caller's own; "" before
+	// the first connection signs in with a password. It is a bearer secret:
+	// anyone holding it acts as the user until it expires. Store it encrypted
+	// and never log it.
 	OptionAccessToken = "adbc.warp.auth.access_token"
+	// OptionAccessTokenExpiresAt (read-only) is when that token expires, in
+	// RFC 3339 UTC: from the token response's expires_in, or the token's own
+	// exp claim when it is a JWT. "" when unknown.
+	OptionAccessTokenExpiresAt = "adbc.warp.auth.access_token_expires_at"
 	// OptionSubjectToken is an identity provider's token (for example an
 	// OpenID Connect ID token) exchanged for an access token with the
 	// token_exchange grant.

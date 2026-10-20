@@ -96,6 +96,18 @@ func (c *Client) UseAccessToken(token string) {
 	c.token = token
 	c.credentials = Credentials{AccessToken: token}
 	c.renewAt = time.Time{}
+	c.expiresAt = TokenExpiry(token)
+}
+
+// UseAccessTokenUntil is UseAccessToken for a token whose lifetime the
+// server gave (0: unknown).
+func (c *Client) UseAccessTokenUntil(token string, lifetime time.Duration) {
+	c.UseAccessToken(token)
+	if lifetime > 0 {
+		c.tokenMu.Lock()
+		c.expiresAt = time.Now().Add(lifetime)
+		c.tokenMu.Unlock()
+	}
 }
 
 // ReplaceAccessToken sends token from now on in place of the token issued
@@ -106,4 +118,5 @@ func (c *Client) ReplaceAccessToken(token string) {
 	defer c.tokenMu.Unlock()
 	c.token = token
 	c.renewAt = time.Time{}
+	c.expiresAt = TokenExpiry(token)
 }

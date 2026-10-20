@@ -152,7 +152,8 @@ Database options (with the standard `uri`, `username`, `password` and `adbc.tele
 | `adbc.warp.auth.type` | `password` | `oauth_browser`: browser sign-in (below). `client_certificate` (or `mtls`): sign in with the TLS client certificate alone, no password (spec §4.4; servers with capability `mtls_identity`). Needs the client certificate and key; refuses a username, password or token beside it. The token is bound to the certificate and renewed like a password sign-in's |
 | `adbc.warp.oauth.browser` | system browser | With `auth.type` `oauth_browser` (spec §4.3: sign in through a browser with the server's identity provider, when the first connection opens; servers with capability `oauth_browser`): the command that opens the sign-in page (its URL appended), or `none` to print the URL to stderr. The token it yields can't be renewed: once it expires, open a new database |
 | `adbc.warp.oauth.timeout_seconds` | `300` | How long the person has to complete a browser sign-in |
-| `adbc.warp.auth.access_token` | | An access token issued elsewhere (used as is, never renewed by the driver; may be set again on an open database that signs in with a token or through the browser) |
+| `adbc.warp.auth.access_token` | | An access token issued elsewhere (used as is, never renewed by the driver; may be set again on an open database that signs in with a token or through the browser). Readable on the database and its connections: the token in use (below) |
+| `adbc.warp.auth.access_token_expires_at` | | Read-only: when that token expires, RFC 3339 UTC (`2026-10-20T15:14:13Z`), from the token response's `expires_in` or the token's own `exp`; `""` when unknown |
 | `adbc.warp.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
 | `adbc.warp.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
 | `adbc.warp.session.reconnect` | `true` | Replace a session the server lost (see below) |
@@ -178,6 +179,19 @@ Read-only on a connection: `adbc.warp.session.id`, `adbc.warp.session.replacemen
 `adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
 `adbc.ingest.*` options; the transaction options are the standard ones.
 
+### Reading the access token
+
+`GetOption("adbc.warp.auth.access_token")`, on the database or a connection, returns the
+token the driver sends: the one a password sign-in, token exchange or browser sign-in got
+(renewed first when it is about to expire, so a token read after a renewal is the new one), or
+the caller's own `adbc.warp.auth.access_token` as given; `""` before a password database's
+first connection. `adbc.warp.auth.access_token_expires_at` says until when it works. Use it to
+hand a signed-in identity to another process, for instance with a session to attach to
+(below), or to call the server's HTTP API directly (`Authorization: Bearer <token>`).
+
+**It is a bearer secret:** whoever holds it acts as the user until it expires. Keep it in
+memory or store it encrypted, pass it only over TLS, and never log it or put it in a URL.
+
 ### Attaching to an existing session
 
 A session (its open transaction, temporary tables and settings) can outlive the connection
@@ -186,14 +200,15 @@ in one step and commits it in the next, or a client that reconnects after a rest
 first connection sets `adbc.warp.session.close_on_release=false`, so closing it leaves the
 session on the server, and passes on `adbc.warp.session.id` (read it from the connection).
 The second sets that id on its database, with credentials for the same user (the session
-belongs to the user who created it, spec §9.2), typically the same
-`adbc.warp.auth.access_token`:
+belongs to the user who created it, spec §9.2), typically the first one's access token,
+read from its connection:
 
 ```go
 // Process 1: begin, then hand the session on.
 _ = cnxn.(adbc.GetSetOptionsWithContext).SetOption(ctx, warpsql.OptionSessionCloseOnRelease, "false")
 // ... BEGIN TRANSACTION; INSERT ... (not committed)
 id, _ := cnxn.(adbc.GetSetOptionsWithContext).GetOption(ctx, warpsql.OptionSessionID)
+token, _ := cnxn.(adbc.GetSetOptionsWithContext).GetOption(ctx, warpsql.OptionAccessToken) // a secret
 _ = cnxn.Close(ctx) // the session and its transaction stay on the server
 
 // Process 2: attach and finish.

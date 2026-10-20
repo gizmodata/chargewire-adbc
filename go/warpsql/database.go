@@ -104,6 +104,9 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 	if key == OptionAccessToken && d.opened() {
 		return d.replaceAccessToken(value)
 	}
+	if key == OptionAccessTokenExpiresAt {
+		return d.ErrorHelper.InvalidArgument("option %s is read-only", key)
+	}
 	if d.opened() {
 		return d.ErrorHelper.InvalidState("option %s must be set before the first connection is opened", key)
 	}
@@ -215,6 +218,14 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return strconv.FormatBool(d.reconnect), nil
 	case OptionSessionID:
 		return d.attachSession, nil
+	case OptionAccessToken, OptionAccessTokenExpiresAt:
+		d.mu.Lock()
+		client := d.client
+		d.mu.Unlock()
+		if client == nil {
+			return tokenOption(key, d.credentials.AccessToken, protocol.TokenExpiry(d.credentials.AccessToken)), nil
+		}
+		return currentTokenOption(ctx, client, key)
 	case OptionSessionCloseOnRelease:
 		if d.closeOnRelease != nil {
 			return strconv.FormatBool(*d.closeOnRelease), nil
@@ -222,7 +233,7 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 	case adbc.OptionKeyTelemetryTraceParent:
 		return d.GetTraceParent(), nil
 	}
-	// Secrets (password, tokens, keys) are write-only.
+	// Other secrets (password, subject token, keys) are write-only.
 	return d.DatabaseImplBase.GetOption(ctx, key)
 }
 
@@ -253,6 +264,27 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 		return nil, wrapError(err, "opening a session")
 	}
 	return newConnection(d, client, discovery, session, d.closeOnReleaseOr(true)), nil
+}
+
+// currentTokenOption reads OptionAccessToken or OptionAccessTokenExpiresAt
+// from an open database's client.
+func currentTokenOption(ctx context.Context, client *protocol.Client, key string) (string, error) {
+	token, expiresAt, err := client.CurrentToken(ctx)
+	if err != nil {
+		return "", wrapError(err, "renewing the access token")
+	}
+	return tokenOption(key, token, expiresAt), nil
+}
+
+// tokenOption is the value of OptionAccessToken or OptionAccessTokenExpiresAt.
+func tokenOption(key, token string, expiresAt time.Time) string {
+	if key == OptionAccessToken {
+		return token
+	}
+	if expiresAt.IsZero() {
+		return ""
+	}
+	return expiresAt.UTC().Format(time.RFC3339)
 }
 
 // closeOnReleaseOr is OptionSessionCloseOnRelease, or def when it is unset.
@@ -307,7 +339,7 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 			transport.CloseIdleConnections()
 			return nil, nil, err
 		}
-		client.UseAccessToken(signedIn.AccessToken)
+		client.UseAccessTokenUntil(signedIn.AccessToken, signedIn.ExpiresIn)
 	} else {
 		if grant := d.grantType(); grant != "" && !discovery.SupportsGrant(grant) {
 			transport.CloseIdleConnections()

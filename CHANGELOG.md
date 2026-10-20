@@ -8,6 +8,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- The access token is readable: `GetOption("adbc.warp.auth.access_token")` on a database or
+  connection returns the token in use (renewed first when due, so a renewal shows; the
+  caller's own token as given), and `adbc.warp.auth.access_token_expires_at` (read-only) when
+  it expires, in RFC 3339 UTC, from `expires_in` or the token's `exp` (`""` when unknown). It is
+  a bearer secret: the README says how to handle it, and how it pairs with attaching to a
+  session. Other secrets (password, subject token, keys) stay write-only.
 - Attaching to an existing session: `adbc.warp.session.id` set on the database makes its
   connections use that session instead of creating one, inside its open transaction if it has
   one. Opening checks it with `GET /warp/v1/sessions/{id}`; an id the server doesn't have, or

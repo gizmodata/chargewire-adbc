@@ -66,6 +66,8 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return strconv.Itoa(c.session.Replacements()), nil
 	case OptionSessionCloseOnRelease:
 		return strconv.FormatBool(c.closeOnRelease.Load()), nil
+	case OptionAccessToken, OptionAccessTokenExpiresAt:
+		return currentTokenOption(ctx, c.client, key)
 	case OptionSessionTransaction:
 		// The server's view (§5.2), which includes SQL BEGIN and COMMIT.
 		transaction, err := c.session.Transaction(ctx)
@@ -92,7 +94,7 @@ func (c *connectionImpl) SetOption(ctx context.Context, key, value string) error
 	case OptionSessionID:
 		return c.ErrorHelper.InvalidArgument("option %s is read-only on a connection; to attach to a session, "+
 			"set it on the database before its first connection opens", key)
-	case OptionSessionReplacements, OptionSessionTransaction:
+	case OptionSessionReplacements, OptionSessionTransaction, OptionAccessTokenExpiresAt:
 		return c.ErrorHelper.InvalidArgument("option %s is read-only", key)
 	case OptionSessionCloseOnRelease:
 		b, err := parseBool(key, value)

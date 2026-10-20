@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,6 +81,9 @@ type Client struct {
 	tokenMu sync.Mutex
 	token   string
 	renewAt time.Time // when to replace the token; zero when its lifetime is unknown
+	// expiresAt is when the token expires, from the token response's
+	// expires_in or the token's own exp claim; zero when unknown.
+	expiresAt time.Time
 }
 
 // NewClient returns a client for cfg.BaseURL.
@@ -92,6 +96,7 @@ func NewClient(cfg Config) *Client {
 		userAgent:   cfg.UserAgent,
 		logger:      cfg.Logger,
 		token:       cfg.Credentials.AccessToken,
+		expiresAt:   TokenExpiry(cfg.Credentials.AccessToken),
 	}
 	if client.http == nil {
 		client.http = http.DefaultClient
@@ -453,9 +458,48 @@ func (c *Client) renewToken(ctx context.Context, stale string) error {
 	}
 	c.token = answer.AccessToken
 	c.renewAt = time.Time{}
+	c.expiresAt = TokenExpiry(answer.AccessToken)
 	if answer.ExpiresIn > 0 {
 		lifetime := time.Duration(answer.ExpiresIn) * time.Second
-		c.renewAt = time.Now().Add(lifetime - min(renewMargin, lifetime/4))
+		now := time.Now()
+		c.renewAt = now.Add(lifetime - min(renewMargin, lifetime/4))
+		c.expiresAt = now.Add(lifetime)
 	}
 	return nil
+}
+
+// CurrentToken is the access token the client sends, renewed first when it
+// is about to expire and the client can renew it, and when it expires (zero
+// when unknown). It is a bearer secret.
+func (c *Client) CurrentToken(ctx context.Context) (string, time.Time, error) {
+	if _, err := c.accessToken(ctx); err != nil {
+		return "", time.Time{}, err
+	}
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	return c.token, c.expiresAt, nil
+}
+
+// TokenExpiry is the exp claim of a token that is a JWT, or zero. The token
+// is not verified: the time only informs the caller (the server decides).
+func TokenExpiry(token string) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return time.Time{}
+	}
+	var claims struct {
+		Exp json.Number `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp == "" {
+		return time.Time{}
+	}
+	seconds, err := claims.Exp.Float64()
+	if err != nil || seconds <= 0 || seconds > 1<<40 {
+		return time.Time{}
+	}
+	return time.Unix(int64(seconds), 0)
 }
