@@ -1,0 +1,87 @@
+name: warp-sql-adbc-go-module
+
+# The Go module github.com/gizmodata/warp-sql-adbc/go lives in go/, so Go versions it by
+# go/vX.Y.Z tags (the subdirectory-module convention), one per release, on the same commit as the
+# vX.Y.Z tag release.yml acts on (RELEASING.md). release.yml's `v*` trigger does not match go/v*,
+# and nothing here publishes: the Go module proxy publishes a version by serving it. This workflow
+# checks that the tagged commit is a release of the module (the paired vX.Y.Z tag is on it, go.mod
+# and go.sum are tidy, it builds, vets and passes the unit tests), then fetches the version through
+# proxy.golang.org, so it is cached immutably, and asks pkg.go.dev to render it.
+#
+# The proxy cannot read an internal repository: push go/v* tags only once the repository is
+# public (the `warm` job fails until then, and can be re-run).
+
+on:
+  push:
+    tags: ["go/v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MODULE: github.com/gizmodata/warp-sql-adbc/go
+
+jobs:
+  check:
+    name: The tag is a release of the Go module
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the paired v* tag
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: go/vX.Y.Z pairs with vX.Y.Z on this commit
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#go/}"
+          paired=$(git rev-parse -q --verify "refs/tags/$version^{commit}" || true)
+          [ -n "$paired" ] || { echo "::error::no tag $version: tag the release first, then go/$version on the same commit (RELEASING.md)"; exit 1; }
+          [ "$paired" = "$GITHUB_SHA" ] || { echo "::error::$version is at $paired, not at this commit ($GITHUB_SHA)"; exit 1; }
+          echo "go/$version and $version both at $GITHUB_SHA"
+
+      - name: go.mod and go.sum are tidy
+        working-directory: go
+        run: go mod tidy -diff
+
+      - name: Build, vet and unit tests
+        working-directory: go
+        run: |
+          set -euo pipefail
+          go build ./...
+          go vet ./...
+          go vet -tags integration ./...
+          make test
+
+  warm:
+    name: proxy.golang.org and pkg.go.dev
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+
+      - name: Fetch the version through proxy.golang.org (caches it immutably)
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOFLAGS: -mod=mod
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#go/}"
+          go mod download -x "$MODULE@$version"
+          go list -m "$MODULE@$version"
+
+      - name: Ask pkg.go.dev to render it
+        # Not a stable API and rate-limited: a failure here is not a failure of the release.
+        run: |
+          version="${GITHUB_REF_NAME#go/}"
+          curl -sS -X POST "https://pkg.go.dev/fetch/$MODULE@$version" \
+            -o /dev/null -w "pkg.go.dev fetch ($version): HTTP %{http_code} in %{time_total}s\n" || true

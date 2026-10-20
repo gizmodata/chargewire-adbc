@@ -8,6 +8,9 @@ name: warp-sql-adbc-release
 #
 # workflow_dispatch runs the tests and the builds only: the release and publish jobs need a tag.
 #
+# Each release also carries a go/vX.Y.Z tag on the same commit, for the Go module in go/
+# (go-module.yml; RELEASING.md has the order). `v*` does not match it.
+#
 # The live suites are ci.yml's (its `live` job), against hardcharger-server from
 # ghcr.io/gizmodata/hardcharger.
 

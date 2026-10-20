@@ -16,6 +16,9 @@ whole history, newest first, for anyone who installed one from git.
 
 ### Added
 
+- The Go module `github.com/gizmodata/warp-sql-adbc/go` is versioned by `go/vX.Y.Z` tags on each
+  release's commit (`go-module.yml` checks the pair and warms the module proxy); `RELEASING.md`
+  has the release order.
 - Browser sign-in (Warp SQL spec §4.3, servers with capability `oauth_browser`):
   `adbc.warp.auth.type=oauth_browser` signs in through a browser with the server's identity
   provider when the first connection opens. The driver creates a flow, opens its
