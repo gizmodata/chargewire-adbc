@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -26,10 +27,12 @@ import (
 
 // Browser sign-in (spec §4.3) against a live server and a mock OpenID Connect
 // provider that approves at once. The server's flags are a template
-// (WARP_SQL_ADBC_TEST_SERVER_OAUTH_ARGS, default warp-duckdb's) with {issuer},
-// {client_id} and {identity}, and {base_url}; the client secret goes in the
-// variable WARP_SQL_ADBC_TEST_SERVER_OAUTH_SECRET_ENV names (default
-// WARP_DUCKDB_OAUTH_CLIENT_SECRET).
+// (WARP_SQL_ADBC_TEST_SERVER_OAUTH_ARGS) with {issuer}, {client_id},
+// {identity} and {base_url}; the client secret goes in the variable
+// WARP_SQL_ADBC_TEST_SERVER_OAUTH_SECRET_ENV names. Both default to the
+// server's own (WARP_SQL_ADBC_TEST_SERVER_NAME): warp-duckdb's, or
+// Hardcharger's, whose browser sign-in runs on its own port and trusts the
+// provider's ID tokens through its token_* settings.
 
 const (
 	oidcClientID = "warp-sql-adbc-test"
@@ -134,9 +137,15 @@ func (idp *mockOIDC) idToken(email, nonce string) string {
 
 func startBrowserSignInServer(t *testing.T, idp *mockOIDC) *testServer {
 	t.Helper()
-	t.Setenv(envOr("WARP_SQL_ADBC_TEST_SERVER_OAUTH_SECRET_ENV", "WARP_DUCKDB_OAUTH_CLIENT_SECRET"), oidcSecret)
-	template := envOr("WARP_SQL_ADBC_TEST_SERVER_OAUTH_ARGS",
-		"--oauth-issuer {issuer} --oauth-client-id {client_id} --oauth-identities {identity} --oauth-base-url {base_url}")
+	secretEnv, template := "WARP_DUCKDB_OAUTH_CLIENT_SECRET",
+		"--oauth-issuer {issuer} --oauth-client-id {client_id} --oauth-identities {identity} --oauth-base-url {base_url}"
+	if os.Getenv("WARP_SQL_ADBC_TEST_SERVER_NAME") == "Hardcharger" {
+		secretEnv, template = "HARDCHARGER_OAUTH_CLIENT_SECRET",
+			"--token-allowed-issuer {issuer} --token-allowed-audience {client_id} --token-default-role admin "+
+				"--token-authorized-emails {identity} --oauth-client-id {client_id} --oauth-base-url {base_url}"
+	}
+	t.Setenv(envOr("WARP_SQL_ADBC_TEST_SERVER_OAUTH_SECRET_ENV", secretEnv), oidcSecret)
+	template = envOr("WARP_SQL_ADBC_TEST_SERVER_OAUTH_ARGS", template)
 	var args []string
 	for _, arg := range strings.Fields(template) {
 		arg = strings.NewReplacer("{issuer}", idp.server.URL, "{client_id}", oidcClientID,

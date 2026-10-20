@@ -17,8 +17,10 @@ const (
 )
 
 // farLink is the round trip from which "auto" compresses with zstd: a link
-// that slow is a WAN, where bandwidth, not CPU, limits a transfer.
-const farLink = 10 * time.Millisecond
+// that slow is a WAN, where bandwidth, not CPU, limits a transfer. (A
+// variable only so that the live tests can count their loopback link as near:
+// one discovery round trip on a loaded machine can take longer than this.)
+var farLink = 10 * time.Millisecond
 
 // ipcCodec is the codec a statement compresses with and asks results in, or
 // "" for none: the option's codec when the server offers it, and for "auto"

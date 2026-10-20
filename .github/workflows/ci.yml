@@ -1,13 +1,14 @@
 name: warp-sql-adbc-ci
 
-# Unit tests, the C shared library on every platform, and the Python bindings.
+# Unit tests, the C shared library on every platform, the Python bindings, and the
+# live-server suites (Go and Python) against hardcharger-server. Also the release gate:
+# release.yml calls it on the tagged commit.
 #
-# Not here yet: the live-server suites (`make -C go integration-test`, `pytest -m
-# integration`). They need a warp-duckdb binary, which is built from the private
-# gizmodata/warp-sql repository (DuckDB 2.0 from source); this repository has no
-# credential to check it out. Until it does, run them locally with
-# WARP_SQL_ADBC_TEST_SERVER_BINARY set (see README.md). They fail, never skip, without
-# a server, so they cannot pass here by accident.
+# The live suites' server comes from the image ghcr.io/gizmodata/hardcharger (private until
+# launch), pulled with this workflow's GITHUB_TOKEN: the package grants this repository read
+# access (package settings, Manage Actions access); no personal token. HARDCHARGER_IMAGE
+# must be a build whose server splits results (--max-result-partitions). The suites fail,
+# never skip, without a server, and the Go suite fails when no integration test ran.
 
 on:
   push:
@@ -19,6 +20,11 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Hardcharger's main branch, published by its CI on every green push (:main; :sha-<short>
+  # for a fixed build). Pin a :sha- here to reproduce a run.
+  HARDCHARGER_IMAGE: ghcr.io/gizmodata/hardcharger:main
 
 # A newer run on the same branch makes an older one pointless: cancel it. Never on a tag:
 # a release run must finish.
@@ -117,3 +123,57 @@ jobs:
       - name: Check the glibc ceiling (2.17)
         if: runner.os == 'Linux'
         run: scripts/check_glibc.sh go/build/libadbc_driver_warpsql.so
+
+  live:
+    name: live-server suites (Go and Python, against hardcharger-server)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read  # the server image
+    env:
+      WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV: HARDCHARGER_ADMIN_PASSWORD
+      WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG: --mtls-ca-cert
+      WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG: --admin-username
+      WARP_SQL_ADBC_TEST_SERVER_NAME: Hardcharger
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: hardcharger-server from the image
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          if ! docker pull -q "$HARDCHARGER_IMAGE"; then
+            echo "::error::can't pull $HARDCHARGER_IMAGE with this workflow's GITHUB_TOKEN: grant $GITHUB_REPOSITORY read access to the hardcharger package (package settings, Manage Actions access)"
+            exit 1
+          fi
+          id=$(docker create "$HARDCHARGER_IMAGE")
+          docker cp "$id:/opt/hardcharger" "$RUNNER_TEMP/hardcharger"
+          docker rm "$id" >/dev/null
+          binary="$RUNNER_TEMP/hardcharger/bin/hardcharger-server"
+          "$binary" --version
+          echo "WARP_SQL_ADBC_TEST_SERVER_BINARY=$binary" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      # The race detector and a checked Arrow allocator; fails when no integration test ran.
+      - name: Go live suite
+        run: make -C go integration-test
+
+      - name: Build the shared library
+        run: scripts/build_lib.sh
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Python suite (unit and live)
+        working-directory: python
+        run: |
+          pip install -e ".[test]"
+          python -m pytest -v tests

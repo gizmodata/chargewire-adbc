@@ -39,6 +39,7 @@ func checkBig(t *testing.T, table arrow.Table) {
 
 func viaProxy(t *testing.T, extra map[string]string) (*faultProxy, adbc.ConnectionWithContext) {
 	t.Helper()
+	nearLink(t)
 	proxy := newFaultProxy(t, shared)
 	options := map[string]string{adbc.OptionKeyURI: proxy.uri()}
 	for key, value := range extra {

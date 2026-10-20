@@ -83,6 +83,20 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// nearLink makes "auto" (compression, ingest parts) treat every link as near
+// for the rest of the test. The tests' servers are on loopback, but the one
+// discovery round trip the driver measures can pass farLink on a loaded
+// machine (the race detector, other jobs), and the tests that count parts or
+// cut streams after so many bytes then see zstd and 32 parts instead. The
+// choice by round trip itself is unit-tested (TestIPCCodec,
+// TestIngestParts). No live test runs in parallel.
+func nearLink(t *testing.T) {
+	t.Helper()
+	saved := farLink
+	farLink = time.Hour
+	t.Cleanup(func() { farLink = saved })
+}
+
 // testServer is a running server process.
 type testServer struct {
 	cmd      *exec.Cmd

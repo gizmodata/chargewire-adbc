@@ -161,6 +161,25 @@ All notable changes to this project are documented here. The format follows
   `ProgrammingError`, `NotSupportedError`), as PEP 249 requires of a driver module. They are
   `adbc_driver_manager`'s own classes, so `except dbapi.ProgrammingError` and
   `except adbc_driver_manager.ProgrammingError` catch the same errors.
+- The browser sign-in live tests (`TestIntegrationBrowserSignIn`, `…Refused`) started every
+  server with warp-duckdb's flags (`--oauth-issuer`, `--oauth-identities`), so against
+  hardcharger-server, the server CI runs, they failed at startup. Their server flags and
+  client-secret variable now default by `WARP_SQL_ADBC_TEST_SERVER_NAME`: for Hardcharger,
+  `--token-allowed-issuer`, `--token-allowed-audience`, `--token-authorized-emails`,
+  `--oauth-client-id` and `--oauth-base-url` (browser sign-in on the server's own port, §4.3)
+  with `HARDCHARGER_OAUTH_CLIENT_SECRET`; both still take an override.
+- Live tests that count ingest parts or cut a result after so many bytes failed now and then
+  on a loaded machine (`TestIntegrationIngestInParts`: 32 parts, want 16;
+  `TestIntegrationResumeSplitResult`: 0 resumed downloads): the one discovery round trip that
+  `auto` decides by took over 10 ms on loopback, so they got the far link's zstd and 32 parts.
+  The proxied live tests now count their link as near; the choice by round trip stays
+  unit-tested. (Forcing every link far made 8 live tests fail before and none after.)
+
+### Changed (CI)
+
+- CI (`ci.yml`, every push and pull request) runs the live-server suites, Go (race detector)
+  and Python, against hardcharger-server from `ghcr.io/gizmodata/hardcharger:main`; they ran
+  only in the release workflow before. The release workflow gets them through `ci.yml`.
 
 ### Added
 

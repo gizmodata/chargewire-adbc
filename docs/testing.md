@@ -30,6 +30,14 @@ export WARP_SQL_ADBC_TEST_SERVER_NAME=Hardcharger
 make -C go integration-test && pytest python/tests
 ```
 
+The browser sign-in tests start a server of their own against a mock OpenID Connect provider.
+Its flags come from `WARP_SQL_ADBC_TEST_SERVER_OAUTH_ARGS` (a template with `{issuer}`,
+`{client_id}`, `{identity}` and `{base_url}`) and its client secret goes in the variable
+`WARP_SQL_ADBC_TEST_SERVER_OAUTH_SECRET_ENV` names; both default by
+`WARP_SQL_ADBC_TEST_SERVER_NAME`: warp-duckdb's `--oauth-issuer …` flags, or, for
+`Hardcharger`, `--token-allowed-issuer … --oauth-client-id … --oauth-base-url …` with
+`HARDCHARGER_OAUTH_CLIENT_SECRET` (browser sign-in on the server's own port, §4.3).
+
 Negative tests assert the ADBC status and the Warp SQL error code (`warp.code` in the error
 details), not just that something failed.
 
