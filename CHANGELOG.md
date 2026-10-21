@@ -19,6 +19,23 @@ whole history, newest first, for anyone who installed one from git.
 - The Go module `github.com/gizmodata/warp-sql-adbc/go` is versioned by `go/vX.Y.Z` tags on each
   release's commit (`go-module.yml` checks the pair and warms the module proxy); `RELEASING.md`
   has the release order.
+
+- The access token is readable: `GetOption("adbc.warp.auth.access_token")` on a database or
+  connection returns the token in use (renewed first when due, so a renewal shows; the
+  caller's own token as given), and `adbc.warp.auth.access_token_expires_at` (read-only) when
+  it expires, in RFC 3339 UTC, from `expires_in` or the token's `exp` (`""` when unknown). It is
+  a bearer secret: the README says how to handle it, and how it pairs with attaching to a
+  session. Other secrets (password, subject token, keys) stay write-only.
+- Attaching to an existing session: `adbc.warp.session.id` set on the database makes its
+  connections use that session instead of creating one, inside its open transaction if it has
+  one. Opening checks it with `GET /warp/v1/sessions/{id}`; an id the server doesn't have, or
+  another user's session, fails with `session_not_found` (`NotFound`) and no session is
+  created. An attached session is never replaced when the server loses it.
+  `adbc.warp.session.close_on_release` (database and connection option) says whether closing
+  the connection ends the session: by default `true` for a session the connection created and
+  `false` for an attached one, so a transaction can be handed from one process to another. A
+  session lives on one server instance: behind a load balancer, attaching works only when
+  routing reaches that instance (the README says more).
 - Browser sign-in (Warp SQL spec §4.3, servers with capability `oauth_browser`):
   `adbc.warp.auth.type=oauth_browser` signs in through a browser with the server's identity
   provider when the first connection opens. The driver creates a flow, opens its

@@ -31,6 +31,11 @@ type databaseImpl struct {
 	maxAttempts int
 	reconnect   bool
 	defaults    execOptions
+	// attachSession is the session every connection attaches to
+	// (OptionSessionID); "" creates one per connection.
+	attachSession string
+	// closeOnRelease is OptionSessionCloseOnRelease when it was set.
+	closeOnRelease *bool
 	// Browser sign-in (AuthTypeOAuthBrowser): the opener's command and how
 	// long the person has.
 	browserSignIn  bool
@@ -99,6 +104,9 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 	if key == OptionAccessToken && d.opened() {
 		return d.replaceAccessToken(value)
 	}
+	if key == OptionAccessTokenExpiresAt {
+		return d.ErrorHelper.InvalidArgument("option %s is read-only", key)
+	}
 	if d.opened() {
 		return d.ErrorHelper.InvalidState("option %s must be set before the first connection is opened", key)
 	}
@@ -161,6 +169,18 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 			return err
 		}
 		d.reconnect = b
+	case OptionSessionID:
+		d.attachSession = value
+	case OptionSessionCloseOnRelease:
+		if value == "" {
+			d.closeOnRelease = nil
+			return nil
+		}
+		b, err := parseBool(key, value)
+		if err != nil {
+			return err
+		}
+		d.closeOnRelease = &b
 	default:
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}
@@ -196,10 +216,24 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return strconv.Itoa(d.maxAttempts), nil
 	case OptionSessionReconnect:
 		return strconv.FormatBool(d.reconnect), nil
+	case OptionSessionID:
+		return d.attachSession, nil
+	case OptionAccessToken, OptionAccessTokenExpiresAt:
+		d.mu.Lock()
+		client := d.client
+		d.mu.Unlock()
+		if client == nil {
+			return tokenOption(key, d.credentials.AccessToken, protocol.TokenExpiry(d.credentials.AccessToken)), nil
+		}
+		return currentTokenOption(ctx, client, key)
+	case OptionSessionCloseOnRelease:
+		if d.closeOnRelease != nil {
+			return strconv.FormatBool(*d.closeOnRelease), nil
+		}
 	case adbc.OptionKeyTelemetryTraceParent:
 		return d.GetTraceParent(), nil
 	}
-	// Secrets (password, tokens, keys) are write-only.
+	// Other secrets (password, subject token, keys) are write-only.
 	return d.DatabaseImplBase.GetOption(ctx, key)
 }
 
@@ -213,11 +247,52 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 	if err != nil {
 		return nil, err
 	}
+	if d.attachSession != "" {
+		session, err := client.AttachSession(ctx, d.attachSession)
+		if err != nil {
+			op := "attaching to session " + d.attachSession
+			if protocol.HasCode(err, protocol.CodeSessionNotFound) {
+				op += " (the server doesn't have it for this user: it ended or idled out, it belongs to " +
+					"another user, or it lives on another server instance)"
+			}
+			return nil, wrapError(err, op)
+		}
+		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(false)), nil
+	}
 	session, err := client.OpenSession(ctx, nil, d.reconnect)
 	if err != nil {
 		return nil, wrapError(err, "opening a session")
 	}
-	return newConnection(d, client, discovery, session), nil
+	return newConnection(d, client, discovery, session, d.closeOnReleaseOr(true)), nil
+}
+
+// currentTokenOption reads OptionAccessToken or OptionAccessTokenExpiresAt
+// from an open database's client.
+func currentTokenOption(ctx context.Context, client *protocol.Client, key string) (string, error) {
+	token, expiresAt, err := client.CurrentToken(ctx)
+	if err != nil {
+		return "", wrapError(err, "renewing the access token")
+	}
+	return tokenOption(key, token, expiresAt), nil
+}
+
+// tokenOption is the value of OptionAccessToken or OptionAccessTokenExpiresAt.
+func tokenOption(key, token string, expiresAt time.Time) string {
+	if key == OptionAccessToken {
+		return token
+	}
+	if expiresAt.IsZero() {
+		return ""
+	}
+	return expiresAt.UTC().Format(time.RFC3339)
+}
+
+// closeOnReleaseOr is OptionSessionCloseOnRelease, or def when it is unset.
+func (d *databaseImpl) closeOnReleaseOr(def bool) bool {
+	if d.closeOnRelease != nil {
+		return *d.closeOnRelease
+	}
+	return def
 }
 
 func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol.Discovery, error) {
@@ -264,7 +339,7 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 			transport.CloseIdleConnections()
 			return nil, nil, err
 		}
-		client.UseAccessToken(signedIn.AccessToken)
+		client.UseAccessTokenUntil(signedIn.AccessToken, signedIn.ExpiresIn)
 	} else {
 		if grant := d.grantType(); grant != "" && !discovery.SupportsGrant(grant) {
 			transport.CloseIdleConnections()
