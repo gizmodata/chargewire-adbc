@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- A live test that an `append` ingest binds the upload's columns to the table's by name
+  (Warp SQL §8.1): two INTEGER columns uploaded the other way round land under their own
+  names, an omitted column takes its default, and a column the table lacks is refused with
+  nothing written. It fails against warp-duckdb 1.0.1, which bound by position.
 - Browser sign-in (Warp SQL spec §4.3, servers with capability `oauth_browser`):
   `adbc.warp.auth.type=oauth_browser` signs in through a browser with the server's identity
   provider when the first connection opens. The driver creates a flow, opens its

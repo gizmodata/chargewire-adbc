@@ -6,6 +6,7 @@ package warpsql
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -221,4 +222,44 @@ func TestIntegrationIngestWithoutData(t *testing.T) {
 	// Ingest runs with ExecuteUpdate only.
 	_, _, err = stmt.ExecuteQuery(context.Background())
 	assertStatus(t, err, adbc.StatusInvalidState, "")
+}
+
+// An append binds the upload's columns to the table's by name (spec §8.1): two
+// columns of one type uploaded the other way round land where their names say,
+// an omitted column takes its default, and a column the table lacks is refused
+// with nothing written. warp-duckdb before 1.0.2 bound by position and stored
+// the swapped columns crosswise without an error.
+func TestIntegrationIngestAppendBindsColumnsByName(t *testing.T) {
+	cnxn := openConn(t)
+	execUpdate(t, cnxn, "CREATE OR REPLACE TABLE ing_by_name (a INTEGER, b INTEGER, c VARCHAR DEFAULT 'dflt')")
+	swapped := int32Columns([]string{"b", "a"}, [][]int32{{10, 20}, {1, 2}})
+	defer swapped.Release()
+	if n, err := ingest(t, cnxn, "ing_by_name", adbc.OptionValueIngestModeAppend, swapped, nil); err != nil || n != 2 {
+		t.Fatalf("append: %d rows, %v", n, err)
+	}
+	got := stringsOf(t, queryTable(t, cnxn, "SELECT a || ':' || b || ':' || c AS r FROM ing_by_name ORDER BY a"), 0)
+	if len(got) != 2 || got[0] != "1:10:dflt" || got[1] != "2:20:dflt" {
+		t.Fatalf("stored %v; want the values under their own names", got)
+	}
+	extra := int32Columns([]string{"a", "nope"}, [][]int32{{3}, {0}})
+	defer extra.Release()
+	if _, err := ingest(t, cnxn, "ing_by_name", adbc.OptionValueIngestModeAppend, extra, nil); err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("a column the table lacks: %v; want a refusal naming it", err)
+	}
+	if got := scalarInt(t, cnxn, "SELECT count(*) FROM ing_by_name"); got != 2 {
+		t.Fatalf("after the refused upload: %d rows", got)
+	}
+}
+
+func int32Columns(columns []string, values [][]int32) arrow.RecordBatch {
+	fields := make([]arrow.Field, len(columns))
+	for i, name := range columns {
+		fields[i] = arrow.Field{Name: name, Type: arrow.PrimitiveTypes.Int32, Nullable: true}
+	}
+	builder := array.NewRecordBuilder(memory.DefaultAllocator, arrow.NewSchema(fields, nil))
+	defer builder.Release()
+	for i, column := range values {
+		builder.Field(i).(*array.Int32Builder).AppendValues(column, nil)
+	}
+	return builder.NewRecordBatch()
 }
