@@ -1,3 +1,4 @@
+// Deprecated: renamed; use github.com/gizmodata/chargewire-adbc/go/v2.
 module github.com/gizmodata/warp-sql-adbc/go
 
 go 1.27.2
