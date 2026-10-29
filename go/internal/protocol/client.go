@@ -34,7 +34,7 @@ type Credentials struct {
 	// SubjectToken is an identity provider's token for the token_exchange
 	// grant.
 	SubjectToken string
-	// AccessToken is a Warp SQL access token obtained outside the driver. It
+	// AccessToken is a Chargewire access token obtained outside the driver. It
 	// is used as is and cannot be renewed.
 	AccessToken string
 }
@@ -56,7 +56,7 @@ func (c Credentials) grant() map[string]string {
 
 // Config configures a Client.
 type Config struct {
-	// BaseURL is the protocol's base path, e.g. https://db.example.com/warp
+	// BaseURL is the protocol's base path, e.g. https://db.example.com/chargewire
 	// (§2.1).
 	BaseURL     *url.URL
 	HTTPClient  *http.Client
@@ -300,8 +300,8 @@ func (c *Client) send(ctx context.Context, req *Request, token string) (*http.Re
 	start := time.Now()
 	resp, err := c.http.Do(httpReq)
 	if err == nil {
-		c.logger.DebugContext(ctx, "warp request", "method", req.Method, "path", req.Path,
-			"status", resp.StatusCode, "request_id", resp.Header.Get("Warp-Request-Id"),
+		c.logger.DebugContext(ctx, "chargewire request", "method", req.Method, "path", req.Path,
+			"status", resp.StatusCode, "request_id", resp.Header.Get("Chargewire-Request-Id"),
 			"elapsed", time.Since(start))
 	}
 	return resp, err
@@ -375,15 +375,15 @@ func (c *Client) Discover(ctx context.Context) (*Discovery, error) {
 	mu.Lock()
 	doc.RTT = rtt
 	mu.Unlock()
-	if doc.Protocol != "warp-sql" {
-		return nil, fmt.Errorf("%s does not describe a Warp SQL server (protocol %q)", c.base.Redacted(), doc.Protocol)
+	if doc.Protocol != "chargewire" {
+		return nil, fmt.Errorf("%s does not describe a Chargewire server (protocol %q)", c.base.Redacted(), doc.Protocol)
 	}
 	for _, version := range doc.ProtocolVersions {
 		if version == "1" {
 			return doc, nil
 		}
 	}
-	return nil, fmt.Errorf("the server at %s does not speak Warp SQL version 1 (it offers %v)", c.base.Redacted(), doc.ProtocolVersions)
+	return nil, fmt.Errorf("the server at %s does not speak Chargewire version 1 (it offers %v)", c.base.Redacted(), doc.ProtocolVersions)
 }
 
 // Authenticate obtains an access token now, so that wrong credentials fail

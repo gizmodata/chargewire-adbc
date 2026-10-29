@@ -1,13 +1,13 @@
 """Shared fixtures.
 
 Integration tests (marked ``integration``) run against a live server started from
-``WARP_SQL_ADBC_TEST_SERVER_BINARY`` (a binary with warp-duckdb's interface: ``--host``,
-``--port``, ``--username``, ``--tls-cert``/``--tls-key``, password in ``WARP_DUCKDB_PASSWORD``)
-on a free port. Without it they fail; they never skip. Unit tests need no server. For another
-server, name its password variable in ``WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV`` (Hardcharger:
-``HARDCHARGER_ADMIN_PASSWORD``), its user-name flag in
-``WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG`` (Hardcharger: ``--admin-username``), and its name
-(for GetInfo) in ``WARP_SQL_ADBC_TEST_SERVER_NAME``.
+``CHARGEWIRE_ADBC_TEST_SERVER_BINARY`` (a binary with chargewire-duckdb's interface:
+``--host``, ``--port``, ``--username``, ``--tls-cert``/``--tls-key``, password in
+``CHARGEWIRE_DUCKDB_PASSWORD``) on a free port. Without it they fail; they never skip. Unit
+tests need no server. For another server, name its password variable in
+``CHARGEWIRE_ADBC_TEST_SERVER_PASSWORD_ENV`` (Hardcharger: ``HARDCHARGER_ADMIN_PASSWORD``),
+its user-name flag in ``CHARGEWIRE_ADBC_TEST_SERVER_USERNAME_FLAG`` (Hardcharger:
+``--admin-username``), and its name (for GetInfo) in ``CHARGEWIRE_ADBC_TEST_SERVER_NAME``.
 """
 
 from __future__ import annotations
@@ -28,11 +28,11 @@ from pathlib import Path
 
 import pytest
 
-SERVER_BINARY_ENV = "WARP_SQL_ADBC_TEST_SERVER_BINARY"
+SERVER_BINARY_ENV = "CHARGEWIRE_ADBC_TEST_SERVER_BINARY"
 SERVER_PASSWORD_ENV = (
-    os.environ.get("WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV") or "WARP_DUCKDB_PASSWORD"
+    os.environ.get("CHARGEWIRE_ADBC_TEST_SERVER_PASSWORD_ENV") or "CHARGEWIRE_DUCKDB_PASSWORD"
 )
-USERNAME = "warp_test"
+USERNAME = "chargewire_test"
 
 NATIONS = [
     "ALGERIA",
@@ -77,10 +77,10 @@ class Server:
 
     @property
     def uri(self) -> str:
-        """The server's warp:// URI (plain HTTP unless it serves TLS)."""
+        """The server's chargewire:// URI (plain HTTP unless it serves TLS)."""
         if self.tls:
-            return f"warp://{self.host}:{self.port}"
-        return f"warp://{self.host}:{self.port}?tls=false"
+            return f"chargewire://{self.host}:{self.port}"
+        return f"chargewire://{self.host}:{self.port}?tls=false"
 
 
 def _free_port() -> int:
@@ -99,7 +99,9 @@ def _wait_up(server: Server, timeout: float = 20) -> None:
         if server.process.poll() is not None:
             break
         try:
-            with urllib.request.urlopen(url=f"{server.base_url}/warp", timeout=2, context=context):
+            with urllib.request.urlopen(
+                url=f"{server.base_url}/chargewire", timeout=2, context=context
+            ):
                 return
         except (urllib.error.URLError, OSError) as error:
             if "CERTIFICATE_REQUIRED" in str(error):
@@ -107,7 +109,9 @@ def _wait_up(server: Server, timeout: float = 20) -> None:
             last_error = error
         time.sleep(0.1)
     stop_server(server=server)
-    pytest.fail(reason=f"no Warp SQL server answered at {server.base_url}/warp ({last_error})")
+    pytest.fail(
+        reason=f"no Chargewire server answered at {server.base_url}/chargewire ({last_error})"
+    )
 
 
 def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
@@ -116,7 +120,8 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
     binary = os.environ.get(SERVER_BINARY_ENV)
     if not binary:
         pytest.fail(
-            reason=f"set {SERVER_BINARY_ENV} to a warp-duckdb binary to run the integration tests"
+            reason=f"set {SERVER_BINARY_ENV} to a chargewire-duckdb binary "
+            "to run the integration tests"
         )
     extra_args = extra_args or []
     port = _free_port()
@@ -133,7 +138,7 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
                 "127.0.0.1",
                 "--port",
                 str(port),
-                os.environ.get("WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG") or "--username",
+                os.environ.get("CHARGEWIRE_ADBC_TEST_SERVER_USERNAME_FLAG") or "--username",
                 USERNAME,
                 *[_mtls_flag(arg=arg) for arg in extra_args],
             ],
@@ -155,7 +160,7 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
 def _mtls_flag(arg: str) -> str:
     """The server's own name for the client-CA flag (Hardcharger: ``--mtls-ca-cert``)."""
     if arg == "--tls-client-ca":
-        return os.environ.get("WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG") or arg
+        return os.environ.get("CHARGEWIRE_ADBC_TEST_SERVER_MTLS_FLAG") or arg
     return arg
 
 
@@ -173,14 +178,14 @@ def stop_server(server: Server) -> None:
 @pytest.fixture(scope="session")
 def server_log(tmp_path_factory) -> Path:
     """The file the test servers' output goes to."""
-    return tmp_path_factory.mktemp("server") / "warp-duckdb.log"
+    return tmp_path_factory.mktemp("server") / "chargewire-duckdb.log"
 
 
 @pytest.fixture(scope="session")
-def warp_server(server_log):
+def chargewire_server(server_log):
     """A plain-HTTP server on loopback, with a small ``nation`` table."""
     server = start_server(log=server_log)
-    from adbc_driver_warpsql import dbapi
+    from adbc_driver_chargewire import dbapi
 
     with dbapi.connect(uri=server.uri, username=USERNAME, password=server.password) as conn:
         with conn.cursor() as cur:
@@ -194,17 +199,17 @@ def warp_server(server_log):
 
 
 @pytest.fixture(scope="session")
-def warp_uri(warp_server) -> str:
-    return warp_server.uri
+def chargewire_uri(chargewire_server) -> str:
+    return chargewire_server.uri
 
 
 @pytest.fixture
-def conn(warp_server):
+def conn(chargewire_server):
     """A fresh DB-API connection to the shared server."""
-    from adbc_driver_warpsql import dbapi
+    from adbc_driver_chargewire import dbapi
 
     with dbapi.connect(
-        uri=warp_server.uri, username=USERNAME, password=warp_server.password
+        uri=chargewire_server.uri, username=USERNAME, password=chargewire_server.password
     ) as connection:
         yield connection
 
@@ -213,7 +218,7 @@ def raw_request(server: Server, method: str, path: str, body: dict | None = None
     """Send a request to the server with its own token (same principal as the driver),
     for tests that look behind the driver's back. Returns (status, parsed body)."""
     token_request = urllib.request.Request(
-        url=f"{server.base_url}/warp/v1/auth/token",
+        url=f"{server.base_url}/chargewire/v1/auth/token",
         method="POST",
         data=json.dumps(
             obj={"grant_type": "password", "username": USERNAME, "password": server.password}
@@ -237,7 +242,7 @@ def raw_request(server: Server, method: str, path: str, body: dict | None = None
 
 
 #: The identity (e-mail SAN) of make_certificates' client certificate.
-CLIENT_EMAIL = "warp-test-client@example.com"
+CLIENT_EMAIL = "chargewire-test-client@example.com"
 
 
 def make_certificates(out_dir: Path) -> dict[str, Path]:
@@ -261,8 +266,8 @@ def make_certificates(out_dir: Path) -> dict[str, Path]:
     ca_key = ec.generate_private_key(curve=ec.SECP256R1())
     ca_cert = (
         x509.CertificateBuilder()
-        .subject_name(name=name(common_name="warp-sql-adbc test CA"))
-        .issuer_name(name=name(common_name="warp-sql-adbc test CA"))
+        .subject_name(name=name(common_name="chargewire-adbc test CA"))
+        .issuer_name(name=name(common_name="chargewire-adbc test CA"))
         .public_key(key=ca_key.public_key())
         .serial_number(number=x509.random_serial_number())
         .not_valid_before(time=now - datetime.timedelta(minutes=5))

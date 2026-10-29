@@ -1,4 +1,4 @@
-module github.com/gizmodata/warp-sql-adbc/go
+module github.com/gizmodata/chargewire-adbc/go
 
 go 1.27.2
 

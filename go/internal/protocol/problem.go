@@ -135,7 +135,7 @@ type Problem struct {
 
 	// RetryAfter is the response's Retry-After, when it had one.
 	RetryAfter time.Duration `json:"-"`
-	// StatementID is the response's Warp-Statement-Id: the statement that
+	// StatementID is the response's Chargewire-Statement-Id: the statement that
 	// failed or was cancelled, when the error is a statement's (§6.1).
 	StatementID string `json:"-"`
 }
@@ -221,15 +221,15 @@ func readProblem(resp *http.Response) *Problem {
 		p.Status = resp.StatusCode
 	}
 	if p.RequestID == "" {
-		p.RequestID = resp.Header.Get("Warp-Request-Id")
+		p.RequestID = resp.Header.Get("Chargewire-Request-Id")
 	}
-	p.StatementID = resp.Header.Get("Warp-Statement-Id")
+	p.StatementID = resp.Header.Get("Chargewire-Statement-Id")
 	p.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
 	return p
 }
 
 // parseRetryAfter reads a Retry-After header: integer delta-seconds, the only
-// form Warp SQL servers send (§2.6). Anything else is ignored.
+// form Chargewire servers send (§2.6). Anything else is ignored.
 func parseRetryAfter(value string) time.Duration {
 	seconds, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || seconds < 0 {

@@ -1,9 +1,9 @@
-# Releasing warp-sql-adbc
+# Releasing chargewire-adbc
 
 A release is two tags on one commit of `main`: `vX.Y.Z`, which `release.yml` acts on (the full
 test gate, the shared library for every platform, the wheels, the GitHub Release and PyPI
-`adbc-driver-warpsql`), and `go/vX.Y.Z`, which versions the Go module
-`github.com/gizmodata/warp-sql-adbc/go` (it lives in `go/`, so Go's subdirectory-module convention
+`adbc-driver-chargewire`), and `go/vX.Y.Z`, which versions the Go module
+`github.com/gizmodata/chargewire-adbc/go` (it lives in `go/`, so Go's subdirectory-module convention
 applies; `go-module.yml` checks the pair and warms the module proxy). The Python package and the
 Go module share one version line.
 
@@ -15,8 +15,8 @@ Go module share one version line.
 
    ```bash
    sha=$(git rev-parse main)
-   git tag -a vX.Y.Z -m "warp-sql-adbc X.Y.Z" "$sha"
-   git tag -a go/vX.Y.Z -m "github.com/gizmodata/warp-sql-adbc/go vX.Y.Z" "$sha"
+   git tag -a vX.Y.Z -m "chargewire-adbc X.Y.Z" "$sha"
+   git tag -a go/vX.Y.Z -m "github.com/gizmodata/chargewire-adbc/go vX.Y.Z" "$sha"
    git push origin vX.Y.Z
    git push origin go/vX.Y.Z
    ```
@@ -26,13 +26,13 @@ Go module share one version line.
 3. Wait for both workflows, then check what was published:
 
    ```bash
-   curl -sS https://pypi.org/pypi/adbc-driver-warpsql/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
-   gh release view vX.Y.Z -R gizmodata/warp-sql-adbc --json assets --jq '.assets[].name'
-   GOFLAGS=-mod=mod GOPROXY=https://proxy.golang.org go list -m github.com/gizmodata/warp-sql-adbc/go@vX.Y.Z
+   curl -sS https://pypi.org/pypi/adbc-driver-chargewire/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
+   gh release view vX.Y.Z -R gizmodata/chargewire-adbc --json assets --jq '.assets[].name'
+   GOFLAGS=-mod=mod GOPROXY=https://proxy.golang.org go list -m github.com/gizmodata/chargewire-adbc/go@vX.Y.Z
    ```
 
    The last line is what downstream Go modules depend on: `hardcharger-adbc` moves its `go/go.mod`
-   from a pseudo-version to `github.com/gizmodata/warp-sql-adbc/go vX.Y.Z` only once it prints
+   from a pseudo-version to `github.com/gizmodata/chargewire-adbc/go vX.Y.Z` only once it prints
    the version (see that repository's `RELEASING.md`).
 
 ## While the repository is internal

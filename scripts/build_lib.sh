@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the driver's C shared library (go/build/libadbc_driver_warpsql.<ext>) the way CI does.
+# Build the driver's C shared library (go/build/libadbc_driver_chargewire.<ext>) the way CI does.
 # (`make -C go lib` is the same build with the local C toolchain.)
 #
 # On Linux the C toolchain is `zig cc` targeting glibc 2.17, so the library runs on any glibc >= 2.17
@@ -27,5 +27,5 @@ fi
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
 CGO_ENABLED=1 go build -tags driverlib -buildmode=c-shared \
   -ldflags "-s -w -X github.com/adbc-drivers/driverbase-go/driverbase.infoDriverVersion=$VERSION" \
-  -o "build/libadbc_driver_warpsql.$EXT" ./pkg/warpsql
+  -o "build/libadbc_driver_chargewire.$EXT" ./pkg/chargewire
 ls -la build/

@@ -1,6 +1,6 @@
-"""Integration tests against a live Warp SQL server (see conftest.py).
+"""Integration tests against a live Chargewire server (see conftest.py).
 
-Ported from gizmosql-adbc's Python suite; what does not apply to Warp SQL
+Ported from gizmosql-adbc's Python suite; what does not apply to Chargewire
 (OAuth, Flight SQL URI schemes) is listed in docs/testing.md.
 """
 
@@ -22,7 +22,7 @@ from conftest import (
     stop_server,
 )
 
-from adbc_driver_warpsql import ConnectionOptions, StatementOptions, dbapi
+from adbc_driver_chargewire import ConnectionOptions, StatementOptions, dbapi
 
 pytestmark = pytest.mark.integration
 
@@ -31,10 +31,10 @@ def connect(server, **kwargs):
     return dbapi.connect(uri=server.uri, username=USERNAME, password=server.password, **kwargs)
 
 
-def warp_code(error: adbc_driver_manager.Error) -> str | None:
-    """The Warp SQL error code the driver attached to an error."""
+def chargewire_code(error: adbc_driver_manager.Error) -> str | None:
+    """The Chargewire error code the driver attached to an error."""
     for key, value in error.details:
-        if key == b"warp.code":
+        if key == b"chargewire.code":
             return value.decode()
     return None
 
@@ -42,9 +42,9 @@ def warp_code(error: adbc_driver_manager.Error) -> str | None:
 def assert_error(
     error: adbc_driver_manager.Error, status: adbc_driver_manager.AdbcStatusCode, code: str | None
 ) -> None:
-    """Check an error's ADBC status and Warp SQL code (None: not from the server)."""
+    """Check an error's ADBC status and Chargewire code (None: not from the server)."""
     assert error.status_code == status, error
-    assert warp_code(error=error) == code, error
+    assert chargewire_code(error=error) == code, error
 
 
 class TestPasswordAuth:
@@ -116,10 +116,12 @@ class TestPasswordAuth:
             assert table.num_rows == 2_000_000
             assert table.column("i")[1_999_999].as_py() == 1_999_999
 
-    def test_wrong_password(self, warp_server):
+    def test_wrong_password(self, chargewire_server):
         with pytest.raises(adbc_driver_manager.Error) as caught:
             dbapi.connect(
-                uri=warp_server.uri, username=USERNAME, password=warp_server.password + "x"
+                uri=chargewire_server.uri,
+                username=USERNAME,
+                password=chargewire_server.password + "x",
             )
         assert_error(
             error=caught.value,
@@ -314,10 +316,10 @@ class TestBulkIngest:
             cur.execute(operation="SELECT id, s, d FROM test_ingest_parts ORDER BY id")
             assert cur.fetch_arrow_table().equals(table.combine_chunks())
 
-    def test_ingest_one_part_keeps_the_order(self, warp_server):
+    def test_ingest_one_part_keeps_the_order(self, chargewire_server):
         table = self._many_batches(rows=100_000, batch_rows=5_000)
         with connect(
-            server=warp_server, db_kwargs={StatementOptions.INGEST_PARTS.value: "1"}
+            server=chargewire_server, db_kwargs={StatementOptions.INGEST_PARTS.value: "1"}
         ) as one:
             with one.cursor() as cur:
                 cur.execute(operation="DROP TABLE IF EXISTS test_ingest_one_part")
@@ -476,8 +478,8 @@ class TestBoundParameters:
 
 
 class TestConnectionContextManager:
-    def test_fresh_connection(self, warp_server):
-        with connect(server=warp_server) as conn:
+    def test_fresh_connection(self, chargewire_server):
+        with connect(server=chargewire_server) as conn:
             with conn.cursor() as cur:
                 cur.execute(operation="SELECT 42 AS answer")
                 assert cur.fetch_arrow_table().column("answer")[0].as_py() == 42
@@ -488,14 +490,14 @@ class TestConnectionProfiles:
     resolves at database init."""
 
     @pytest.fixture()
-    def profile_dir(self, tmp_path, monkeypatch, warp_server):
-        profile = tmp_path / "warp_test.toml"
+    def profile_dir(self, tmp_path, monkeypatch, chargewire_server):
+        profile = tmp_path / "chargewire_test.toml"
         profile.write_text(
             data=(
                 "profile_version = 1\n\n[Options]\n"
-                f'uri = "{warp_server.uri}"\n'
+                f'uri = "{chargewire_server.uri}"\n'
                 f'username = "{USERNAME}"\n'
-                f'password = "{warp_server.password}"\n'
+                f'password = "{chargewire_server.password}"\n'
             )
         )
         monkeypatch.setenv(name="ADBC_PROFILE_PATH", value=str(tmp_path))
@@ -507,42 +509,44 @@ class TestConnectionProfiles:
             assert cur.fetch_arrow_table().column("value")[0].as_py() == value
 
     def test_named_profile(self, profile_dir):
-        with dbapi.connect(profile="warp_test") as conn:
+        with dbapi.connect(profile="chargewire_test") as conn:
             self._select(conn=conn, value=1)
 
     def test_profile_uri_scheme(self, profile_dir):
-        with dbapi.connect(uri="profile://warp_test") as conn:
+        with dbapi.connect(uri="profile://chargewire_test") as conn:
             self._select(conn=conn, value=2)
 
     def test_absolute_path_profile(self, profile_dir):
-        with dbapi.connect(profile=str(profile_dir / "warp_test.toml")) as conn:
+        with dbapi.connect(profile=str(profile_dir / "chargewire_test.toml")) as conn:
             self._select(conn=conn, value=3)
 
-    def test_profile_env_var_substitution(self, warp_server, tmp_path, monkeypatch):
+    def test_profile_env_var_substitution(self, chargewire_server, tmp_path, monkeypatch):
         """Secrets can stay out of the profile with {{ env_var(NAME) }}."""
-        monkeypatch.setenv(name="WARP_SQL_ADBC_TEST_PROFILE_PASSWORD", value=warp_server.password)
-        profile = tmp_path / "warp_env.toml"
+        monkeypatch.setenv(
+            name="CHARGEWIRE_ADBC_TEST_PROFILE_PASSWORD", value=chargewire_server.password
+        )
+        profile = tmp_path / "chargewire_env.toml"
         profile.write_text(
             data=(
                 "profile_version = 1\n\n[Options]\n"
-                f'uri = "{warp_server.uri}"\n'
+                f'uri = "{chargewire_server.uri}"\n'
                 f'username = "{USERNAME}"\n'
-                'password = "{{ env_var(WARP_SQL_ADBC_TEST_PROFILE_PASSWORD) }}"\n'
+                'password = "{{ env_var(CHARGEWIRE_ADBC_TEST_PROFILE_PASSWORD) }}"\n'
             )
         )
         with dbapi.connect(profile=str(profile)) as conn:
             self._select(conn=conn, value=4)
 
-    def test_profile_env_var_missing_fails_sign_in(self, warp_server, tmp_path, monkeypatch):
+    def test_profile_env_var_missing_fails_sign_in(self, chargewire_server, tmp_path, monkeypatch):
         """An unset {{ env_var(NAME) }} becomes an empty string, so sign-in must fail."""
-        monkeypatch.delenv(name="WARP_SQL_ADBC_TEST_UNSET_PASSWORD", raising=False)
-        profile = tmp_path / "warp_unset.toml"
+        monkeypatch.delenv(name="CHARGEWIRE_ADBC_TEST_UNSET_PASSWORD", raising=False)
+        profile = tmp_path / "chargewire_unset.toml"
         profile.write_text(
             data=(
                 "profile_version = 1\n\n[Options]\n"
-                f'uri = "{warp_server.uri}"\n'
+                f'uri = "{chargewire_server.uri}"\n'
                 f'username = "{USERNAME}"\n'
-                'password = "{{ env_var(WARP_SQL_ADBC_TEST_UNSET_PASSWORD) }}"\n'
+                'password = "{{ env_var(CHARGEWIRE_ADBC_TEST_UNSET_PASSWORD) }}"\n'
             )
         )
         with pytest.raises(adbc_driver_manager.Error) as caught:
@@ -553,25 +557,25 @@ class TestConnectionProfiles:
             code="invalid_credentials",
         )
 
-    def test_explicit_options_override_profile(self, warp_server, tmp_path):
-        profile = tmp_path / "warp_bad.toml"
+    def test_explicit_options_override_profile(self, chargewire_server, tmp_path):
+        profile = tmp_path / "chargewire_bad.toml"
         profile.write_text(
             data=(
                 "profile_version = 1\n\n[Options]\n"
-                f'uri = "{warp_server.uri}"\nusername = "wrong"\npassword = "wrong"\n'
+                f'uri = "{chargewire_server.uri}"\nusername = "wrong"\npassword = "wrong"\n'
             )
         )
         with dbapi.connect(
-            profile=str(profile), username=USERNAME, password=warp_server.password
+            profile=str(profile), username=USERNAME, password=chargewire_server.password
         ) as conn:
             self._select(conn=conn, value=5)
 
-    def test_explicit_uri_overrides_profile(self, warp_server, profile_dir):
-        with dbapi.connect(uri=warp_server.uri, profile="warp_test") as conn:
+    def test_explicit_uri_overrides_profile(self, chargewire_server, profile_dir):
+        with dbapi.connect(uri=chargewire_server.uri, profile="chargewire_test") as conn:
             self._select(conn=conn, value=6)
 
     def test_ddl_dml_through_profile_connection(self, profile_dir):
-        with dbapi.connect(profile="warp_test") as conn:
+        with dbapi.connect(profile="chargewire_test") as conn:
             with conn.cursor() as cur:
                 cur.execute(operation="CREATE OR REPLACE TABLE test_profile_ddl (id INT)")
                 cur.execute(operation="INSERT INTO test_profile_ddl VALUES (1), (2)")
@@ -583,29 +587,29 @@ class TestConnectionProfiles:
 
 
 class TestUriSpellings:
-    """warp:// (TLS unless ?tls=false), https:// and http:// all reach the server."""
+    """chargewire:// (TLS unless ?tls=false), https:// and http:// all reach the server."""
 
     @pytest.mark.parametrize(
         "template",
         [
-            "warp://{host}:{port}?tls=false",
+            "chargewire://{host}:{port}?tls=false",
             "http://{host}:{port}",
-            "http://{host}:{port}/warp",
+            "http://{host}:{port}/chargewire",
         ],
     )
-    def test_plain_http(self, warp_server, template):
-        uri = template.format(host=warp_server.host, port=warp_server.port)
-        with dbapi.connect(uri=uri, username=USERNAME, password=warp_server.password) as conn:
+    def test_plain_http(self, chargewire_server, template):
+        uri = template.format(host=chargewire_server.host, port=chargewire_server.port)
+        with dbapi.connect(uri=uri, username=USERNAME, password=chargewire_server.password) as conn:
             with conn.cursor() as cur:
                 cur.execute(operation="SELECT 1")
                 assert cur.fetchone() == (1,)
 
-    def test_bad_scheme(self, warp_server):
+    def test_bad_scheme(self, chargewire_server):
         with pytest.raises(adbc_driver_manager.ProgrammingError, match="scheme"):
             dbapi.connect(
-                uri=f"grpc+tls://{warp_server.host}:{warp_server.port}",
+                uri=f"grpc+tls://{chargewire_server.host}:{chargewire_server.port}",
                 username=USERNAME,
-                password=warp_server.password,
+                password=chargewire_server.password,
             )
 
 
@@ -688,7 +692,7 @@ def certificate_token(server, certificates, label: str = "client") -> str:
         certfile=str(certificates[f"{label}_cert"]), keyfile=str(certificates[f"{label}_key"])
     )
     request = urllib.request.Request(
-        url=f"{server.base_url}/warp/v1/auth/token",
+        url=f"{server.base_url}/chargewire/v1/auth/token",
         method="POST",
         data=b'{"grant_type": "client_certificate"}',
         headers={"Content-Type": "application/json"},
@@ -709,7 +713,7 @@ class TestClientCertificate:
         server, certificates = mtls_server
         with dbapi.connect(
             uri=server.uri,
-            db_kwargs={"adbc.warp.auth.type": "mtls"},
+            db_kwargs={"adbc.chargewire.auth.type": "mtls"},
             tls_root_certs=certificates["ca"],
             tls_client_cert=certificates["client_cert"],
             tls_client_key=certificates["client_key"],
@@ -773,11 +777,11 @@ class TestClientCertificate:
 
 
 class TestOpenTelemetryTracing:
-    def test_adbcfile_exporter_writes_traces(self, warp_server, tmp_path):
+    def test_adbcfile_exporter_writes_traces(self, chargewire_server, tmp_path):
         traces_dir = tmp_path / "traces"
         traces_dir.mkdir()
         with connect(
-            server=warp_server,
+            server=chargewire_server,
             db_kwargs={
                 "adbc.telemetry.traces_exporter": "adbcfile",
                 "adbc.telemetry.traces_folder_path": str(traces_dir),
@@ -791,17 +795,19 @@ class TestOpenTelemetryTracing:
 
 
 class TestConnectCatalog:
-    def test_catalog_kwarg_sets_current_catalog(self, warp_server):
-        with connect(server=warp_server) as setup_conn:
+    def test_catalog_kwarg_sets_current_catalog(self, chargewire_server):
+        with connect(server=chargewire_server) as setup_conn:
             with setup_conn.cursor() as cur:
                 cur.execute(operation="ATTACH IF NOT EXISTS ':memory:' AS catalog_kwarg_test")
-        with connect(server=warp_server, catalog="catalog_kwarg_test", db_schema="main") as conn:
+        with connect(
+            server=chargewire_server, catalog="catalog_kwarg_test", db_schema="main"
+        ) as conn:
             assert conn.adbc_current_catalog == "catalog_kwarg_test"
             assert conn.adbc_current_db_schema == "main"
 
-    def test_unknown_catalog_is_refused(self, warp_server):
+    def test_unknown_catalog_is_refused(self, chargewire_server):
         with pytest.raises(adbc_driver_manager.Error) as caught:
-            connect(server=warp_server, catalog="no_such_catalog")
+            connect(server=chargewire_server, catalog="no_such_catalog")
         assert_error(
             error=caught.value,
             status=adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT,
@@ -841,17 +847,17 @@ class TestMetadata:
     def test_get_info(self, conn):
         info = conn.adbc_get_info()
         assert info["vendor_name"] == (
-            os.environ.get("WARP_SQL_ADBC_TEST_SERVER_NAME") or "warp-duckdb"
+            os.environ.get("CHARGEWIRE_ADBC_TEST_SERVER_NAME") or "chargewire-duckdb"
         )
-        assert info["driver_name"] == "ADBC Warp SQL Driver - Go"
+        assert info["driver_name"] == "ADBC Chargewire Driver - Go"
 
 
 class TestTransactions:
-    def test_rollback_and_commit(self, warp_server):
-        with connect(server=warp_server) as setup:
+    def test_rollback_and_commit(self, chargewire_server):
+        with connect(server=chargewire_server) as setup:
             with setup.cursor() as cur:
                 cur.execute(operation="CREATE OR REPLACE TABLE test_tx (v INT)")
-        with connect(server=warp_server, autocommit=False) as conn:
+        with connect(server=chargewire_server, autocommit=False) as conn:
             with conn.cursor() as cur:
                 cur.execute(operation="INSERT INTO test_tx VALUES (1)")
                 conn.rollback()
@@ -859,22 +865,22 @@ class TestTransactions:
                 assert cur.fetchone() == (0,)
                 cur.execute(operation="INSERT INTO test_tx VALUES (2)")
                 conn.commit()
-        with connect(server=warp_server) as other:
+        with connect(server=chargewire_server) as other:
             with other.cursor() as cur:
                 cur.execute(operation="SELECT v FROM test_tx")
                 assert cur.fetchall() == [(2,)]
 
-    def test_a_partitioned_ingest_belongs_to_the_open_transaction(self, warp_server):
+    def test_a_partitioned_ingest_belongs_to_the_open_transaction(self, chargewire_server):
         # In a transaction, a partitioned ingest's rows commit and roll back with it.
         table = pa.Table.from_batches(
             batches=pa.table({"v": pa.array(range(200_000), type=pa.int64())}).to_batches(
                 max_chunksize=10_000
             )
         )
-        with connect(server=warp_server) as setup:
+        with connect(server=chargewire_server) as setup:
             with setup.cursor() as cur:
                 cur.execute(operation="CREATE OR REPLACE TABLE test_tx_parts (v BIGINT)")
-        with connect(server=warp_server, autocommit=False) as conn:
+        with connect(server=chargewire_server, autocommit=False) as conn:
             with conn.cursor() as cur:
                 cur.adbc_ingest(table_name="test_tx_parts", data=table, mode="append")
                 cur.execute(operation="SELECT count(*) FROM test_tx_parts")
@@ -884,28 +890,31 @@ class TestTransactions:
                 assert cur.fetchone() == (0,)
                 cur.adbc_ingest(table_name="test_tx_parts", data=table, mode="append")
                 conn.commit()
-        with connect(server=warp_server) as other:
+        with connect(server=chargewire_server) as other:
             with other.cursor() as cur:
                 cur.execute(operation="SELECT count(*), sum(v) FROM test_tx_parts")
                 assert cur.fetchone() == (200_000, 199_999 * 200_000 // 2)
 
-    def test_session_transaction_is_the_servers_view(self, warp_server):
+    def test_session_transaction_is_the_servers_view(self, chargewire_server):
         # The server's session document says where the session stands, SQL BEGIN included.
         key = ConnectionOptions.SESSION_TRANSACTION.value
-        with connect(server=warp_server) as conn:
+        with connect(server=chargewire_server) as conn:
             assert conn.adbc_connection.get_option(key=key) == "none"
             with conn.cursor() as cur:
                 cur.execute(operation="BEGIN TRANSACTION")
                 assert conn.adbc_connection.get_option(key=key) == "open"
                 cur.execute(operation="ROLLBACK")
             assert conn.adbc_connection.get_option(key=key) == "none"
-        with connect(server=warp_server, autocommit=False) as conn:
+        with connect(server=chargewire_server, autocommit=False) as conn:
             assert conn.adbc_connection.get_option(key=key) == "open"
 
 
 class TestPartitionsAndOptions:
-    def test_partitions_read_on_another_connection(self, warp_server):
-        with connect(server=warp_server) as first, connect(server=warp_server) as second:
+    def test_partitions_read_on_another_connection(self, chargewire_server):
+        with (
+            connect(server=chargewire_server) as first,
+            connect(server=chargewire_server) as second,
+        ):
             with first.cursor() as cur:
                 partitions, schema = cur.adbc_execute_partitions(
                     operation="SELECT i FROM range(100000) t(i)"
@@ -920,7 +929,7 @@ class TestPartitionsAndOptions:
 
     @pytest.mark.parametrize("order", ["preserve", "any"])
     @pytest.mark.parametrize("asynchronous", ["false", "true"])
-    def test_split_result(self, warp_server, order, asynchronous):
+    def test_split_result(self, chargewire_server, order, asynchronous):
         # A result split into partitions read at once (spec §6.10): every row once, in
         # order unless the client said order doesn't matter, NULLs and types intact.
         sql = (
@@ -928,13 +937,13 @@ class TestPartitionsAndOptions:
             "(i % 1000)::DECIMAL(18, 3) AS d FROM range(1000000) t(i) ORDER BY i DESC"
         )
         with connect(
-            server=warp_server, db_kwargs={StatementOptions.RESULT_PARTITIONS.value: "1"}
+            server=chargewire_server, db_kwargs={StatementOptions.RESULT_PARTITIONS.value: "1"}
         ) as plain:
             with plain.cursor() as cur:
                 cur.execute(operation=sql)
                 whole = cur.fetch_arrow_table()
         with connect(
-            server=warp_server,
+            server=chargewire_server,
             db_kwargs={
                 StatementOptions.RESULT_PARTITIONS.value: "4",
                 StatementOptions.RESULT_ORDER.value: order,
@@ -950,9 +959,9 @@ class TestPartitionsAndOptions:
         else:
             assert split.sort_by(sorting="i").equals(whole.sort_by(sorting="i"))
 
-    def test_split_result_failure_fails_the_query(self, warp_server):
+    def test_split_result_failure_fails_the_query(self, chargewire_server):
         with connect(
-            server=warp_server, db_kwargs={StatementOptions.RESULT_PARTITIONS.value: "4"}
+            server=chargewire_server, db_kwargs={StatementOptions.RESULT_PARTITIONS.value: "4"}
         ) as conn:
             with conn.cursor() as cur:
                 with pytest.raises(adbc_driver_manager.Error) as caught:
@@ -963,9 +972,9 @@ class TestPartitionsAndOptions:
                     cur.fetch_arrow_table()
                 assert "boom" in str(caught.value)
 
-    def test_async_and_zstd(self, warp_server):
+    def test_async_and_zstd(self, chargewire_server):
         with connect(
-            server=warp_server,
+            server=chargewire_server,
             db_kwargs={
                 StatementOptions.ASYNC.value: "true",
                 StatementOptions.IPC_COMPRESSION.value: "zstd",
@@ -977,8 +986,8 @@ class TestPartitionsAndOptions:
                 assert table.num_rows == 1_000_000
                 assert table.column("j")[999_999].as_py() == 1_999_998
 
-    def test_statement_timeout(self, warp_server):
-        with connect(server=warp_server) as conn:
+    def test_statement_timeout(self, chargewire_server):
+        with connect(server=chargewire_server) as conn:
             with conn.cursor(
                 adbc_stmt_kwargs={StatementOptions.TIMEOUT_SECONDS.value: "0.3"}
             ) as cur:
@@ -994,11 +1003,13 @@ class TestPartitionsAndOptions:
                     code="statement_timeout",
                 )
 
-    def test_lost_session_is_replaced(self, warp_server):
-        with connect(server=warp_server) as conn:
+    def test_lost_session_is_replaced(self, chargewire_server):
+        with connect(server=chargewire_server) as conn:
             session_id = conn.adbc_connection.get_option(key=ConnectionOptions.SESSION_ID.value)
             status, _ = raw_request(
-                server=warp_server, method="DELETE", path=f"/warp/v1/sessions/{session_id}"
+                server=chargewire_server,
+                method="DELETE",
+                path=f"/chargewire/v1/sessions/{session_id}",
             )
             assert status == 204
             with conn.cursor() as cur:

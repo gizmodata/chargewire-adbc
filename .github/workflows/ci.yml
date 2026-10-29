@@ -1,4 +1,4 @@
-name: warp-sql-adbc-ci
+name: chargewire-adbc-ci
 
 # Unit tests, the C shared library on every platform, the Python bindings, and the
 # live-server suites (Go and Python) against hardcharger-server. Also the release gate:
@@ -79,7 +79,7 @@ jobs:
 
       - name: Check the glibc ceiling (2.17)
         if: runner.os == 'Linux'
-        run: scripts/check_glibc.sh go/build/libadbc_driver_warpsql.so
+        run: scripts/check_glibc.sh go/build/libadbc_driver_chargewire.so
 
       - uses: actions/setup-python@v7
         with:
@@ -97,8 +97,8 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
-          cp go/build/libadbc_driver_warpsql.* python/src/adbc_driver_warpsql/
-          rm python/src/adbc_driver_warpsql/libadbc_driver_warpsql.h
+          cp go/build/libadbc_driver_chargewire.* python/src/adbc_driver_chargewire/
+          rm python/src/adbc_driver_chargewire/libadbc_driver_chargewire.h
           cd python && python -m build --wheel && ls -la dist/
 
   lib:
@@ -127,7 +127,7 @@ jobs:
 
       - name: Check the glibc ceiling (2.17)
         if: runner.os == 'Linux'
-        run: scripts/check_glibc.sh go/build/libadbc_driver_warpsql.so
+        run: scripts/check_glibc.sh go/build/libadbc_driver_chargewire.so
 
   live:
     name: live-server suites (Go and Python, against hardcharger-server)
@@ -136,10 +136,10 @@ jobs:
       contents: read
       packages: read  # the server image
     env:
-      WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV: HARDCHARGER_ADMIN_PASSWORD
-      WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG: --mtls-ca-cert
-      WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG: --admin-username
-      WARP_SQL_ADBC_TEST_SERVER_NAME: Hardcharger
+      CHARGEWIRE_ADBC_TEST_SERVER_PASSWORD_ENV: HARDCHARGER_ADMIN_PASSWORD
+      CHARGEWIRE_ADBC_TEST_SERVER_MTLS_FLAG: --mtls-ca-cert
+      CHARGEWIRE_ADBC_TEST_SERVER_USERNAME_FLAG: --admin-username
+      CHARGEWIRE_ADBC_TEST_SERVER_NAME: Hardcharger
     steps:
       - uses: actions/checkout@v7
 
@@ -157,7 +157,7 @@ jobs:
           docker rm "$id" >/dev/null
           binary="$RUNNER_TEMP/hardcharger/bin/hardcharger-server"
           "$binary" --version
-          echo "WARP_SQL_ADBC_TEST_SERVER_BINARY=$binary" >> "$GITHUB_ENV"
+          echo "CHARGEWIRE_ADBC_TEST_SERVER_BINARY=$binary" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@v7
         with:

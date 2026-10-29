@@ -9,8 +9,8 @@ import socket
 import adbc_driver_manager
 import pytest
 
-from adbc_driver_warpsql import DatabaseOptions, StatementOptions, dbapi
-from adbc_driver_warpsql._driver import _driver_path
+from adbc_driver_chargewire import DatabaseOptions, StatementOptions, dbapi
+from adbc_driver_chargewire._driver import _driver_path
 
 
 def _unused_port() -> int:
@@ -22,12 +22,12 @@ def _unused_port() -> int:
 def test_library_loads_and_takes_options():
     with adbc_driver_manager.AdbcDatabase(
         driver=_driver_path(),
-        uri="warp://127.0.0.1:1?tls=false",
+        uri="chargewire://127.0.0.1:1?tls=false",
         username="u",
         password="p",
         **{StatementOptions.TIMEOUT_SECONDS.value: "2.5"},
     ) as db:
-        assert db.get_option(key="uri") == "warp://127.0.0.1:1?tls=false"
+        assert db.get_option(key="uri") == "chargewire://127.0.0.1:1?tls=false"
         assert db.get_option(key=StatementOptions.TIMEOUT_SECONDS.value) == "2.5"
         with pytest.raises(adbc_driver_manager.Error):
             db.get_option(key="password")  # secrets are write-only
@@ -37,8 +37,8 @@ def test_library_loads_and_takes_options():
     "options",
     [
         {"uri": "grpc://127.0.0.1:1"},
-        {"uri": "warp://h:1", DatabaseOptions.RETRY_MAX_ATTEMPTS.value: "0"},
-        {"uri": "warp://h:1", "adbc.warp.no_such_option": "1"},
+        {"uri": "chargewire://h:1", DatabaseOptions.RETRY_MAX_ATTEMPTS.value: "0"},
+        {"uri": "chargewire://h:1", "adbc.chargewire.no_such_option": "1"},
     ],
 )
 def test_bad_options_are_refused(options):
@@ -49,13 +49,13 @@ def test_bad_options_are_refused(options):
 def test_unreachable_server_is_an_io_error():
     with pytest.raises(adbc_driver_manager.Error) as caught:
         dbapi.connect(
-            uri=f"warp://127.0.0.1:{_unused_port()}?tls=false",
+            uri=f"chargewire://127.0.0.1:{_unused_port()}?tls=false",
             username="u",
             password="p",
             db_kwargs={DatabaseOptions.RETRY_MAX_ATTEMPTS.value: "1"},
         )
     assert caught.value.status_code == adbc_driver_manager.AdbcStatusCode.IO
-    assert "[warpsql]" in str(caught.value)
+    assert "[chargewire]" in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -70,7 +70,7 @@ def test_unreachable_server_is_an_io_error():
 def test_certificate_sign_in_options_are_checked(options):
     pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
     all_options = {
-        "uri": "warp://127.0.0.1:1",
+        "uri": "chargewire://127.0.0.1:1",
         DatabaseOptions.AUTH_TYPE.value: "client_certificate",
         DatabaseOptions.TLS_CLIENT_CERT.value: pem,
         DatabaseOptions.TLS_CLIENT_KEY.value: pem,
@@ -84,7 +84,7 @@ def test_certificate_sign_in_options_are_checked(options):
 def test_auth_type_reads_back():
     with adbc_driver_manager.AdbcDatabase(
         driver=_driver_path(),
-        uri="warp://127.0.0.1:1?tls=false",
+        uri="chargewire://127.0.0.1:1?tls=false",
         **{DatabaseOptions.AUTH_TYPE.value: "password"},
     ) as db:
         assert db.get_option(key=DatabaseOptions.AUTH_TYPE.value) == "password"

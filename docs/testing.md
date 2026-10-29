@@ -3,42 +3,42 @@
 | Suite | Where | Needs a server | Tests |
 |---|---|---|---|
 | Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake; a TLS one for the certificate_required alert) | 33 |
-| Go driver unit | `go/warpsql/unit_test.go`, `errors_unit_test.go`, `fakeserver_test.go`, `browser_unit_test.go`, `mtls_unit_test.go`, `plainhttp_test.go`, `close_test.go` | no (in-process fakes; a TLS one for certificate sign-in) | 43 |
-| Go live | `go/warpsql/*_integration_test.go` (tag `integration`) | yes | 102 |
+| Go driver unit | `go/chargewire/unit_test.go`, `errors_unit_test.go`, `fakeserver_test.go`, `browser_unit_test.go`, `mtls_unit_test.go`, `plainhttp_test.go`, `close_test.go` | no (in-process fakes; a TLS one for certificate sign-in) | 43 |
+| Go live | `go/chargewire/*_integration_test.go` (tag `integration`) | yes | 102 |
 | Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py`, `test_dbapi_exceptions_unit.py` | no (the C-ABI test needs the built library) | 33 |
 | Python live | `python/tests/test_integration.py`, `test_cancel_integration.py`, `test_polish_integration.py`, `test_error_classes_integration.py` | yes | 95 |
 
 (Test functions; parametrized cases and subtests count once.)
 
-The live suites start the binary named by `WARP_SQL_ADBC_TEST_SERVER_BINARY` on free ports,
+The live suites start the binary named by `CHARGEWIRE_ADBC_TEST_SERVER_BINARY` on free ports,
 with a fresh password containing `:` and `@`: one shared plain-HTTP server, plus servers of
 their own for TLS and mutual TLS. Without the variable they fail, never skip; the Go suite
 also fails when no integration test ran (`go test -run Nothing`), and pytest exits 5 when
 nothing is collected. The Go live tests run with the race detector (`make integration-test`)
 and on a checked Arrow allocator: a test that leaks Arrow memory fails.
 
-Any Warp SQL server with warp-duckdb's flags works (the certificate sign-in tests also pass
-`--mtls-certificate-sign-in --mtls-admin-identities`, which warp-duckdb and Hardcharger share). For Hardcharger, name its password
+Any Chargewire server with chargewire-duckdb's flags works (the certificate sign-in tests also pass
+`--mtls-certificate-sign-in --mtls-admin-identities`, which chargewire-duckdb and Hardcharger share). For Hardcharger, name its password
 variable, client-CA flag, user-name flag and vendor name:
 
 ```bash
-export WARP_SQL_ADBC_TEST_SERVER_BINARY=/path/to/hardcharger
-export WARP_SQL_ADBC_TEST_SERVER_PASSWORD_ENV=HARDCHARGER_ADMIN_PASSWORD
-export WARP_SQL_ADBC_TEST_SERVER_MTLS_FLAG=--mtls-ca-cert
-export WARP_SQL_ADBC_TEST_SERVER_USERNAME_FLAG=--admin-username
-export WARP_SQL_ADBC_TEST_SERVER_NAME=Hardcharger
+export CHARGEWIRE_ADBC_TEST_SERVER_BINARY=/path/to/hardcharger
+export CHARGEWIRE_ADBC_TEST_SERVER_PASSWORD_ENV=HARDCHARGER_ADMIN_PASSWORD
+export CHARGEWIRE_ADBC_TEST_SERVER_MTLS_FLAG=--mtls-ca-cert
+export CHARGEWIRE_ADBC_TEST_SERVER_USERNAME_FLAG=--admin-username
+export CHARGEWIRE_ADBC_TEST_SERVER_NAME=Hardcharger
 make -C go integration-test && pytest python/tests
 ```
 
 The browser sign-in tests start a server of their own against a mock OpenID Connect provider.
-Its flags come from `WARP_SQL_ADBC_TEST_SERVER_OAUTH_ARGS` (a template with `{issuer}`,
+Its flags come from `CHARGEWIRE_ADBC_TEST_SERVER_OAUTH_ARGS` (a template with `{issuer}`,
 `{client_id}`, `{identity}` and `{base_url}`) and its client secret goes in the variable
-`WARP_SQL_ADBC_TEST_SERVER_OAUTH_SECRET_ENV` names; both default by
-`WARP_SQL_ADBC_TEST_SERVER_NAME`: warp-duckdb's `--oauth-issuer …` flags, or, for
+`CHARGEWIRE_ADBC_TEST_SERVER_OAUTH_SECRET_ENV` names; both default by
+`CHARGEWIRE_ADBC_TEST_SERVER_NAME`: chargewire-duckdb's `--oauth-issuer …` flags, or, for
 `Hardcharger`, `--token-allowed-issuer … --oauth-client-id … --oauth-base-url …` with
 `HARDCHARGER_OAUTH_CLIENT_SECRET` (browser sign-in on the server's own port, §4.3).
 
-Negative tests assert the ADBC status and the Warp SQL error code (`warp.code` in the error
+Negative tests assert the ADBC status and the Chargewire error code (`chargewire.code` in the error
 details), not just that something failed.
 
 Some tests prove their oracle first: `TestIntegrationCancelOracle` and
@@ -48,14 +48,14 @@ disabling the server-side cancel in the driver makes the cancel tests fail (chec
 
 ## Ported from gizmosql-adbc
 
-Everything that applies was ported; the Warp SQL server runs statements on submit, so the
+Everything that applies was ported; the Chargewire server runs statements on submit, so the
 gizmosql tests about routing DDL/DML around lazy execution became tests that DDL/DML runs
 and persists without a fetch.
 
 | gizmosql-adbc | Here |
 |---|---|
 | Go `TestIntegrationSelectOne` | `TestIntegrationSelectOne` |
-| Go `TestIntegrationLegacySchemeParity` | `TestIntegrationURISpellings` (warp://, http://, base paths) |
+| Go `TestIntegrationLegacySchemeParity` | `TestIntegrationURISpellings` (chargewire://, http://, base paths) |
 | Go bind tests (5) | `TestIntegrationBindWithoutPrepare{Query,Update}`, `ExplicitPrepareThenBindPreparesOnce` (the prepared id is reused), `RebindAfterNewQueryReprepares`; bulk ingest never prepares (`TestIntegrationIngest*`) |
 | Go cancel tests: interrupt, close while executing, abandoned result, close while updating | the same four, plus cancel with an unknown statement id (alone, and beside another statement), async cancel, context deadline, statement timeout, nothing to cancel |
 | Go routing tests: DDL/DML without fetch, RETURNING rows and persistence, string literal, select streams, bound DML/RETURNING/select | `TestIntegrationDDLDMLThroughExecuteQuery`, `ReturningYieldsRowsAndPersists`, `ReturningPersistsWithoutFetch`, `StringLiteralReturning`, `ManyBatches`, `BoundDMLAndSelect`; bound RETURNING in Python |
@@ -68,15 +68,15 @@ Not ported, and why:
 
 | gizmosql-adbc | Why not |
 |---|---|
-| OAuth/SSO tests (Go `oauth_test.go`, Python `test_oauth_unit.py`, external-auth connect cases) | GizmoSQL's own OAuth server and its routes. Warp SQL's browser flow (`oauth_browser`, spec §4.3) has its own tests: `browser_unit_test.go`, `browser_integration_test.go` (warp-duckdb with a mock OpenID Connect provider), Python `test_connect_unit.py` and `test_browser_integration.py` |
-| SQL classification unit tests (Go `sqlrouting_test.go`, Python `test_sql_routing_unit.py`, `TestIsDdlDml`) | There is no client-side routing: a Warp SQL server runs every statement on submit |
-| Flight cancel plumbing unit tests (`cancel_test.go`), log filter (`logging_test.go`) | Specific to Flight's `CancelFlightInfo` and its log noise; the Warp SQL equivalents are the protocol and fake-server tests |
+| OAuth/SSO tests (Go `oauth_test.go`, Python `test_oauth_unit.py`, external-auth connect cases) | GizmoSQL's own OAuth server and its routes. Chargewire's browser flow (`oauth_browser`, spec §4.3) has its own tests: `browser_unit_test.go`, `browser_integration_test.go` (chargewire-duckdb with a mock OpenID Connect provider), Python `test_connect_unit.py` and `test_browser_integration.py` |
+| SQL classification unit tests (Go `sqlrouting_test.go`, Python `test_sql_routing_unit.py`, `TestIsDdlDml`) | There is no client-side routing: a Chargewire server runs every statement on submit |
+| Flight cancel plumbing unit tests (`cancel_test.go`), log filter (`logging_test.go`) | Specific to Flight's `CancelFlightInfo` and its log noise; the Chargewire equivalents are the protocol and fake-server tests |
 | `TestIntegrationConnectionCancelQuery` | A GizmoSQL extension that cancelled the session's statement from the connection; `AdbcConnectionCancel` cancels connection-level calls, which the C layer does through contexts |
 | `TestIntegrationConnectionOptionsDelegate`, scheme-rewrite tests | The gizmosql wrapper around the upstream Flight SQL driver; there is no wrapper here (URI parsing is `TestParseURI`) |
-| `TestIntegrationGeoArrowIngest` | GizmoSQL's geometry-preserving ingest; a Warp SQL server must keep or refuse types itself (§8.1), tested by the unsupported-type refusal |
+| `TestIntegrationGeoArrowIngest` | GizmoSQL's geometry-preserving ingest; a Chargewire server must keep or refuse types itself (§8.1), tested by the unsupported-type refusal |
 | Python module-level `execute_update()` and the `get_info` cache | 1.x compatibility shims of adbc-driver-gizmosql |
 
-## Added for Warp SQL
+## Added for Chargewire
 
 Resumed downloads (streamed with retention, async, twice in one result) and unretained ones
 failing with the remedy, through a fault-injecting proxy; lost answers to submits and
@@ -89,7 +89,7 @@ re-prepared, retained result lost); partitions read on another connection; zstd 
 uploads; query tags; ingest modes, temporary tables, target catalog/schema, a 2M-row
 streamed upload; GetObjects at every depth with LIKE patterns and escaping; GetTableSchema
 resolution; GetInfo; current catalog/schema; transactions; TLS, mutual TLS, server name,
-skip-verify; client certificate sign-in (no password; a split result read with the bound token; an unknown identity refused with `unknown_certificate_identity`; a bound token over another certificate refused with `certificate_mismatch`, and accepted over its own; a server without client CAs refused before any grant is sent); wrong passwords, tokens, unsupported grants, unreachable and non-Warp servers,
+skip-verify; client certificate sign-in (no password; a split result read with the bound token; an unknown identity refused with `unknown_certificate_identity`; a bound token over another certificate refused with `certificate_mismatch`, and accepted over its own; a server without client CAs refused before any grant is sent); wrong passwords, tokens, unsupported grants, unreachable and non-Chargewire servers,
 bad URIs; a TLS URI pointed at a plain-HTTP server (the hint to add `?tls=false`, and a
 recording TCP proxy showing that only the TLS hello, no credential, was sent); closing
 statements, connections and the database after the server stopped or while it hangs behind a

@@ -1,10 +1,10 @@
 // Licensed under the Apache License, Version 2.0.
 
-// Package protocol is a client for the Warp SQL wire protocol: JSON control
+// Package protocol is a client for the Chargewire wire protocol: JSON control
 // messages and Arrow IPC bodies over plain HTTP. It knows nothing about ADBC;
-// the warpsql package builds the ADBC driver on top of it.
+// the chargewire package builds the ADBC driver on top of it.
 //
-// The spec this follows is warp-sql/spec/warp-sql.md, version 1 (1.0.0).
+// The spec this follows is chargewire/spec/chargewire.md, version 1 (1.0.0).
 // Section numbers in comments (§6.7, ...) refer to it.
 package protocol
 
@@ -36,7 +36,7 @@ const (
 	// this server, read at once (§6.10).
 	CapabilityResultPartitions = "result_partitions"
 	// CapabilityResultLocations: partitions held by other servers, given
-	// only to a client that sends Warp-Result-Locations: remote (§6.2).
+	// only to a client that sends Chargewire-Result-Locations: remote (§6.2).
 	CapabilityResultLocations = "result_locations"
 	// CapabilityIPCCompressionLZ4Frame: Arrow buffers compressed with LZ4_FRAME (§8.2).
 	CapabilityIPCCompressionLZ4Frame = "ipc_compression_lz4_frame"
@@ -56,7 +56,7 @@ const (
 	PartitionOrderAny = "any"
 )
 
-// Grant types for POST /warp/v1/auth/token (§4.1).
+// Grant types for POST /chargewire/v1/auth/token (§4.1).
 const (
 	GrantPassword      = "password"
 	GrantTokenExchange = "token_exchange"
@@ -66,7 +66,7 @@ const (
 	GrantClientCertificate = "client_certificate"
 )
 
-// Discovery is the document GET /warp returns (§3.1).
+// Discovery is the document GET /chargewire returns (§3.1).
 type Discovery struct {
 	Protocol         string   `json:"protocol"`
 	ProtocolVersions []string `json:"protocol_versions"`
@@ -108,7 +108,7 @@ func (d *Discovery) SupportsGrant(grant string) bool {
 	return slices.Contains(d.Auth.GrantTypes, grant)
 }
 
-// tokenResponse is the answer to POST /warp/v1/auth/token (§4.1).
+// tokenResponse is the answer to POST /chargewire/v1/auth/token (§4.1).
 type tokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
@@ -145,7 +145,7 @@ func (d *SessionDocument) TransactionState() string {
 	return TransactionUnknown
 }
 
-// optionsResult is the answer to PATCH /warp/v1/sessions/{id} (§5.3): the
+// optionsResult is the answer to PATCH /chargewire/v1/sessions/{id} (§5.3): the
 // options now in effect and, per option, why one was refused.
 type optionsResult struct {
 	Options map[string]any     `json:"options"`
@@ -210,7 +210,7 @@ func (r *Result) SchemaBytes() ([]byte, error) {
 
 // Partition is one piece of a row result (§6.2). Location, when set, is the
 // base URL of the server that holds it (only for a client that sent
-// Warp-Result-Locations: remote); Batches and Rows are known only once the
+// Chargewire-Result-Locations: remote); Batches and Rows are known only once the
 // partition is complete.
 type Partition struct {
 	Index    int     `json:"index"`

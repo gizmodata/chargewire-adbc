@@ -19,7 +19,7 @@ import adbc_driver_manager
 import pytest
 from conftest import USERNAME
 
-from adbc_driver_warpsql import dbapi
+from adbc_driver_chargewire import dbapi
 
 pytestmark = pytest.mark.integration
 
@@ -31,10 +31,10 @@ STREAMING_QUERY = "SELECT i FROM range(100000000000) t(i)"
 
 
 @pytest.fixture()
-def fresh_conn(warp_server):
+def fresh_conn(chargewire_server):
     """A dedicated connection, so each test owns its server session."""
     with dbapi.connect(
-        uri=warp_server.uri, username=USERNAME, password=warp_server.password
+        uri=chargewire_server.uri, username=USERNAME, password=chargewire_server.password
     ) as connection:
         yield connection
 
@@ -131,7 +131,7 @@ class TestQueryCancellation:
             ):
                 cur.adbc_cancel()
 
-    def test_ctrl_c_in_client_process_cancels_query_on_server(self, warp_server, tmp_path):
+    def test_ctrl_c_in_client_process_cancels_query_on_server(self, chargewire_server, tmp_path):
         """A user interrupts their Python process mid-query: SIGINT reaches the driver
         manager's handler, which calls AdbcStatementCancel; the driver must relay that to
         the server. The child proves it by using the same connection afterwards."""
@@ -140,10 +140,10 @@ class TestQueryCancellation:
             data=textwrap.dedent(f"""
             import time
             import adbc_driver_manager
-            from adbc_driver_warpsql import dbapi
+            from adbc_driver_chargewire import dbapi
 
-            with dbapi.connect(uri={warp_server.uri!r}, username={USERNAME!r},
-                               password={warp_server.password!r}) as conn:
+            with dbapi.connect(uri={chargewire_server.uri!r}, username={USERNAME!r},
+                               password={chargewire_server.password!r}) as conn:
                 cur = conn.cursor()
                 print("ready", flush=True)
                 try:

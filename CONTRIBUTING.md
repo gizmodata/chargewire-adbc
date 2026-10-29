@@ -1,4 +1,4 @@
-# Contributing to Warp SQL ADBC driver
+# Contributing to Chargewire ADBC driver
 
 Thank you for helping. Bug reports, questions and pull requests are welcome in this repository's
 [issues](../../issues) and [pull requests](../../pulls). For a security problem, don't open an
@@ -6,7 +6,7 @@ issue: see [SECURITY.md](SECURITY.md).
 
 ## Licensing of contributions
 
-Warp SQL ADBC driver is licensed under the [Apache License 2.0](LICENSE). Per section 5 of that license, any
+Chargewire ADBC driver is licensed under the [Apache License 2.0](LICENSE). Per section 5 of that license, any
 contribution you intentionally submit for inclusion is licensed under Apache-2.0, without any
 additional terms or conditions. There is no contributor license agreement to sign.
 

@@ -2,7 +2,7 @@
 go/build/
 python/build/
 python/dist/
-python/src/adbc_driver_warpsql/libadbc_driver_warpsql.*
+python/src/adbc_driver_chargewire/libadbc_driver_chargewire.*
 *.egg-info/
 # Python
 __pycache__/

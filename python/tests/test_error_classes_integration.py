@@ -1,6 +1,6 @@
 """The PEP 249 exception class of each kind of failure, against a live server.
 
-The driver gives every Warp SQL error code an ADBC status, and the driver manager turns the
+The driver gives every Chargewire error code an ADBC status, and the driver manager turns the
 status into a DB-API class: a user's SQL that fails, before it runs (sql_error) or while it
 runs (execution_error, HTTP 422), is a ProgrammingError, never an InternalError (which says
 the driver or the server is broken); a violated constraint is an IntegrityError; a cancel or
@@ -17,7 +17,7 @@ import adbc_driver_manager
 import pytest
 from conftest import USERNAME
 
-from adbc_driver_warpsql import StatementOptions, dbapi
+from adbc_driver_chargewire import StatementOptions, dbapi
 
 pytestmark = pytest.mark.integration
 
@@ -28,16 +28,16 @@ LONG_QUERY = "SELECT sum(a.range * b.range) FROM range(100000000) a, range(10000
 
 
 @pytest.fixture()
-def fresh_conn(warp_server):
+def fresh_conn(chargewire_server):
     with dbapi.connect(
-        uri=warp_server.uri, username=USERNAME, password=warp_server.password
+        uri=chargewire_server.uri, username=USERNAME, password=chargewire_server.password
     ) as connection:
         yield connection
 
 
-def warp_code(error: adbc_driver_manager.Error) -> str | None:
+def chargewire_code(error: adbc_driver_manager.Error) -> str | None:
     for key, value in error.details:
-        if key == b"warp.code":
+        if key == b"chargewire.code":
             return value.decode()
     return None
 
@@ -64,7 +64,7 @@ def assert_raised(
     assert type(error) is klass, f"{type(error).__name__}, want {klass.__name__}: {error}"
     assert not isinstance(error, dbapi.InternalError), error
     assert error.status_code == status, error
-    assert warp_code(error=error) == code, error
+    assert chargewire_code(error=error) == code, error
     if sqlstate is not None:
         assert error.sqlstate == sqlstate, error
     if message is not None:
@@ -194,10 +194,12 @@ class TestStoppedStatements:
 
 
 class TestAuthentication:
-    def test_bad_password_is_unauthenticated(self, warp_server):
+    def test_bad_password_is_unauthenticated(self, chargewire_server):
         with pytest.raises(expected_exception=dbapi.Error) as caught:
             with dbapi.connect(
-                uri=warp_server.uri, username=USERNAME, password="not-" + warp_server.password
+                uri=chargewire_server.uri,
+                username=USERNAME,
+                password="not-" + chargewire_server.password,
             ) as conn:
                 with conn.cursor() as cur:
                     cur.execute(operation="SELECT 1")
@@ -208,4 +210,4 @@ class TestAuthentication:
             status=Status.UNAUTHENTICATED,
             code="invalid_credentials",
         )
-        assert warp_server.password not in str(caught.value)
+        assert chargewire_server.password not in str(caught.value)

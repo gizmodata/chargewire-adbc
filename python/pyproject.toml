@@ -6,12 +6,12 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-adbc_driver_warpsql = ["libadbc_driver_warpsql.*", "THIRD_PARTY_NOTICES"]
+adbc_driver_chargewire = ["libadbc_driver_chargewire.*", "THIRD_PARTY_NOTICES"]
 
 [project]
-name = "adbc-driver-warpsql"
+name = "adbc-driver-chargewire"
 version = "1.0.0"
-description = "Python ADBC driver for the Warp SQL protocol (SQL over HTTP with Arrow), backed by a native Go driver"
+description = "Python ADBC driver for the Chargewire protocol (SQL over HTTP with Arrow), backed by a native Go driver"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"  # pyarrow 26 needs 3.11
@@ -30,8 +30,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/gizmodata/warp-sql-adbc"
-Repository = "https://github.com/gizmodata/warp-sql-adbc"
+Homepage = "https://github.com/gizmodata/chargewire-adbc"
+Repository = "https://github.com/gizmodata/chargewire-adbc"
 
 [project.optional-dependencies]
 test = [
@@ -53,5 +53,5 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "integration: needs a live Warp SQL server (WARP_SQL_ADBC_TEST_SERVER_BINARY); fails without one",
+    "integration: needs a live Chargewire server (CHARGEWIRE_ADBC_TEST_SERVER_BINARY); fails without one",
 ]

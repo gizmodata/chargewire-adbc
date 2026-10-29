@@ -1,9 +1,9 @@
-name: warp-sql-adbc-release
+name: chargewire-adbc-release
 
 # On a vX.Y.Z tag: every test suite on the tagged commit (ci.yml's unit tests and library
 # builds, plus the live-server suites below), then the shared library for six platforms and a
 # wheel for five of them (not Windows arm64), a GitHub Release, and PyPI. PyPI's trusted publisher for
-# adbc-driver-warpsql names this repository, this file (release.yml) and the `pypi`
+# adbc-driver-chargewire names this repository, this file (release.yml) and the `pypi`
 # environment, which requires an approval and accepts only v* tags.
 #
 # workflow_dispatch runs the tests and the builds only: the release and publish jobs need a tag.
@@ -75,7 +75,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
-          version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' python/src/adbc_driver_warpsql/_version.py)
+          version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' python/src/adbc_driver_chargewire/_version.py)
           project=$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml)
           [ -n "$version" ] && [ "$version" = "$project" ] || { echo "::error::_version.py ($version) and pyproject.toml ($project) disagree"; exit 1; }
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME != v$version"; exit 1; }
@@ -111,7 +111,7 @@ jobs:
 
       - name: Check the glibc ceiling (2.17; the requirement is 2.28 or older)
         if: runner.os == 'Linux'
-        run: scripts/check_glibc.sh go/build/libadbc_driver_warpsql.so
+        run: scripts/check_glibc.sh go/build/libadbc_driver_chargewire.so
 
       - uses: actions/setup-python@v7
         if: ${{ !matrix.library-only }}
@@ -131,13 +131,13 @@ jobs:
             if [ "${{ matrix.goarch }}" = "amd64" ]; then arch=x86_64; else arch=arm64; fi
             export _PYTHON_HOST_PLATFORM="macosx-11.0-$arch"
           fi
-          cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} python/src/adbc_driver_warpsql/
+          cp go/build/libadbc_driver_chargewire.${{ matrix.ext }} python/src/adbc_driver_chargewire/
           pip install build
           cd python && python -m build --wheel
           ls dist/
           if [ "$RUNNER_OS" = "macOS" ]; then
             ls dist/*"macosx_11_0_$arch.whl" || { echo "::error::the wheel's tag isn't macosx_11_0_$arch"; exit 1; }
-            lipo -archs ../go/build/libadbc_driver_warpsql.dylib | grep -qx "$arch" || { echo "::error::the library isn't $arch"; exit 1; }
+            lipo -archs ../go/build/libadbc_driver_chargewire.dylib | grep -qx "$arch" || { echo "::error::the library isn't $arch"; exit 1; }
           fi
 
       - name: Repair the wheel to manylinux
@@ -150,7 +150,7 @@ jobs:
           ls python/dist/
           # The library inside the wheel, as shipped, keeps the ceiling too.
           mkdir -p "$RUNNER_TEMP/wheel" && unzip -q -o python/dist/*.whl -d "$RUNNER_TEMP/wheel"
-          scripts/check_glibc.sh "$RUNNER_TEMP/wheel/adbc_driver_warpsql/libadbc_driver_warpsql.so"
+          scripts/check_glibc.sh "$RUNNER_TEMP/wheel/adbc_driver_chargewire/libadbc_driver_chargewire.so"
           # Its platform tag promises glibc 2.28 or older (auditwheel picks the oldest that fits).
           python3 - python/dist/*.whl <<'EOF'
           import re, sys
@@ -172,7 +172,7 @@ jobs:
           cp -r python/tests "$RUNNER_TEMP/wheel-tests"
           cd "$RUNNER_TEMP"
           "$py" -m pytest -q -p no:cacheprovider wheel-tests/test_c_abi_unit.py wheel-tests/test_connect_unit.py
-          "$py" -c "import adbc_driver_warpsql._driver as d, sys; p = d._driver_path(); print(p); sys.exit('site-packages' not in p)"
+          "$py" -c "import adbc_driver_chargewire._driver as d, sys; p = d._driver_path(); print(p); sys.exit('site-packages' not in p)"
 
       # glibc 2.28 (RHEL/Oracle Linux 8): pip must find the wheel installable and the library
       # must load there.
@@ -189,10 +189,10 @@ jobs:
         shell: bash
         run: |
           ref="${GITHUB_REF_NAME//\//-}"  # a branch name may hold slashes
-          PKG="libadbc_driver_warpsql-${ref}-${{ matrix.platform }}"
+          PKG="libadbc_driver_chargewire-${ref}-${{ matrix.platform }}"
           mkdir -p "dist/$PKG"
-          cp go/build/libadbc_driver_warpsql.${{ matrix.ext }} packaging/warpsql.toml.in LICENSE \
-            python/src/adbc_driver_warpsql/THIRD_PARTY_NOTICES "dist/$PKG/"
+          cp go/build/libadbc_driver_chargewire.${{ matrix.ext }} packaging/chargewire.toml.in LICENSE \
+            python/src/adbc_driver_chargewire/THIRD_PARTY_NOTICES "dist/$PKG/"
           tar -C dist -czf "dist/$PKG.tar.gz" "$PKG"
           if [ "${{ matrix.library-only }}" != true ]; then cp python/dist/*.whl dist/; fi
 
@@ -228,7 +228,7 @@ jobs:
           [ -s release-notes.md ] || { echo "::error::no CHANGELOG.md section for $version"; exit 1; }
       - name: Six library tarballs and five wheels
         run: |
-          test "$(find dist -name 'libadbc_driver_warpsql-*.tar.gz' | wc -l)" -eq 6
+          test "$(find dist -name 'libadbc_driver_chargewire-*.tar.gz' | wc -l)" -eq 6
           test "$(find dist -name '*.whl' | wc -l)" -eq 5
       - uses: softprops/action-gh-release@v3
         with:
@@ -243,7 +243,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment:
       name: pypi
-      url: https://pypi.org/p/adbc-driver-warpsql
+      url: https://pypi.org/p/adbc-driver-chargewire
     permissions:
       id-token: write  # PyPI trusted publishing
     steps:

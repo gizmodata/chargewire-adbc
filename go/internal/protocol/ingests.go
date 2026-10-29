@@ -56,7 +56,7 @@ func (s *Session) OpenIngest(ctx context.Context, ir IngestRequest) (IngestHandl
 	}
 	header := http.Header{"Idempotency-Key": {NewIdempotencyKey()}}
 	if ir.QueryTag != "" {
-		header.Set("Warp-Query-Tag", ir.QueryTag)
+		header.Set("Chargewire-Query-Tag", ir.QueryTag)
 	}
 	var sessionID string
 	resp, err := s.do(ctx, ScopeStatement, "", func(id string) (*Request, error) {

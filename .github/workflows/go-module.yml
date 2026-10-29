@@ -1,6 +1,6 @@
-name: warp-sql-adbc-go-module
+name: chargewire-adbc-go-module
 
-# The Go module github.com/gizmodata/warp-sql-adbc/go lives in go/, so Go versions it by
+# The Go module github.com/gizmodata/chargewire-adbc/go lives in go/, so Go versions it by
 # go/vX.Y.Z tags (the subdirectory-module convention), one per release, on the same commit as the
 # vX.Y.Z tag release.yml acts on (RELEASING.md). release.yml's `v*` trigger does not match go/v*,
 # and nothing here publishes: the Go module proxy publishes a version by serving it. This workflow
@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  MODULE: github.com/gizmodata/warp-sql-adbc/go
+  MODULE: github.com/gizmodata/chargewire-adbc/go
 
 jobs:
   check:

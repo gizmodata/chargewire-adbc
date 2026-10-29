@@ -1,12 +1,12 @@
 <p align="center">
-  <a href="https://github.com/gizmodata/warp-sql">
-    <img src="docs/assets/warp-sql-adbc-banner.svg" alt="Warp SQL ADBC: one native driver for every ADBC language. By GizmoData." width="100%">
+  <a href="https://github.com/gizmodata/chargewire">
+    <img src="docs/assets/chargewire-adbc-banner.svg" alt="Chargewire ADBC: one native driver for every ADBC language. By GizmoData." width="100%">
   </a>
 </p>
 
 <p align="center">
   <a href="https://arrow.apache.org/adbc/"><img src="https://img.shields.io/badge/ADBC-1.12-f15a24.svg" alt="ADBC 1.12"></a>
-  <a href="https://github.com/gizmodata/warp-sql"><img src="https://img.shields.io/badge/protocol-Warp%20SQL-31a8db.svg" alt="Warp SQL protocol"></a>
+  <a href="https://github.com/gizmodata/chargewire"><img src="https://img.shields.io/badge/protocol-Chargewire-31a8db.svg" alt="Chargewire protocol"></a>
   <img src="https://img.shields.io/badge/core-Go-00ADD8.svg?logo=go&logoColor=white" alt="Go core">
   <img src="https://img.shields.io/badge/bindings-Python-3776AB.svg?logo=python&logoColor=white" alt="Python bindings">
   <img src="https://img.shields.io/badge/gRPC-not%20needed-lightgrey.svg" alt="No gRPC">
@@ -15,17 +15,17 @@
   <a href="https://gizmodata.com"><img src="https://img.shields.io/badge/by-GizmoData-f15a24.svg" alt="GizmoData"></a>
 </p>
 
-<h3 align="center">Query any Warp SQL server from Python, Go, R, C/C++, C#, Rust or JavaScript.</h3>
+<h3 align="center">Query any Chargewire server from Python, Go, R, C/C++, C#, Rust or JavaScript.</h3>
 
 ---
 
 ## 🔌 What is it?
 
 A native [ADBC](https://arrow.apache.org/adbc/) driver for the
-[Warp SQL protocol](https://github.com/gizmodata/warp-sql), written in Go, with Python
+[Chargewire protocol](https://github.com/gizmodata/chargewire), written in Go, with Python
 bindings.
 
-It is a **generic** driver: it talks to any server that implements the Warp SQL protocol,
+It is a **generic** driver: it talks to any server that implements the Chargewire protocol,
 version 1 (spec 1.0.0), not one particular database. Compiled to a C shared library, one
 implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and JavaScript.
 
@@ -36,29 +36,29 @@ implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and Ja
 - 🛑 **Cancel that really cancels:** Ctrl+C or a Go context stops the statement on the server.
 - 🔐 **TLS by default**, mutual TLS and token exchange for SSO.
 
-> **Status: 1.0.0, for Warp SQL protocol 1.0.0.** Tested against `warp-duckdb`, the reference
+> **Status: 1.0.0, for Chargewire protocol 1.0.0.** Tested against `chargewire-duckdb`, the reference
 > server, and [Hardcharger](https://github.com/gizmodata/hardcharger) 2.0.0.
 
 ## 📥 Install
 
 ```bash
-pip install adbc-driver-warpsql
+pip install adbc-driver-chargewire
 ```
 
 The wheel carries the driver's shared library for Linux (amd64, arm64; glibc 2.17 or newer),
 macOS (arm64, amd64) and Windows (amd64). Go applications `go get
-github.com/gizmodata/warp-sql-adbc/go` (the module is versioned by `go/vX.Y.Z` tags, one per
+github.com/gizmodata/chargewire-adbc/go` (the module is versioned by `go/vX.Y.Z` tags, one per
 release, on the release's commit). Every other ADBC language loads the library from a
-[GitHub Release](https://github.com/gizmodata/warp-sql-adbc/releases) through a driver manifest
-(`packaging/warpsql.toml.in`).
+[GitHub Release](https://github.com/gizmodata/chargewire-adbc/releases) through a driver manifest
+(`packaging/chargewire.toml.in`).
 
 ## 📂 Layout
 
 ```
-go/warpsql/          the ADBC driver (driverbase-go), package warpsql
-go/internal/protocol the Warp SQL wire client over net/http (no ADBC)
-go/pkg/warpsql/      cgo exports for the C shared library (generated)
-python/              adbc-driver-warpsql: ships the library in its wheel, adds dbapi.connect()
+go/chargewire/       the ADBC driver (driverbase-go), package chargewire
+go/internal/protocol the Chargewire wire client over net/http (no ADBC)
+go/pkg/chargewire/   cgo exports for the C shared library (generated)
+python/              adbc-driver-chargewire: ships the library in its wheel, adds dbapi.connect()
 packaging/           ADBC driver manifest template
 docs/                design notes and the test inventory
 ```
@@ -67,13 +67,13 @@ docs/                design notes and the test inventory
 
 | URI | Meaning |
 |---|---|
-| `warp://host:port` | HTTPS, base path `/warp` (the default) |
-| `warp://host:port/custom/prefix` | HTTPS, the server mounts the protocol under `/custom/prefix` |
-| `warp://host:port?tls=false` | Plain HTTP (development; loopback) |
-| `https://host:port[/prefix]` | Same as `warp://` |
+| `chargewire://host:port` | HTTPS, base path `/chargewire` (the default) |
+| `chargewire://host:port/custom/prefix` | HTTPS, the server mounts the protocol under `/custom/prefix` |
+| `chargewire://host:port?tls=false` | Plain HTTP (development; loopback) |
+| `https://host:port[/prefix]` | Same as `chargewire://` |
 | `http://host:port[/prefix]` | Plain HTTP |
 
-TLS is verified unless `adbc.warp.tls.skip_verify` is set explicitly. Credentials never go
+TLS is verified unless `adbc.chargewire.tls.skip_verify` is set explicitly. Credentials never go
 in the URI; a URI with user info is refused. A TLS URI pointed at a plain-HTTP server fails
 at once, before anything but the TLS hello is sent, with `The server at HOST:PORT speaks plain
 HTTP, not TLS. Add ?tls=false to the URI to connect without encryption.` (for an `https://`
@@ -86,9 +86,9 @@ holds, and the session ends on the server when it idles out.
 ### Go
 
 ```go
-drv := warpsql.NewDriver(memory.DefaultAllocator)
+drv := chargewire.NewDriver(memory.DefaultAllocator)
 db, err := drv.NewDatabaseWithContext(ctx, map[string]string{
-	"uri":      "warp://db.example.com:31337",
+	"uri":      "chargewire://db.example.com:31337",
 	"username": "joe",
 	"password": "…",
 })
@@ -98,14 +98,14 @@ err = stmt.SetSqlQuery(ctx, "SELECT 42 AS answer")
 reader, _, err := stmt.ExecuteQuery(ctx)
 ```
 
-`warpsql.ErrorCode(err)` returns the server's error code (`sql_error`,
+`chargewire.ErrorCode(err)` returns the server's error code (`sql_error`,
 `session_not_found`, …) behind any error the driver returns, or a `client_` code for a
 failure the driver found in the server's answer (`client_protocol_error`, and
 `client_http_error` for an error status without a problem document, such as a proxy's).
-The error details also carry `warp.request_id`, and `warp.reason` / `warp.cancel_reason`
+The error details also carry `chargewire.request_id`, and `chargewire.reason` / `chargewire.cancel_reason`
 when the server gave one (`token_revoked`, `killed`, …).
 
-Each code has the ADBC status that says what to do about it (`go/warpsql/errors.go`): SQL
+Each code has the ADBC status that says what to do about it (`go/chargewire/errors.go`): SQL
 that fails, before it runs (`sql_error`) or while it runs (`execution_error`: a division by
 zero, a conversion), is `StatusInvalidArgument`, as in the DuckDB and PostgreSQL ADBC
 drivers, so Python raises `ProgrammingError`; SQLSTATE `42P01` is `StatusNotFound`, `42P07`
@@ -120,9 +120,9 @@ falls back to its HTTP status. The SQLSTATE, when the server sent one, is in the
 ### Python
 
 ```python
-from adbc_driver_warpsql import dbapi
+from adbc_driver_chargewire import dbapi
 
-with dbapi.connect(uri="warp://db.example.com:31337", username="joe", password="…") as conn:
+with dbapi.connect(uri="chargewire://db.example.com:31337", username="joe", password="…") as conn:
     with conn.cursor() as cur:
         cur.execute(operation="SELECT * FROM sales WHERE year = ?", parameters=[2026])
         print(cur.fetch_arrow_table())
@@ -133,7 +133,7 @@ user, on a server that turned certificate sign-in on; Hardcharger's `mtls_certif
 with `mtls_admin_identities` or its access-control users):
 
 ```python
-dbapi.connect(uri="warp://db.example.com:31337", auth_type="client_certificate",
+dbapi.connect(uri="chargewire://db.example.com:31337", auth_type="client_certificate",
               tls_client_cert="client.pem", tls_client_key="client-key.pem")
 ```
 
@@ -141,16 +141,16 @@ On a server with browser sign-in (capability `oauth_browser`, spec §4.3), sign 
 yourself with the server's identity provider; the driver opens your browser and waits:
 
 ```python
-dbapi.connect(uri="warp://db.example.com:31337", auth_type="oauth_browser")
+dbapi.connect(uri="chargewire://db.example.com:31337", auth_type="oauth_browser")
 ```
 
 See [python/README.md](python/README.md) for `connect()`'s arguments.
 
 ### Any language, through a driver manifest
 
-Build the library (`make -C go lib`), fill in [packaging/warpsql.toml.in](packaging/warpsql.toml.in)
-and install it as `warpsql.toml` in an ADBC driver search path; then every driver manager
-loads it as `driver = "warpsql"`. Its entry point is `AdbcDriverWarpsqlInit`.
+Build the library (`make -C go lib`), fill in [packaging/chargewire.toml.in](packaging/chargewire.toml.in)
+and install it as `chargewire.toml` in an ADBC driver search path; then every driver manager
+loads it as `driver = "chargewire"`. Its entry point is `AdbcDriverChargewireInit`.
 
 ## ⚙️ Options
 
@@ -158,47 +158,47 @@ Database options (with the standard `uri`, `username`, `password` and `adbc.tele
 
 | Option | Default | Meaning |
 |---|---|---|
-| `adbc.warp.tls.skip_verify` | `false` | Do not verify the server's certificate |
-| `adbc.warp.tls.root_certs` | system | PEM CA certificates to trust instead of the system's |
-| `adbc.warp.tls.client_cert`, `adbc.warp.tls.client_key` | | PEM client certificate and key (mutual TLS) |
-| `adbc.warp.tls.server_name` | URI host | Host name the certificate is checked against |
-| `adbc.warp.auth.type` | `password` | `oauth_browser`: browser sign-in (below). `client_certificate` (or `mtls`): sign in with the TLS client certificate alone, no password (spec §4.4; servers with capability `mtls_identity`). Needs the client certificate and key; refuses a username, password or token beside it. The token is bound to the certificate and renewed like a password sign-in's |
-| `adbc.warp.oauth.browser` | system browser | With `auth.type` `oauth_browser` (spec §4.3: sign in through a browser with the server's identity provider, when the first connection opens; servers with capability `oauth_browser`): the command that opens the sign-in page (its URL appended), or `none` to print the URL to stderr. The token it yields can't be renewed: once it expires, open a new database |
-| `adbc.warp.oauth.timeout_seconds` | `300` | How long the person has to complete a browser sign-in |
-| `adbc.warp.auth.access_token` | | An access token issued elsewhere (used as is, never renewed by the driver; may be set again on an open database that signs in with a token or through the browser). Readable on the database and its connections: the token in use (below) |
-| `adbc.warp.auth.access_token_expires_at` | | Read-only: when that token expires, RFC 3339 UTC (`2026-10-20T15:14:13Z`), from the token response's `expires_in` or the token's own `exp`; `""` when unknown |
-| `adbc.warp.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
-| `adbc.warp.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
-| `adbc.warp.session.reconnect` | `true` | Replace a session the server lost (see below) |
-| `adbc.warp.session.id` | | Attach every connection to this existing session instead of creating one ([below](#attaching-to-an-existing-session)) |
-| `adbc.warp.session.close_on_release` | `true` for a created session, `false` for an attached one | Whether closing a connection ends its session on the server; also a connection option, settable any time |
+| `adbc.chargewire.tls.skip_verify` | `false` | Do not verify the server's certificate |
+| `adbc.chargewire.tls.root_certs` | system | PEM CA certificates to trust instead of the system's |
+| `adbc.chargewire.tls.client_cert`, `adbc.chargewire.tls.client_key` | | PEM client certificate and key (mutual TLS) |
+| `adbc.chargewire.tls.server_name` | URI host | Host name the certificate is checked against |
+| `adbc.chargewire.auth.type` | `password` | `oauth_browser`: browser sign-in (below). `client_certificate` (or `mtls`): sign in with the TLS client certificate alone, no password (spec §4.4; servers with capability `mtls_identity`). Needs the client certificate and key; refuses a username, password or token beside it. The token is bound to the certificate and renewed like a password sign-in's |
+| `adbc.chargewire.oauth.browser` | system browser | With `auth.type` `oauth_browser` (spec §4.3: sign in through a browser with the server's identity provider, when the first connection opens; servers with capability `oauth_browser`): the command that opens the sign-in page (its URL appended), or `none` to print the URL to stderr. The token it yields can't be renewed: once it expires, open a new database |
+| `adbc.chargewire.oauth.timeout_seconds` | `300` | How long the person has to complete a browser sign-in |
+| `adbc.chargewire.auth.access_token` | | An access token issued elsewhere (used as is, never renewed by the driver; may be set again on an open database that signs in with a token or through the browser). Readable on the database and its connections: the token in use (below) |
+| `adbc.chargewire.auth.access_token_expires_at` | | Read-only: when that token expires, RFC 3339 UTC (`2026-10-20T15:14:13Z`), from the token response's `expires_in` or the token's own `exp`; `""` when unknown |
+| `adbc.chargewire.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
+| `adbc.chargewire.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
+| `adbc.chargewire.session.reconnect` | `true` | Replace a session the server lost (see below) |
+| `adbc.chargewire.session.id` | | Attach every connection to this existing session instead of creating one ([below](#attaching-to-an-existing-session)) |
+| `adbc.chargewire.session.close_on_release` | `true` for a created session, `false` for an attached one | Whether closing a connection ends its session on the server; also a connection option, settable any time |
 
 Statement options; set on the database or connection they are defaults for its statements:
 
 | Option | Default | Meaning |
 |---|---|---|
-| `adbc.warp.statement.async` | `false` | Submit, poll, then read a retained, resumable result |
-| `adbc.warp.statement.retain_result` | server | Ask the server to keep results for re-reading and resuming |
-| `adbc.warp.statement.timeout_seconds` | none | The server cancels the statement after this long |
-| `adbc.warp.statement.query_tag` | | JSON object recorded with every statement and ingest; sent compact, in ASCII (other characters as `\u` escapes), at most 4,096 bytes so |
-| `adbc.warp.ipc_compression` | `auto` | Arrow buffer compression for results and uploads: `lz4_frame`, `zstd`, `none`, or `auto`: `lz4_frame` on a link with a round trip under 10 ms, `zstd` on a slower one (measured when connecting) |
-| `adbc.warp.statement.result_partitions` | `32` | Let the server split a large result into up to this many partitions, read at once over separate connections (`1`: one stream) |
-| `adbc.warp.statement.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
-| `adbc.warp.ingest.parts` | `auto` | Send a bulk ingest over up to this many connections at once, committed as one (`1`: one ordered stream); `auto`: 16 on a near link, 32 on a far one |
+| `adbc.chargewire.statement.async` | `false` | Submit, poll, then read a retained, resumable result |
+| `adbc.chargewire.statement.retain_result` | server | Ask the server to keep results for re-reading and resuming |
+| `adbc.chargewire.statement.timeout_seconds` | none | The server cancels the statement after this long |
+| `adbc.chargewire.statement.query_tag` | | JSON object recorded with every statement and ingest; sent compact, in ASCII (other characters as `\u` escapes), at most 4,096 bytes so |
+| `adbc.chargewire.ipc_compression` | `auto` | Arrow buffer compression for results and uploads: `lz4_frame`, `zstd`, `none`, or `auto`: `lz4_frame` on a link with a round trip under 10 ms, `zstd` on a slower one (measured when connecting) |
+| `adbc.chargewire.statement.result_partitions` | `32` | Let the server split a large result into up to this many partitions, read at once over separate connections (`1`: one stream) |
+| `adbc.chargewire.statement.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
+| `adbc.chargewire.ingest.parts` | `auto` | Send a bulk ingest over up to this many connections at once, committed as one (`1`: one ordered stream); `auto`: 16 on a near link, 32 on a far one |
 
-Read-only on a connection: `adbc.warp.session.id`, `adbc.warp.session.replacements` and
-`adbc.warp.session.transaction` (connection; the server's view, which sees SQL `BEGIN` too:
+Read-only on a connection: `adbc.chargewire.session.id`, `adbc.chargewire.session.replacements` and
+`adbc.chargewire.session.transaction` (connection; the server's view, which sees SQL `BEGIN` too:
 `none`, `open`, `aborted`, or `unknown`),
-`adbc.warp.statement.id` (the statement's last execution). Bulk ingest uses the standard
+`adbc.chargewire.statement.id` (the statement's last execution). Bulk ingest uses the standard
 `adbc.ingest.*` options; the transaction options are the standard ones.
 
 ### Reading the access token
 
-`GetOption("adbc.warp.auth.access_token")`, on the database or a connection, returns the
+`GetOption("adbc.chargewire.auth.access_token")`, on the database or a connection, returns the
 token the driver sends: the one a password sign-in, token exchange or browser sign-in got
 (renewed first when it is about to expire, so a token read after a renewal is the new one), or
-the caller's own `adbc.warp.auth.access_token` as given; `""` before a password database's
-first connection. `adbc.warp.auth.access_token_expires_at` says until when it works. Use it to
+the caller's own `adbc.chargewire.auth.access_token` as given; `""` before a password database's
+first connection. `adbc.chargewire.auth.access_token_expires_at` says until when it works. Use it to
 hand a signed-in identity to another process, for instance with a session to attach to
 (below), or to call the server's HTTP API directly (`Authorization: Bearer <token>`).
 
@@ -210,31 +210,31 @@ memory or store it encrypted, pass it only over TLS, and never log it or put it 
 A session (its open transaction, temporary tables and settings) can outlive the connection
 that created it and be picked up by another process: a job runner that begins a transaction
 in one step and commits it in the next, or a client that reconnects after a restart. The
-first connection sets `adbc.warp.session.close_on_release=false`, so closing it leaves the
-session on the server, and passes on `adbc.warp.session.id` (read it from the connection).
+first connection sets `adbc.chargewire.session.close_on_release=false`, so closing it leaves the
+session on the server, and passes on `adbc.chargewire.session.id` (read it from the connection).
 The second sets that id on its database, with credentials for the same user (the session
 belongs to the user who created it, spec §9.2), typically the first one's access token,
 read from its connection:
 
 ```go
 // Process 1: begin, then hand the session on.
-_ = cnxn.(adbc.GetSetOptionsWithContext).SetOption(ctx, warpsql.OptionSessionCloseOnRelease, "false")
+_ = cnxn.(adbc.GetSetOptionsWithContext).SetOption(ctx, chargewire.OptionSessionCloseOnRelease, "false")
 // ... BEGIN TRANSACTION; INSERT ... (not committed)
-id, _ := cnxn.(adbc.GetSetOptionsWithContext).GetOption(ctx, warpsql.OptionSessionID)
-token, _ := cnxn.(adbc.GetSetOptionsWithContext).GetOption(ctx, warpsql.OptionAccessToken) // a secret
+id, _ := cnxn.(adbc.GetSetOptionsWithContext).GetOption(ctx, chargewire.OptionSessionID)
+token, _ := cnxn.(adbc.GetSetOptionsWithContext).GetOption(ctx, chargewire.OptionAccessToken) // a secret
 _ = cnxn.Close(ctx) // the session and its transaction stay on the server
 
 // Process 2: attach and finish.
-db, _ := warpsql.NewDriver(memory.DefaultAllocator).NewDatabaseWithContext(ctx, map[string]string{
-	adbc.OptionKeyURI:         "warp://db.example.com",
-	warpsql.OptionAccessToken: token,
-	warpsql.OptionSessionID:   id,
+db, _ := chargewire.NewDriver(memory.DefaultAllocator).NewDatabaseWithContext(ctx, map[string]string{
+	adbc.OptionKeyURI:            "chargewire://db.example.com",
+	chargewire.OptionAccessToken: token,
+	chargewire.OptionSessionID:    id,
 })
-cnxn, err := db.Open(ctx) // GET /warp/v1/sessions/{id}: no new session is created
+cnxn, err := db.Open(ctx) // GET /chargewire/v1/sessions/{id}: no new session is created
 // ... sees the uncommitted rows; COMMIT
 ```
 
-Opening checks the session with `GET /warp/v1/sessions/{id}`. An id the server doesn't have
+Opening checks the session with `GET /chargewire/v1/sessions/{id}`. An id the server doesn't have
 fails with `session_not_found` (status `NotFound`), and so does another user's session: the
 server answers the two the same way, so ids can't be probed. An attached session is never
 replaced when the server loses it later. Closing an attached connection leaves the session
@@ -262,10 +262,10 @@ Route by something both clients send, or connect both to the instance's own addr
   batches come back in the server's order (round robin over the partitions), so `ORDER BY`
   holds; with `any`, as they arrive. Every partition must end with its end-of-stream
   marker: if one fails or is cut off (and can't be resumed), the whole result fails with
-  the statement's error. A split result that doesn't say its order (`Warp-Result-Order`, or
+  the statement's error. A split result that doesn't say its order (`Chargewire-Result-Order`, or
   `partition_order`) is refused as a protocol error, never guessed. On a server with the
   `result_locations` capability the driver also reads partitions held by other servers
-  (it sends `Warp-Result-Locations: remote` only there, and never sends the access token to
+  (it sends `Chargewire-Result-Locations: remote` only there, and never sends the access token to
   a location that would drop TLS). `ExecutePartitions` returns the server's partitions. The server
   decides how many by the result's size (Hardcharger: one per two batches for a small
   result, all of them for a large one), and a server without the capability is never
@@ -277,7 +277,7 @@ Route by something both clients send, or connect both to the instance's own addr
   are (length -1) are copied, not decompressed. Message bodies come from a recycler
   over the C library's allocator, so large results don't fault in fresh pages for every
   batch.
-- **Partitioned ingest** (by default; `adbc.warp.ingest.parts` above 1, on a server with
+- **Partitioned ingest** (by default; `adbc.chargewire.ingest.parts` above 1, on a server with
   the `partitioned_ingest` capability, spec §8.3): batches over 16,384 rows are sent as
   zero-copy slices of that size (the server's insert threads then share the work
   evenly), and an upload of more than one slice is opened once, sent in parts at once,
@@ -285,7 +285,7 @@ Route by something both clients send, or connect both to the instance's own addr
   the next slice from the bound stream, then committed as one. It is all or nothing: if a
   part fails (the bound reader breaks, the server refuses a batch, a connection drops), the
   driver aborts the ingest and nothing is written. The rows land in no defined order; set
-  `adbc.warp.ingest.parts=1` to keep the upload's order. A one-slice upload, or a server
+  `adbc.chargewire.ingest.parts=1` to keep the upload's order. A one-slice upload, or a server
   without the capability, gets one stream (§8.1). Each part keeps up to 4 MiB in memory so a
   part whose answer was lost can be sent again with its `Idempotency-Key`.
 - **Broken downloads** of a retained result resume from the next batch (up to five times).
@@ -303,11 +303,11 @@ Route by something both clients send, or connect both to the instance's own addr
   driver does not sign in again on its own: the error carries the reason.
 - **Lost sessions** (`session_not_found`, or `session_ended` because a token expired, after
   getting a new token) are replaced by a new session with the options the driver set, and the loss is reported,
-  not hidden: a warning is logged, `adbc.warp.session.replacements` counts it, and errors
+  not hidden: a warning is logged, `adbc.chargewire.session.replacements` counts it, and errors
   from work in the replacement say it ran there. Inside a transaction nothing runs on the
   replacement (it would commit half a transaction): the operation fails with the
   transaction named as lost. A prepared statement is prepared again; a retained result is
-  gone. With `adbc.warp.session.reconnect=false` the connection stays broken. A session
+  gone. With `adbc.chargewire.session.reconnect=false` the connection stays broken. A session
   ended for any other reason (`killed` by an administrator, credentials changed, …) is an
   error with the reason, and is not replaced.
 - **Cancel** (`AdbcStatementCancel`, Python's `adbc_cancel()` and Ctrl+C, closing the
@@ -335,7 +335,7 @@ Route by something both clients send, or connect both to the instance's own addr
 Go 1.27, a C toolchain for cgo, and Python 3.11+ for the bindings.
 
 ```bash
-make -C go lib                      # go/build/libadbc_driver_warpsql.{so,dylib,dll}
+make -C go lib                      # go/build/libadbc_driver_chargewire.{so,dylib,dll}
 make -C go test                     # Go unit tests (no server)
 
 python3 -m venv .venv && . .venv/bin/activate
@@ -343,12 +343,12 @@ pip install -e "python[test,dev]"
 pytest -m "not integration" python/tests   # Python unit tests (no server)
 ```
 
-The live-server suites start the server binary named by `WARP_SQL_ADBC_TEST_SERVER_BINARY`
-(a `warp-duckdb` build from [warp-sql](https://github.com/gizmodata/warp-sql), or any
+The live-server suites start the server binary named by `CHARGEWIRE_ADBC_TEST_SERVER_BINARY`
+(a `chargewire-duckdb` build from [chargewire](https://github.com/gizmodata/chargewire), or any
 server with its command line) on free ports, plain and with TLS:
 
 ```bash
-export WARP_SQL_ADBC_TEST_SERVER_BINARY=/path/to/warp-duckdb
+export CHARGEWIRE_ADBC_TEST_SERVER_BINARY=/path/to/chargewire-duckdb
 make -C go integration-test         # Go, with the race detector
 pytest python/tests                 # everything, Python
 ```
@@ -368,7 +368,7 @@ wheels are `manylinux` (glibc 2.17 or older) (the library is built with `zig cc`
 with `scripts/check_glibc.sh`, and installed and loaded on Oracle Linux 8). Then a GitHub
 Release with the tag's CHANGELOG section, and PyPI from the `pypi` environment (trusted
 publishing, after an approval). Before tagging: set the version in `python/pyproject.toml`
-and `python/src/adbc_driver_warpsql/_version.py`, move `[Unreleased]` into a dated section,
+and `python/src/adbc_driver_chargewire/_version.py`, move `[Unreleased]` into a dated section,
 regenerate `THIRD_PARTY_NOTICES` if a Go dependency moved (`scripts/third_party_notices.sh`;
 CI checks it), and make sure the workflow's `HARDCHARGER_IMAGE` is a build whose server splits
 results. The live suites pull `hardcharger-server` from `ghcr.io/gizmodata/hardcharger` with the
@@ -389,7 +389,7 @@ read access.
 
 [Apache License 2.0](LICENSE). The shared library links the Go runtime and the Go modules
 listed, with their licenses, in
-[THIRD_PARTY_NOTICES](python/src/adbc_driver_warpsql/THIRD_PARTY_NOTICES), which ships in
+[THIRD_PARTY_NOTICES](python/src/adbc_driver_chargewire/THIRD_PARTY_NOTICES), which ships in
 every wheel and library tarball.
 
 ---

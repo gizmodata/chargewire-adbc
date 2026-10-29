@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # The licenses of everything linked into the driver's shared library: the Go runtime and
-# standard library, and every Go module the `driverlib` build of ./pkg/warpsql depends on,
+# standard library, and every Go module the `driverlib` build of ./pkg/chargewire depends on,
 # each with its LICENSE (and NOTICE, where it has one) copied verbatim from the module cache.
 #
-# Writes python/src/adbc_driver_warpsql/THIRD_PARTY_NOTICES, which ships inside every wheel
+# Writes python/src/adbc_driver_chargewire/THIRD_PARTY_NOTICES, which ships inside every wheel
 # (package data) and library tarball. CI runs `scripts/third_party_notices.sh --check`, so a
 # dependency change that forgets to regenerate the file fails the build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-out=python/src/adbc_driver_warpsql/THIRD_PARTY_NOTICES
+out=python/src/adbc_driver_chargewire/THIRD_PARTY_NOTICES
 
 generate() (
   cd go
@@ -23,7 +23,7 @@ generate() (
   cat <<'EOF'
 THIRD-PARTY NOTICES
 
-The Warp SQL ADBC driver (adbc-driver-warpsql, libadbc_driver_warpsql) is licensed under the
+The Chargewire ADBC driver (adbc-driver-chargewire, libadbc_driver_chargewire) is licensed under the
 Apache License 2.0 (see LICENSE). Its shared library is a Go program and links, statically,
 the Go runtime and standard library and the Go modules below, whose license terms follow,
 copied verbatim from each module's distribution.
@@ -39,8 +39,8 @@ EOF
   echo
 
   # Every module a package of the shared library imports, other than this one.
-  go list -deps -tags driverlib -f '{{if .Module}}{{.Module.Path}} {{.Module.Version}} {{.Module.Dir}}{{end}}' ./pkg/warpsql \
-    | grep -v '^github.com/gizmodata/warp-sql-adbc' | sort -u \
+  go list -deps -tags driverlib -f '{{if .Module}}{{.Module.Path}} {{.Module.Version}} {{.Module.Dir}}{{end}}' ./pkg/chargewire \
+    | grep -v '^github.com/gizmodata/chargewire-adbc' | sort -u \
     | while read -r path version dir; do
         [ -n "$dir" ] && [ -d "$dir" ] || { echo "module $path@$version is not in the module cache (run go mod download)" >&2; exit 1; }
         license=""

@@ -26,13 +26,13 @@ func (f *fake) withSessions() *fake {
 			next(w, r)
 		})
 	}
-	f.mux.HandleFunc("GET /warp/v1/sessions/{id}", known(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}", known(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		options := f.sessions[r.PathValue("id")]
 		f.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"session_id": r.PathValue("id"), "options": options})
 	}))
-	f.mux.HandleFunc("PATCH /warp/v1/sessions/{id}", known(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("PATCH /chargewire/v1/sessions/{id}", known(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Options map[string]any `json:"options"`
 		}
@@ -43,11 +43,11 @@ func (f *fake) withSessions() *fake {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"options": body.Options, "errors": refused})
 	}))
-	f.mux.HandleFunc("POST /warp/v1/sessions/{id}/statements", known(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("POST /chargewire/v1/sessions/{id}/statements", known(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, map[string]any{"statement_id": "q1", "state": "succeeded",
 			"result": map[string]any{"kind": "update", "rows_affected": 1}})
 	}))
-	f.mux.HandleFunc("POST /warp/v1/sessions/{id}/commit", known(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("POST /chargewire/v1/sessions/{id}/commit", known(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	return f
@@ -159,7 +159,7 @@ func TestSessionEndedReasons(t *testing.T) {
 	for reason, replaced := range map[string]bool{ReasonKilled: false, ReasonTokenExpired: true} {
 		f := newFake(t).withSessions()
 		session := openTestSession(t, f, true)
-		f.mux.HandleFunc("GET /warp/v1/sessions/{id}/metadata/server-info", f.auth(func(w http.ResponseWriter, r *http.Request) {
+		f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}/metadata/server-info", f.auth(func(w http.ResponseWriter, r *http.Request) {
 			if r.PathValue("id") == "s1" {
 				writeProblem(w, http.StatusUnauthorized, CodeSessionEnded, reason)
 				return
@@ -218,7 +218,7 @@ func TestRecallNeedsASentReplayableRequest(t *testing.T) {
 // uses it.
 func TestClosedSessionIsNotReplaced(t *testing.T) {
 	f := newFake(t).withSessions()
-	f.mux.HandleFunc("DELETE /warp/v1/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("DELETE /chargewire/v1/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	session := openTestSession(t, f, true)
@@ -234,7 +234,7 @@ func TestClosedSessionIsNotReplaced(t *testing.T) {
 
 func TestCancelAll(t *testing.T) {
 	f := newFake(t).withSessions()
-	f.mux.HandleFunc("POST /warp/v1/sessions/{id}/cancel", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("POST /chargewire/v1/sessions/{id}/cancel", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"cancelled": []string{"q1", "q2"}})
 	}))
 	session := openTestSession(t, f, true)

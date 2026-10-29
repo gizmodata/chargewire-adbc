@@ -63,7 +63,7 @@ type Submission struct {
 	// QueryTag is a JSON object recorded with the statement, as
 	// NormalizeQueryTag returns it.
 	QueryTag string
-	// Compression is the Warp-IPC-Compression header: the Arrow buffer
+	// Compression is the Chargewire-IPC-Compression header: the Arrow buffer
 	// codecs accepted, in order of preference (§8.2); empty: none.
 	Compression string
 	// Partitions, when more than 1, lets the server split the result into up
@@ -72,7 +72,7 @@ type Submission struct {
 	Partitions int
 	AnyOrder   bool
 	// RemoteLocations says the client reads partitions held by other servers
-	// (Warp-Result-Locations: remote, capability result_locations, §6.2).
+	// (Chargewire-Result-Locations: remote, capability result_locations, §6.2).
 	// Without it the server gives every partition on itself.
 	RemoteLocations bool
 
@@ -108,25 +108,25 @@ func (s *Submission) request(arrow, async bool) *Request {
 	}
 	header.Set("Idempotency-Key", s.key)
 	if s.Retain != nil {
-		header.Set("Warp-Retain-Result", strconv.FormatBool(*s.Retain))
+		header.Set("Chargewire-Retain-Result", strconv.FormatBool(*s.Retain))
 	}
 	if s.Timeout > 0 {
-		header.Set("Warp-Statement-Timeout", strconv.FormatInt(max(s.Timeout.Milliseconds(), 1), 10))
+		header.Set("Chargewire-Statement-Timeout", strconv.FormatInt(max(s.Timeout.Milliseconds(), 1), 10))
 	}
 	if s.QueryTag != "" {
-		header.Set("Warp-Query-Tag", s.QueryTag)
+		header.Set("Chargewire-Query-Tag", s.QueryTag)
 	}
 	if s.Compression != "" {
-		header.Set("Warp-IPC-Compression", s.Compression)
+		header.Set("Chargewire-IPC-Compression", s.Compression)
 	}
 	if s.Partitions > 1 {
-		header.Set("Warp-Result-Partitions", strconv.Itoa(s.Partitions))
+		header.Set("Chargewire-Result-Partitions", strconv.Itoa(s.Partitions))
 		if s.AnyOrder {
-			header.Set("Warp-Result-Order", "any")
+			header.Set("Chargewire-Result-Order", "any")
 		}
 	}
 	if s.RemoteLocations {
-		header.Set("Warp-Result-Locations", "remote")
+		header.Set("Chargewire-Result-Locations", "remote")
 	}
 	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
 		if info.Err == nil {
@@ -148,7 +148,7 @@ func SubmitDocument(sql string, parameters any) (*Body, error) {
 
 // Submit sends sub. The answer is either an Arrow stream (streamed path) or a
 // statement document; the caller checks Content-Type (§6.1) and closes the
-// body. The statement's id is in the Warp-Statement-Id header or the
+// body. The statement's id is in the Chargewire-Statement-Id header or the
 // document.
 func (s *Session) Submit(ctx context.Context, sub *Submission) (*http.Response, error) {
 	if sub.key == "" {
@@ -215,7 +215,7 @@ type ResultRequest struct {
 	FromBatch int64
 	// Location is the partition's server, when not this one.
 	Location *url.URL
-	// Compression is the Warp-IPC-Compression header, as in Submission.
+	// Compression is the Chargewire-IPC-Compression header, as in Submission.
 	Compression string
 }
 
@@ -230,7 +230,7 @@ func (s *Session) Result(ctx context.Context, rr ResultRequest) (*http.Response,
 	}
 	header := http.Header{"Accept": {MediaTypeArrowStream}}
 	if rr.Compression != "" {
-		header.Set("Warp-IPC-Compression", rr.Compression)
+		header.Set("Chargewire-IPC-Compression", rr.Compression)
 	}
 	req := &Request{Method: http.MethodGet, Path: rr.Ref.path() + "/result", Query: query, Header: header,
 		Idempotent: true, BaseURL: rr.Location}
@@ -323,7 +323,7 @@ func (s *Session) Ingest(ctx context.Context, ir IngestRequest) (int64, error) {
 	}
 	header := http.Header{"Idempotency-Key": {NewIdempotencyKey()}}
 	if ir.QueryTag != "" {
-		header.Set("Warp-Query-Tag", ir.QueryTag)
+		header.Set("Chargewire-Query-Tag", ir.QueryTag)
 	}
 	resp, err := s.do(ctx, ScopeStatement, "", func(id string) (*Request, error) {
 		return &Request{Method: http.MethodPost, Path: sessionPath(id) + "/ingest", Query: query, Header: header,
@@ -372,11 +372,11 @@ func DecodeStatementDocument(resp *http.Response) (*StatementDocument, error) {
 	return doc, nil
 }
 
-// MaxQueryTagBytes is the longest Warp-Query-Tag, serialized (§2.5).
+// MaxQueryTagBytes is the longest Chargewire-Query-Tag, serialized (§2.5).
 const MaxQueryTagBytes = 4096
 
 // NormalizeQueryTag checks that tag is a JSON object and returns it as
-// Warp-Query-Tag carries it (§2.5): compact, in ASCII (every other character,
+// Chargewire-Query-Tag carries it (§2.5): compact, in ASCII (every other character,
 // and DEL, as a \u escape, so the header carries no raw UTF-8 or control
 // byte), at most MaxQueryTagBytes long. Escaping keeps the text's meaning.
 func NormalizeQueryTag(tag string) (string, error) {

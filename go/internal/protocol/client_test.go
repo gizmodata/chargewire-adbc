@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// fake is a scriptable Warp SQL server for protocol tests.
+// fake is a scriptable Chargewire server for protocol tests.
 type fake struct {
 	t      *testing.T
 	server *httptest.Server
@@ -34,12 +34,12 @@ type fake struct {
 
 func newFake(t *testing.T) *fake {
 	f := &fake{t: t, mux: http.NewServeMux(), valid: map[string]bool{}, sessions: map[string]map[string]any{}, lifetime: 3600}
-	f.mux.HandleFunc("GET /warp", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"protocol": "warp-sql", "protocol_versions": []string{"1"},
+	f.mux.HandleFunc("GET /chargewire", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"protocol": "chargewire", "protocol_versions": []string{"1"},
 			"server": map[string]string{"name": "fake", "version": "1"}, "capabilities": []string{"transactions"},
 			"auth": map[string]any{"grant_types": []string{"password"}}})
 	})
-	f.mux.HandleFunc("POST /warp/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("POST /chargewire/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		var grant map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&grant)
 		f.mu.Lock()
@@ -57,7 +57,7 @@ func newFake(t *testing.T) *fake {
 		f.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"access_token": token, "token_type": "Bearer", "expires_in": lifetime})
 	})
-	f.mux.HandleFunc("POST /warp/v1/sessions", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("POST /chargewire/v1/sessions", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Options map[string]any `json:"options"`
 		}
@@ -90,7 +90,7 @@ func (f *fake) auth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (f *fake) client(credentials Credentials, attempts int) *Client {
-	base, _ := url.Parse(f.server.URL + "/warp")
+	base, _ := url.Parse(f.server.URL + "/chargewire")
 	return NewClient(Config{BaseURL: base, Credentials: credentials, MaxAttempts: attempts})
 }
 
@@ -108,9 +108,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeProblem(w http.ResponseWriter, status int, code, reason string) {
 	w.Header().Set("Content-Type", MediaTypeProblem)
-	w.Header().Set("Warp-Request-Id", "r_test")
+	w.Header().Set("Chargewire-Request-Id", "r_test")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"type": "urn:warp-sql:error:" + code, "status": status, "code": code,
+	_ = json.NewEncoder(w).Encode(map[string]any{"type": "urn:chargewire:error:" + code, "status": status, "code": code,
 		"detail": "fake " + code, "reason": reason})
 }
 
@@ -123,7 +123,7 @@ func TestDiscoverChecksTheProtocol(t *testing.T) {
 		t.Fatalf("Discover: %+v, %v", doc, err)
 	}
 	f.mux.HandleFunc("GET /other", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"protocol": "warp-sql", "protocol_versions": []string{"2"}})
+		writeJSON(w, http.StatusOK, map[string]any{"protocol": "chargewire", "protocol_versions": []string{"2"}})
 	})
 	base, _ := url.Parse(f.server.URL + "/other")
 	if _, err := NewClient(Config{BaseURL: base}).Discover(context.Background()); err == nil || !strings.Contains(err.Error(), "version 1") {
@@ -137,10 +137,10 @@ func TestDiscoverMeasuresTheRoundTrip(t *testing.T) {
 	const delay = 40 * time.Millisecond
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(delay) // stands in for the network
-		writeJSON(w, http.StatusOK, map[string]any{"protocol": "warp-sql", "protocol_versions": []string{"1"}})
+		writeJSON(w, http.StatusOK, map[string]any{"protocol": "chargewire", "protocol_versions": []string{"1"}})
 	}))
 	defer slow.Close()
-	base, _ := url.Parse(slow.URL + "/warp")
+	base, _ := url.Parse(slow.URL + "/chargewire")
 	doc, err := NewClient(Config{BaseURL: base}).Discover(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +170,7 @@ func TestExpiredTokenIsRenewed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.mux.HandleFunc("GET /warp/v1/sessions/{id}", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"session_id": r.PathValue("id"), "options": map[string]any{}})
 	}))
 	f.revokeAll()
@@ -226,8 +226,8 @@ func TestIdempotentRequestsAreRetriedAfterTransportErrors(t *testing.T) {
 	handler, calls := hijackOnce(2, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{})
 	})
-	f.mux.HandleFunc("GET /warp/v1/flaky", handler)
-	f.mux.HandleFunc("POST /warp/v1/flaky", handler)
+	f.mux.HandleFunc("GET /chargewire/v1/flaky", handler)
+	f.mux.HandleFunc("POST /chargewire/v1/flaky", handler)
 	client := f.client(Credentials{AccessToken: "x"}, 3)
 
 	resp, err := client.Do(context.Background(), &Request{Method: http.MethodGet, Path: "/v1/flaky", Idempotent: true, Anonymous: true})
@@ -249,7 +249,7 @@ func TestIdempotentRequestsAreRetriedAfterTransportErrors(t *testing.T) {
 func TestRetryAfterIsHonoured(t *testing.T) {
 	f := newFake(t)
 	calls := atomic.Int32{}
-	f.mux.HandleFunc("GET /warp/v1/busy", func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/busy", func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) == 1 {
 			w.Header().Set("Retry-After", "1")
 			writeProblem(w, http.StatusServiceUnavailable, CodeServerDraining, "")
@@ -273,7 +273,7 @@ func TestRetryAfterIsHonoured(t *testing.T) {
 func TestErrorsWithoutProblemDocuments(t *testing.T) {
 	f := newFake(t)
 	calls := atomic.Int32{}
-	f.mux.HandleFunc("GET /warp/v1/proxy", func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/proxy", func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		http.Error(w, "<html>request entity too large</html>", http.StatusRequestEntityTooLarge)
 	})
@@ -302,7 +302,7 @@ func TestClientCertificateGrantSendsNoSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.mux.HandleFunc("GET /warp/v1/sessions/{id}", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"session_id": r.PathValue("id"), "options": map[string]any{}})
 	}))
 	f.revokeAll()

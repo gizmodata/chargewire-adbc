@@ -11,13 +11,13 @@ import adbc_driver_manager
 import pytest
 from conftest import USERNAME, start_server, stop_server
 
-from adbc_driver_warpsql import dbapi
+from adbc_driver_chargewire import dbapi
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def recorder(warp_server, tmp_path):
+def recorder(chargewire_server, tmp_path):
     """A recording TCP proxy in front of the shared plain-HTTP server: (port, bytes sent)."""
     log = tmp_path / "sent.bin"
     log.write_bytes(data=b"")
@@ -25,7 +25,7 @@ def recorder(warp_server, tmp_path):
         args=[
             sys.executable,
             str(pathlib.Path(__file__).with_name("tcp_recorder.py")),
-            str(warp_server.port),
+            str(chargewire_server.port),
             str(log),
         ],
         stdout=subprocess.PIPE,
@@ -37,33 +37,37 @@ def recorder(warp_server, tmp_path):
     process.wait()
 
 
-def test_tls_to_a_plain_http_server_says_to_turn_tls_off(warp_server, recorder):
+def test_tls_to_a_plain_http_server_says_to_turn_tls_off(chargewire_server, recorder):
     port, log = recorder
     with pytest.raises(expected_exception=adbc_driver_manager.OperationalError) as error:
         dbapi.connect(
-            uri=f"warp://127.0.0.1:{port}", username=USERNAME, password=warp_server.password
+            uri=f"chargewire://127.0.0.1:{port}",
+            username=USERNAME,
+            password=chargewire_server.password,
         )
     assert error.value.status_code == adbc_driver_manager.AdbcStatusCode.IO
     assert str(error.value).endswith(
-        f"[warpsql] The server at 127.0.0.1:{port} speaks plain HTTP, not TLS. "
+        f"[chargewire] The server at 127.0.0.1:{port} speaks plain HTTP, not TLS. "
         "Add ?tls=false to the URI to connect without encryption."
     )
     sent = log.read_bytes()
     assert sent[:1] == b"\x16", sent[:40]  # a TLS hello, and nothing else
-    for secret in (warp_server.password, USERNAME, "auth/token"):
+    for secret in (chargewire_server.password, USERNAME, "auth/token"):
         assert secret.encode() not in sent
 
 
-def test_plain_http_through_the_recorder_twin(warp_server, recorder):
+def test_plain_http_through_the_recorder_twin(chargewire_server, recorder):
     """With ?tls=false the same proxy sees the password: the check above would catch one."""
     port, log = recorder
     with dbapi.connect(
-        uri=f"warp://127.0.0.1:{port}?tls=false", username=USERNAME, password=warp_server.password
+        uri=f"chargewire://127.0.0.1:{port}?tls=false",
+        username=USERNAME,
+        password=chargewire_server.password,
     ) as conn:
         with conn.cursor() as cur:
             cur.execute(operation="SELECT 42")
             assert cur.fetchone() == (42,)
-    assert warp_server.password.encode() in log.read_bytes()
+    assert chargewire_server.password.encode() in log.read_bytes()
 
 
 def _open_with_cursors(server):
@@ -107,8 +111,8 @@ def test_close_after_the_server_stopped_without_closing_cursors_first(tmp_path):
     conn.adbc_database.close()
 
 
-def test_close_with_the_server_up_twin(warp_server):
-    conn, cursors = _open_with_cursors(server=warp_server)
+def test_close_with_the_server_up_twin(chargewire_server):
+    conn, cursors = _open_with_cursors(server=chargewire_server)
     for cursor in cursors:
         cursor.close()
     conn.close()

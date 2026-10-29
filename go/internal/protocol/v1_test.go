@@ -44,7 +44,7 @@ func TestInvalidTokenRenewalFollowsTheReason(t *testing.T) {
 		if err := client.Authenticate(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		calls := f.invalidTokenOnce("/warp/v1/probe", reason)
+		calls := f.invalidTokenOnce("/chargewire/v1/probe", reason)
 		resp, err := client.Do(context.Background(), &Request{Method: http.MethodGet, Path: "/v1/probe", Idempotent: true})
 		f.mu.Lock()
 		tokens := f.tokens
@@ -72,7 +72,7 @@ func TestInvalidTokenRenewsOnce(t *testing.T) {
 	f := newFake(t)
 	client := f.client(password, 1)
 	calls := atomic.Int32{}
-	f.mux.HandleFunc("GET /warp/v1/always", func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/always", func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		writeProblem(w, http.StatusUnauthorized, CodeInvalidToken, ReasonTokenExpired)
 	})
@@ -89,7 +89,7 @@ func TestSessionEndedReasonsV1(t *testing.T) {
 	for _, reason := range []string{ReasonCredentialsChanged, ReasonPrincipalDropped, ReasonTokenRevoked, "a_later_reason"} {
 		f := newFake(t).withSessions()
 		session := openTestSession(t, f, true)
-		f.mux.HandleFunc("GET /warp/v1/sessions/{id}/metadata/server-info", f.auth(func(w http.ResponseWriter, r *http.Request) {
+		f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}/metadata/server-info", f.auth(func(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusUnauthorized, CodeSessionEnded, reason)
 		}))
 		_, err := session.ServerInfo(context.Background())
@@ -109,7 +109,7 @@ func TestSessionEndedTokenExpiredWithoutRenewableCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.mux.HandleFunc("GET /warp/v1/sessions/{id}/metadata/server-info", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}/metadata/server-info", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnauthorized, CodeSessionEnded, ReasonTokenExpired)
 	}))
 	_, err = session.ServerInfo(context.Background())
@@ -123,7 +123,7 @@ func TestSessionEndedTokenExpiredWithoutRenewableCredentials(t *testing.T) {
 // its status, which decides how it is handled (§11, §12).
 func TestErrorWithoutProblemDocumentHasAClientCode(t *testing.T) {
 	f := newFake(t)
-	f.mux.HandleFunc("GET /warp/v1/gateway", func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/gateway", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "<html>bad gateway</html>", http.StatusBadGateway)
 	})
 	_, err := f.client(Credentials{AccessToken: "x"}, 1).Do(context.Background(), &Request{Method: http.MethodGet, Path: "/v1/gateway", Idempotent: true, Anonymous: true})
@@ -134,11 +134,11 @@ func TestErrorWithoutProblemDocumentHasAClientCode(t *testing.T) {
 }
 
 // A statement's error response carries its cancel_reason, and names the
-// statement in Warp-Statement-Id (§6.1).
+// statement in Chargewire-Statement-Id (§6.1).
 func TestStatementErrorResponse(t *testing.T) {
 	f := newFake(t).withSessions()
-	f.mux.HandleFunc("POST /warp/v1/sessions/{id}/prepared/{p}/execute", f.auth(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Warp-Statement-Id", "q_cancelled")
+	f.mux.HandleFunc("POST /chargewire/v1/sessions/{id}/prepared/{p}/execute", f.auth(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Chargewire-Statement-Id", "q_cancelled")
 		w.Header().Set("Content-Type", MediaTypeProblem)
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": CodeStatementCancelled, "status": 409,
@@ -158,7 +158,7 @@ func TestStatementErrorResponse(t *testing.T) {
 func TestUnknownStatementStateIsNotTerminal(t *testing.T) {
 	f := newFake(t).withSessions()
 	polls := atomic.Int32{}
-	f.mux.HandleFunc("GET /warp/v1/sessions/{id}/statements/{q}", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}/statements/{q}", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		state := "a_state_from_a_later_version"
 		if polls.Add(1) >= 3 {
 			state = string(StateSucceeded)
@@ -184,7 +184,7 @@ func TestUnknownStatementStateIsNotTerminal(t *testing.T) {
 func TestSessionTransaction(t *testing.T) {
 	f := newFake(t)
 	var transaction atomic.Value
-	f.mux.HandleFunc("GET /warp/v1/sessions/{id}", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		doc := map[string]any{"session_id": r.PathValue("id"), "options": map[string]any{}}
 		if value := transaction.Load().(string); value != "" {
 			doc["transaction"] = value
@@ -204,7 +204,7 @@ func TestSessionTransaction(t *testing.T) {
 	}
 }
 
-// Warp-Query-Tag is a JSON object sent in ASCII, at most 4,096 bytes (§2.5).
+// Chargewire-Query-Tag is a JSON object sent in ASCII, at most 4,096 bytes (§2.5).
 func TestNormalizeQueryTag(t *testing.T) {
 	for tag, want := range map[string]string{
 		`{"job": "nightly-load", "run": 1}`: `{"job":"nightly-load","run":1}`,
@@ -258,8 +258,8 @@ func jsonEqual(a, b any) bool {
 func TestQueryTagHeader(t *testing.T) {
 	f := newFake(t).withSessions()
 	var seen atomic.Value
-	f.mux.HandleFunc("POST /warp/v1/sessions/{id}/ingest", f.auth(func(w http.ResponseWriter, r *http.Request) {
-		seen.Store(r.Header.Get("Warp-Query-Tag"))
+	f.mux.HandleFunc("POST /chargewire/v1/sessions/{id}/ingest", f.auth(func(w http.ResponseWriter, r *http.Request) {
+		seen.Store(r.Header.Get("Chargewire-Query-Tag"))
 		writeJSON(w, http.StatusOK, map[string]any{"rows_ingested": 0})
 	}))
 	session := openTestSession(t, f, true)
@@ -269,7 +269,7 @@ func TestQueryTagHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := seen.Load(); got != `{"who":"Zo\u00eb"}` {
-		t.Fatalf("Warp-Query-Tag %q", got)
+		t.Fatalf("Chargewire-Query-Tag %q", got)
 	}
 }
 
@@ -280,10 +280,10 @@ func TestPartitionedIngestWire(t *testing.T) {
 	var commit atomic.Value
 	openAnswer := atomic.Value{}
 	openAnswer.Store(map[string]any{"ingest_id": "i1", "state": IngestOpen, "parts": []any{}})
-	f.mux.HandleFunc("POST /warp/v1/sessions/{id}/ingests", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("POST /chargewire/v1/sessions/{id}/ingests", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusCreated, openAnswer.Load())
 	}))
-	f.mux.HandleFunc("POST /warp/v1/sessions/{id}/ingests/{i}/commit", f.auth(func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("POST /chargewire/v1/sessions/{id}/ingests/{i}/commit", f.auth(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		commit.Store(body)
@@ -307,11 +307,11 @@ func TestPartitionedIngestWire(t *testing.T) {
 }
 
 // Only a client that asks gets remote locations, and the header is
-// Warp-Result-Locations: remote (§2.5, §6.2).
+// Chargewire-Result-Locations: remote (§2.5, §6.2).
 func TestRemoteLocationsHeader(t *testing.T) {
 	for _, remote := range []bool{false, true} {
 		sub := &Submission{RemoteLocations: remote}
-		got := sub.request(false, true).Header.Get("Warp-Result-Locations")
+		got := sub.request(false, true).Header.Get("Chargewire-Result-Locations")
 		if (remote && got != "remote") || (!remote && got != "") {
 			t.Errorf("RemoteLocations %v: header %q", remote, got)
 		}
@@ -327,7 +327,7 @@ func TestTLSAlertCertificateRequired(t *testing.T) {
 	server.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS13}
 	server.StartTLS()
 	t.Cleanup(server.Close)
-	base, _ := url.Parse(server.URL + "/warp")
+	base, _ := url.Parse(server.URL + "/chargewire")
 	client := NewClient(Config{BaseURL: base, HTTPClient: server.Client(), MaxAttempts: 3})
 	_, err := client.Do(context.Background(), &Request{Method: http.MethodGet, Path: "/v1/x", Idempotent: true, Anonymous: true})
 	if p, ok := errors.AsType[*Problem](err); !ok || p.Code != CodeCertificateRequired || p.Status != http.StatusUnauthorized {

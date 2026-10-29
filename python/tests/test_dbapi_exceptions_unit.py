@@ -13,7 +13,7 @@ import adbc_driver_manager
 import adbc_driver_manager.dbapi
 import pytest
 
-from adbc_driver_warpsql import DatabaseOptions, dbapi
+from adbc_driver_chargewire import DatabaseOptions, dbapi
 
 PEP_249_EXCEPTIONS = [
     "Error",
@@ -61,10 +61,10 @@ def _unused_port() -> int:
 def test_a_real_failure_is_caught_by_the_modules_classes():
     with pytest.raises(expected_exception=dbapi.Error) as caught:
         dbapi.connect(
-            uri=f"warp://127.0.0.1:{_unused_port()}?tls=false",
+            uri=f"chargewire://127.0.0.1:{_unused_port()}?tls=false",
             username="u",
             password="p",
             db_kwargs={DatabaseOptions.RETRY_MAX_ATTEMPTS.value: "1"},
         )
     assert isinstance(caught.value, dbapi.DatabaseError), type(caught.value)
-    assert "[warpsql]" in str(caught.value)
+    assert "[chargewire]" in str(caught.value)
