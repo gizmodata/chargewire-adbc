@@ -66,6 +66,11 @@ type Config struct {
 	MaxAttempts int
 	UserAgent   string
 	Logger      *slog.Logger
+	// Fallback, when set, is the spelling Discover tries next when the
+	// server answers discovery at BaseURL with 404: if the server describes
+	// itself in it at Fallback.Root (same scheme and host), the client speaks
+	// that spelling from then on.
+	Fallback *Dialect
 }
 
 // Client speaks the protocol to one server. It is safe for concurrent use;
@@ -77,6 +82,10 @@ type Client struct {
 	maxAttempts int
 	userAgent   string
 	logger      *slog.Logger
+	fallback    *Dialect
+	// dialect is the spelling discovery settled on; nil for the current one.
+	// Set only by Discover, before the client is shared.
+	dialect *Dialect
 
 	tokenMu sync.Mutex
 	token   string
@@ -95,6 +104,7 @@ func NewClient(cfg Config) *Client {
 		maxAttempts: max(cfg.MaxAttempts, 1),
 		userAgent:   cfg.UserAgent,
 		logger:      cfg.Logger,
+		fallback:    cfg.Fallback,
 		token:       cfg.Credentials.AccessToken,
 		expiresAt:   TokenExpiry(cfg.Credentials.AccessToken),
 	}
@@ -186,6 +196,9 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 			return resp, nil
 		}
 		problem := readProblem(resp)
+		if c.dialect != nil {
+			c.dialect.problem(problem)
+		}
 		switch {
 		case problem.Code == CodeInvalidToken && renewable(problem.Reason) && !renewed && !req.Anonymous &&
 			c.credentials.grant() != nil && req.Body.Replayable():
@@ -297,9 +310,15 @@ func (c *Client) send(ctx context.Context, req *Request, token string) (*http.Re
 	if c.userAgent != "" {
 		httpReq.Header.Set("User-Agent", c.userAgent)
 	}
+	if c.dialect != nil {
+		c.dialect.requestHeaders(httpReq.Header)
+	}
 	start := time.Now()
 	resp, err := c.http.Do(httpReq)
 	if err == nil {
+		if c.dialect != nil {
+			c.dialect.responseHeaders(resp.Header)
+		}
 		c.logger.DebugContext(ctx, "chargewire request", "method", req.Method, "path", req.Path,
 			"status", resp.StatusCode, "request_id", resp.Header.Get("Chargewire-Request-Id"),
 			"elapsed", time.Since(start))
@@ -343,8 +362,40 @@ func (e *TransportError) Error() string { return e.Op + ": " + e.Err.Error() }
 func (e *TransportError) Unwrap() error { return e.Err }
 
 // Discover reads the discovery document (§3.1) and checks the server speaks
-// protocol version 1.
+// protocol version 1. With a Fallback, a server that answers 404 is asked
+// again at the fallback's root; when it describes itself there in that
+// spelling, the client speaks it from then on. Otherwise the first answer's
+// error stands. Call it once, before the client is shared.
 func (c *Client) Discover(ctx context.Context) (*Discovery, error) {
+	doc, err := c.discover(ctx, nil)
+	if err != nil && c.fallback != nil && HasStatus(err, http.StatusNotFound) {
+		alt := *c.base
+		alt.Path, alt.RawPath = c.fallback.Root, ""
+		if other, otherErr := c.discover(ctx, &alt); otherErr == nil && other.Protocol == c.fallback.Protocol {
+			c.base, c.dialect = &alt, c.fallback
+			doc, err = other, nil
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	want := ProtocolName
+	if c.dialect != nil {
+		want = c.dialect.Protocol
+	}
+	if doc.Protocol != want {
+		return nil, fmt.Errorf("%s does not describe a Chargewire server (protocol %q)", c.base.Redacted(), doc.Protocol)
+	}
+	for _, version := range doc.ProtocolVersions {
+		if version == "1" {
+			return doc, nil
+		}
+	}
+	return nil, fmt.Errorf("the server at %s does not speak Chargewire version 1 (it offers %v)", c.base.Redacted(), doc.ProtocolVersions)
+}
+
+// discover reads the discovery document at base (nil: the client's own).
+func (c *Client) discover(ctx context.Context, base *url.URL) (*Discovery, error) {
 	doc := &Discovery{}
 	// The time from the request's last byte to the answer's first is about one
 	// round trip: the server answers discovery at once.
@@ -369,21 +420,14 @@ func (c *Client) Discover(ctx context.Context) (*Discovery, error) {
 			mu.Unlock()
 		},
 	}
-	if _, err := c.doJSON(ctx, &Request{Method: http.MethodGet, Path: "", Idempotent: true, Anonymous: true, Trace: trace}, doc); err != nil {
+	req := &Request{Method: http.MethodGet, Path: "", Idempotent: true, Anonymous: true, Trace: trace, BaseURL: base}
+	if _, err := c.doJSON(ctx, req, doc); err != nil {
 		return nil, err
 	}
 	mu.Lock()
 	doc.RTT = rtt
 	mu.Unlock()
-	if doc.Protocol != "chargewire" {
-		return nil, fmt.Errorf("%s does not describe a Chargewire server (protocol %q)", c.base.Redacted(), doc.Protocol)
-	}
-	for _, version := range doc.ProtocolVersions {
-		if version == "1" {
-			return doc, nil
-		}
-	}
-	return nil, fmt.Errorf("the server at %s does not speak Chargewire version 1 (it offers %v)", c.base.Redacted(), doc.ProtocolVersions)
+	return doc, nil
 }
 
 // Authenticate obtains an access token now, so that wrong credentials fail

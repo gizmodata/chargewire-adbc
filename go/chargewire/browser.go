@@ -125,7 +125,7 @@ func BrowserSignIn(ctx context.Context, options map[string]string, open BrowserO
 	}
 	defer transport.CloseIdleConnections()
 	client := protocol.NewClient(protocol.Config{BaseURL: base, HTTPClient: &http.Client{Transport: transport},
-		MaxAttempts: defaultMaxAttempts, UserAgent: userAgent()})
+		MaxAttempts: defaultMaxAttempts, UserAgent: userAgent(), Fallback: fallbackFor(base)})
 	discovery, err := client.Discover(ctx)
 	if err != nil {
 		if hint := plainHTTPError(err, options[adbc.OptionKeyURI], base); hint != nil {

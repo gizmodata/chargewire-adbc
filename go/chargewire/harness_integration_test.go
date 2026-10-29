@@ -105,6 +105,7 @@ type testServer struct {
 	scheme   string
 	home     string // the server's own HOME, removed when it stops
 	log      *syncBuffer
+	root     string // the base path it answers discovery at
 }
 
 // syncBuffer collects the server's output for failure messages.
@@ -137,6 +138,12 @@ func freePort() (int, error) {
 // launchServer starts the binary with a fresh password that contains ':' and
 // '@' (credentials travel as JSON fields, so nothing may split them, §4.1).
 func launchServer(binary string, extraArgs []string) (*testServer, error) {
+	return launchServerAt(binary, extraArgs, envOr(serverPasswordEnvEnv, "CHARGEWIRE_DUCKDB_PASSWORD"), defaultBasePath)
+}
+
+// launchServerAt starts the binary with its password in passwordEnv, and
+// waits for discovery to answer at root.
+func launchServerAt(binary string, extraArgs []string, passwordEnv, root string) (*testServer, error) {
 	port, err := freePort()
 	if err != nil {
 		return nil, err
@@ -148,6 +155,7 @@ func launchServer(binary string, extraArgs []string) (*testServer, error) {
 		password: hex.EncodeToString(secret) + ":p@ss:word",
 		scheme:   "http",
 		log:      &syncBuffer{},
+		root:     root,
 	}
 	args := []string{"--host", "127.0.0.1", "--port", fmt.Sprint(port), envOr(serverUserFlagEnv, "--username"), testUsername}
 	for _, arg := range extraArgs {
@@ -169,7 +177,7 @@ func launchServer(binary string, extraArgs []string) (*testServer, error) {
 	}
 	server.home = home
 	server.cmd = exec.Command(binary, args...)
-	server.cmd.Env = append(os.Environ(), envOr(serverPasswordEnvEnv, "CHARGEWIRE_DUCKDB_PASSWORD")+"="+server.password,
+	server.cmd.Env = append(os.Environ(), passwordEnv+"="+server.password,
 		"HOME="+home)
 	server.cmd.Stdout, server.cmd.Stderr = server.log, server.log
 	if err := server.cmd.Start(); err != nil {
@@ -187,7 +195,7 @@ func (s *testServer) waitUp() error {
 	deadline := time.Now().Add(20 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(s.scheme + "://" + s.host + "/chargewire")
+		resp, err := client.Get(s.scheme + "://" + s.host + s.root)
 		if err != nil && strings.Contains(err.Error(), "certificate required") {
 			return nil // a server that requires client certificates answered the handshake
 		}
@@ -197,7 +205,7 @@ func (s *testServer) waitUp() error {
 			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
-			lastErr = fmt.Errorf("GET /chargewire: %s", resp.Status)
+			lastErr = fmt.Errorf("GET %s: %s", s.root, resp.Status)
 		} else {
 			lastErr = err
 		}

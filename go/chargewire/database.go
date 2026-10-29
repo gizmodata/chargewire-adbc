@@ -321,6 +321,7 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 		MaxAttempts: d.maxAttempts,
 		UserAgent:   userAgent(),
 		Logger:      d.Logger,
+		Fallback:    fallbackFor(base),
 	})
 	discovery, err := client.Discover(ctx)
 	if err != nil {

@@ -15,6 +15,11 @@ All notable changes to this project are documented here. The format follows
   `chargewire`), the `chargewire://` URI scheme, `adbc.chargewire.*` options and
   `chargewire.*` error details. Connection strings saved before the rename keep working: their
   URI scheme and option keys are read as the new ones.
+- The driver also works with servers from before the rename. At the default base path, a server
+  that doesn't answer discovery there but describes itself in the protocol's earlier spelling is
+  spoken to in that spelling (its base path and header names) for the whole database and every
+  connection opened from it; discovery runs once per database. A custom base path never falls
+  back, and a server that answers neither way gets the original error.
 
 ## [1.0.0] - 2026-10-20
 

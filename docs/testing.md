@@ -30,6 +30,13 @@ export CHARGEWIRE_ADBC_TEST_SERVER_NAME=Hardcharger
 make -C go integration-test && pytest python/tests
 ```
 
+Servers from before the protocol's rename (its 1.0.x reference server) are tested when
+`CHARGEWIRE_ADBC_TEST_LEGACY_SERVER_BINARY` names one: Go `TestIntegrationLegacyServer` and Python
+`TestLegacyServer` (connect, query, prepared parameters, bulk ingest, a SQL error's class and
+code, a statement timeout, GetObjects and GetTableSchema). Without the variable those tests skip;
+the rest of the suite still runs. The same files show that a current server is never asked for
+the earlier spelling (a recording proxy sees only `/chargewire`).
+
 The browser sign-in tests start a server of their own against a mock OpenID Connect provider.
 Its flags come from `CHARGEWIRE_ADBC_TEST_SERVER_OAUTH_ARGS` (a template with `{issuer}`,
 `{client_id}`, `{identity}` and `{base_url}`) and its client secret goes in the variable

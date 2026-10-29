@@ -66,6 +66,7 @@ func parseURI(raw string) (*url.URL, error) {
 	if u.Path == "" {
 		u.Path = defaultBasePath
 	}
+	u.Path = currentBasePath(u.Path)
 	u.RawPath = ""
 	return u, nil
 }

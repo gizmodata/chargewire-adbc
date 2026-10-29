@@ -70,6 +70,7 @@ class Server:
     password: str
     process: subprocess.Popen
     tls: bool = False
+    root: str = "/chargewire"
 
     @property
     def base_url(self) -> str:
@@ -100,7 +101,7 @@ def _wait_up(server: Server, timeout: float = 20) -> None:
             break
         try:
             with urllib.request.urlopen(
-                url=f"{server.base_url}/chargewire", timeout=2, context=context
+                url=f"{server.base_url}{server.root}", timeout=2, context=context
             ):
                 return
         except (urllib.error.URLError, OSError) as error:
@@ -110,14 +111,23 @@ def _wait_up(server: Server, timeout: float = 20) -> None:
         time.sleep(0.1)
     stop_server(server=server)
     pytest.fail(
-        reason=f"no Chargewire server answered at {server.base_url}/chargewire ({last_error})"
+        reason=f"no Chargewire server answered at {server.base_url}{server.root} ({last_error})"
     )
 
 
-def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
+def start_server(
+    log: Path,
+    extra_args: list[str] | None = None,
+    binary: str | None = None,
+    password_env: str = SERVER_PASSWORD_ENV,
+    root: str = "/chargewire",
+) -> Server:
     """Start the server binary on a free port with a fresh password that contains ':'
-    and '@' (credentials travel as JSON fields, so nothing may split them)."""
-    binary = os.environ.get(SERVER_BINARY_ENV)
+    and '@' (credentials travel as JSON fields, so nothing may split them).
+
+    ``binary`` (default: ``CHARGEWIRE_ADBC_TEST_SERVER_BINARY``) reads its password from
+    ``password_env`` and answers discovery at ``root``."""
+    binary = binary or os.environ.get(SERVER_BINARY_ENV)
     if not binary:
         pytest.fail(
             reason=f"set {SERVER_BINARY_ENV} to a chargewire-duckdb binary "
@@ -142,7 +152,7 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
                 USERNAME,
                 *[_mtls_flag(arg=arg) for arg in extra_args],
             ],
-            env={**os.environ, SERVER_PASSWORD_ENV: password, "HOME": str(home)},
+            env={**os.environ, password_env: password, "HOME": str(home)},
             stdout=out,
             stderr=subprocess.STDOUT,
         )
@@ -152,6 +162,7 @@ def start_server(log: Path, extra_args: list[str] | None = None) -> Server:
         password=password,
         process=process,
         tls="--tls-cert" in extra_args,
+        root=root,
     )
     _wait_up(server=server)
     return server
