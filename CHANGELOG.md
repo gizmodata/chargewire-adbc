@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `legacy/adbc-driver-warpsql` and the `warpsql-shim` workflow (run by hand): the PyPI project from before the
+  rename, whose releases install this driver and forward its old import name, published with provenance through
+  trusted publishing.
+
 ## [2.0.0] - 2026-10-29
 
 The driver for the protocol under its new name, Chargewire: `adbc-driver-chargewire` on PyPI and the Go

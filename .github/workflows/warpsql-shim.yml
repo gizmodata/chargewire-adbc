@@ -1,0 +1,78 @@
+name: warpsql-shim
+
+# Publishes adbc-driver-warpsql, the PyPI project from before the protocol's rename to Chargewire. Its last
+# releases only install adbc-driver-chargewire and forward `import adbc_driver_warpsql` to it, with a
+# DeprecationWarning (legacy/adbc-driver-warpsql). By hand only, from main: Run workflow publishes the version in
+# legacy/adbc-driver-warpsql/pyproject.toml through PyPI trusted publishing (environment pypi-warpsql, this
+# workflow file), so the release carries provenance attestations. It runs after the forwarding test passes on
+# the built wheel, installed with its real dependencies from PyPI.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: legacy/adbc-driver-warpsql
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Build and check the distributions
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - name: Test the wheel with its real dependencies
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/shim
+          /tmp/shim/bin/pip install --quiet dist/*.whl
+          /tmp/shim/bin/python - <<'EOF'
+          import warnings
+          with warnings.catch_warnings(record=True) as caught:
+              warnings.simplefilter("always")
+              import adbc_driver_warpsql
+              from adbc_driver_warpsql import dbapi
+          import adbc_driver_chargewire
+          assert any(issubclass(w.category, DeprecationWarning) for w in caught), "no DeprecationWarning on import"
+          assert dbapi is adbc_driver_chargewire.dbapi, "adbc_driver_warpsql.dbapi is not adbc_driver_chargewire.dbapi"
+          assert callable(dbapi.connect)
+          print(f"adbc-driver-warpsql {adbc_driver_warpsql.__version__} forwards to adbc-driver-chargewire")
+          EOF
+      - uses: actions/upload-artifact@v7
+        with:
+          name: warpsql-shim-dist
+          path: legacy/adbc-driver-warpsql/dist/
+          if-no-files-found: error
+
+  pypi:
+    if: github.ref == 'refs/heads/main'
+    needs: [build]
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi-warpsql
+      url: https://pypi.org/p/adbc-driver-warpsql
+    permissions:
+      id-token: write  # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: warpsql-shim-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

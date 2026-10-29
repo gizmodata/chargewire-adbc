@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "adbc-driver-warpsql"
+version = "1.0.2"
+description = "Renamed to adbc-driver-chargewire. This release only installs it and forwards imports."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "GizmoData LLC" }]
+dependencies = ["adbc-driver-chargewire>=2.0.0,<3"]
+classifiers = [
+  "Development Status :: 7 - Inactive",
+  "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://pypi.org/project/adbc-driver-chargewire/"
+Source = "https://github.com/gizmodata/chargewire-adbc"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/adbc_driver_warpsql"]
