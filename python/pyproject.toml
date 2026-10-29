@@ -10,7 +10,7 @@ adbc_driver_chargewire = ["libadbc_driver_chargewire.*", "THIRD_PARTY_NOTICES"]
 
 [project]
 name = "adbc-driver-chargewire"
-version = "2.0.0"
+version = "2.0.1"
 description = "Python ADBC driver for the Chargewire protocol (SQL over HTTP with Arrow), backed by a native Go driver"
 readme = "README.md"
 license = "Apache-2.0"
