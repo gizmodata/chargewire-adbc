@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow-adbc/go/adbc"
-	"github.com/gizmodata/chargewire-adbc/go/internal/protocol"
+	"github.com/gizmodata/chargewire-adbc/go/v2/internal/protocol"
 )
 
 // Database options. The standard "uri", "username" and "password" options

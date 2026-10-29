@@ -8,7 +8,7 @@ import (
 	"net/url"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/gizmodata/chargewire-adbc/go/internal/protocol"
+	"github.com/gizmodata/chargewire-adbc/go/v2/internal/protocol"
 )
 
 // partitionDescriptor is what ExecutePartitions hands out for one partition

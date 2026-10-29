@@ -16,7 +16,7 @@ import (
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
-	"github.com/gizmodata/chargewire-adbc/go/internal/protocol"
+	"github.com/gizmodata/chargewire-adbc/go/v2/internal/protocol"
 )
 
 // defaultMaxAttempts is how often a request that is safe to repeat is sent.

@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-adbc/go/adbc"
-	"github.com/gizmodata/chargewire-adbc/go/internal/protocol"
+	"github.com/gizmodata/chargewire-adbc/go/v2/internal/protocol"
 )
 
 // wantCodeStatuses is the status each Chargewire code (§11) must give, written

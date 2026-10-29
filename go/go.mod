@@ -1,4 +1,4 @@
-module github.com/gizmodata/chargewire-adbc/go
+module github.com/gizmodata/chargewire-adbc/go/v2
 
 go 1.27.2
 

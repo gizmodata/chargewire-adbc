@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	"github.com/gizmodata/chargewire-adbc/go/internal/protocol"
+	"github.com/gizmodata/chargewire-adbc/go/v2/internal/protocol"
 )
 
 const (

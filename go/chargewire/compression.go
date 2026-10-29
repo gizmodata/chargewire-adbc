@@ -5,7 +5,7 @@ package chargewire
 import (
 	"time"
 
-	"github.com/gizmodata/chargewire-adbc/go/internal/protocol"
+	"github.com/gizmodata/chargewire-adbc/go/v2/internal/protocol"
 )
 
 // Values of OptionIPCCompression; the codecs are named as in §8.2.

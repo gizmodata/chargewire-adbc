@@ -74,7 +74,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/cdata"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/arrow/memory/mallocator"
-	chargewire "github.com/gizmodata/chargewire-adbc/go/chargewire"
+	chargewire "github.com/gizmodata/chargewire-adbc/go/v2/chargewire"
 )
 
 // Must use malloc() to respect CGO rules

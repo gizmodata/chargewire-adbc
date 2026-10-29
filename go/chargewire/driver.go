@@ -81,7 +81,7 @@ func userAgent() string {
 	if version == "" {
 		if build, ok := debug.ReadBuildInfo(); ok {
 			for _, dep := range build.Deps {
-				if dep.Path == "github.com/gizmodata/chargewire-adbc/go" {
+				if dep.Path == "github.com/gizmodata/chargewire-adbc/go/v2" {
 					version = dep.Version
 				}
 			}

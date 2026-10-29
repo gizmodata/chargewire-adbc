@@ -47,7 +47,7 @@ pip install adbc-driver-chargewire
 
 The wheel carries the driver's shared library for Linux (amd64, arm64; glibc 2.17 or newer),
 macOS (arm64, amd64) and Windows (amd64). Go applications `go get
-github.com/gizmodata/chargewire-adbc/go` (the module is versioned by `go/vX.Y.Z` tags, one per
+github.com/gizmodata/chargewire-adbc/go/v2` (the module is versioned by `go/vX.Y.Z` tags, one per
 release, on the release's commit). Every other ADBC language loads the library from a
 [GitHub Release](https://github.com/gizmodata/chargewire-adbc/releases) through a driver manifest
 (`packaging/chargewire.toml.in`).
