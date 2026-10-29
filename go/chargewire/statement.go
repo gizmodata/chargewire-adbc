@@ -137,6 +137,7 @@ func (st *statementImpl) codec() string {
 }
 
 func (st *statementImpl) SetOption(ctx context.Context, key, value string) error {
+	key = currentOptionKey(key)
 	if handled, err := st.opts.set(key, value); handled {
 		return err
 	}
@@ -185,6 +186,7 @@ func (st *statementImpl) SetOption(ctx context.Context, key, value string) error
 }
 
 func (st *statementImpl) GetOption(ctx context.Context, key string) (string, error) {
+	key = currentOptionKey(key)
 	if value, ok := st.opts.get(key); ok {
 		return value, nil
 	}

@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The protocol is now called Chargewire, and the driver speaks it under the new names: the
+  `adbc-driver-chargewire` package (module `adbc_driver_chargewire`), the
+  `libadbc_driver_chargewire` library (entry point `AdbcDriverChargewireInit`, driver manifest
+  `chargewire.toml`), the Go module `github.com/gizmodata/chargewire-adbc/go` (package
+  `chargewire`), the `chargewire://` URI scheme, `adbc.chargewire.*` options and
+  `chargewire.*` error details. Connection strings saved before the rename keep working: their
+  URI scheme and option keys are read as the new ones.
+
 ## [1.0.0] - 2026-10-20
 
 The first release: the ADBC driver for Chargewire protocol 1.0.0, for Python (`adbc-driver-chargewire`

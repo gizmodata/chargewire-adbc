@@ -69,7 +69,7 @@ func newDatabase(ctx context.Context, driver *driverbase.DriverImplBase, opts ma
 	base.DriverInfo = cloneDriverInfo(driver.DriverInfo)
 	db := &databaseImpl{DatabaseImplBase: base, maxAttempts: defaultMaxAttempts, reconnect: true,
 		defaults: defaultExecOptions()}
-	for key, value := range opts {
+	for key, value := range currentOptions(opts) {
 		if err := db.SetOption(ctx, key, value); err != nil {
 			return nil, err
 		}
@@ -91,6 +91,7 @@ func (d *databaseImpl) opened() bool {
 }
 
 func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
+	key = currentOptionKey(key)
 	switch key {
 	case adbc.OptionKeyTelemetryTracesExporter, adbc.OptionKeyTelemetryTracesFolderPath:
 		return nil // read when the database was created
@@ -188,6 +189,7 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 }
 
 func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error) {
+	key = currentOptionKey(key)
 	if value, ok := d.defaults.get(key); ok {
 		return value, nil
 	}

@@ -36,7 +36,7 @@ func parseURI(raw string) (*url.URL, error) {
 		return nil, fmt.Errorf("invalid uri %q: credentials do not belong in the uri; use the username and password options", u.Redacted())
 	}
 	query := u.Query()
-	switch strings.ToLower(u.Scheme) {
+	switch strings.ToLower(currentScheme(u.Scheme)) {
 	case SchemeChargewire:
 		u.Scheme = "https"
 		if value := query.Get("tls"); value != "" {

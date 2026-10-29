@@ -97,6 +97,7 @@ type BrowserSignInResult struct {
 // default); StatusCancelled when ctx is done.
 func BrowserSignIn(ctx context.Context, options map[string]string, open BrowserOpener,
 	timeout time.Duration) (*BrowserSignInResult, error) {
+	options = currentOptions(options)
 	base, err := parseURI(options[adbc.OptionKeyURI])
 	if err != nil {
 		return nil, adbc.Error{Code: adbc.StatusInvalidArgument, Msg: fmt.Sprintf("[%s] %v", driverName, err)}
