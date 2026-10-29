@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-29
+
+### Fixed
+
+- The README's status line still described 1.0.0 and Hardcharger 2.0.0. It now names no version,
+  and points at the latest release and this changelog instead.
+
 ### Added
 
 - `legacy/adbc-driver-warpsql` and the `warpsql-shim` workflow (run by hand): the PyPI project from before the

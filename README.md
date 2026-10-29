@@ -36,8 +36,11 @@ implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and Ja
 - 🛑 **Cancel that really cancels:** Ctrl+C or a Go context stops the statement on the server.
 - 🔐 **TLS by default**, mutual TLS and token exchange for SSO.
 
-> **Status: 1.0.0, for Chargewire protocol 1.0.0.** Tested against `chargewire-duckdb`, the reference
-> server, and [Hardcharger](https://github.com/gizmodata/hardcharger) 2.0.0.
+> **Status: stable**, for Chargewire protocol 1.0, on [PyPI](https://pypi.org/project/adbc-driver-chargewire/)
+> and the Go module proxy. The [latest release](https://github.com/gizmodata/chargewire-adbc/releases/latest)
+> and [CHANGELOG.md](CHANGELOG.md) say what each version brings. It works with servers on either side of the
+> protocol's rename, and is tested against `chargewire-duckdb`, the reference server, and
+> [Hardcharger](https://github.com/gizmodata/hardcharger).
 
 ## 📥 Install
 
