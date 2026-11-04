@@ -102,6 +102,10 @@ const (
 	ReasonCredentialsChanged = "credentials_changed"
 	ReasonPrincipalDropped   = "principal_dropped"
 	ReasonKilled             = "killed" // session_ended only
+	// ReasonIdleInTransaction: the session held a transaction open with
+	// nothing running for longer than its idle_in_transaction_timeout_s
+	// (§5.7); the server ended it and rolled the transaction back.
+	ReasonIdleInTransaction = "idle_in_transaction" // session_ended only
 )
 
 // Why a statement was cancelled (§6.2), in a statement document's or a

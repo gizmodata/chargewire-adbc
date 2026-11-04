@@ -75,10 +75,16 @@ const (
 	OptionRetryMaxAttempts = "adbc.chargewire.retry.max_attempts"
 
 	// OptionSessionReconnect ("true"/"false", default "true") says whether a
-	// session the server lost (evicted when idle, server restarted) is
-	// replaced by a new one with the connection's options. Work that needs
-	// the old session (an open transaction, a pending result) fails either
-	// way; this decides whether the connection is usable afterwards.
+	// session the server lost (evicted when idle, server restarted, or ended
+	// for idling in a transaction) is replaced by a new one with the
+	// connection's options. Work that needs the old session (an open
+	// transaction, a pending result) fails either way; this decides whether
+	// the connection is usable afterwards. A request that finds the session
+	// gone runs again in the replacement only when the driver knows no
+	// transaction was open in the lost one, whether begun with autocommit
+	// off or with SQL BEGIN: after a statement that could have begun or ended
+	// one, the driver reads the session's transaction from the server, and
+	// until it has, assumes one is open.
 	OptionSessionReconnect = "adbc.chargewire.session.reconnect"
 
 	// OptionSessionID, set on the database before its first connection

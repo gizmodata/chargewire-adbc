@@ -91,8 +91,14 @@ uploads retried with the same `Idempotency-Key` and run once; the answer to a pa
 upload sent again arriving every time, directly and through the proxy (which reads every
 request body to its end, so it loses no answer itself); retried status polls;
 failures mid-stream; lost sessions (replaced with options replayed, temporary state
-reported, refused inside a transaction, commit refused, reconnect off, prepared statement
-re-prepared, retained result lost); partitions read on another connection; zstd and lz4_frame results and
+reported, refused inside a transaction begun with autocommit off or with SQL `BEGIN`, for plain,
+queried and prepared statements and metadata calls, run again after a SQL `COMMIT`, commit
+refused, reconnect off, prepared statement re-prepared, retained result lost); a session the
+server ended for idling in a transaction (`idle_in_transaction`, a server of its own started with
+the idle-in-transaction timeout flag named by `CHARGEWIRE_ADBC_TEST_SERVER_IDLE_IN_TRANSACTION_FLAG`,
+Hardcharger's `--idle-in-transaction-session-timeout`): replaced, the statement not run again,
+the connection usable; nested schemas (`sales.payroll`, and a top-level `"sales.payroll"`) in
+GetObjects, its schema filter and GetTableSchema; partitions read on another connection; zstd and lz4_frame results and
 uploads; query tags; ingest modes, temporary tables, target catalog/schema, a 2M-row
 streamed upload; GetObjects at every depth with LIKE patterns and escaping; GetTableSchema
 resolution; GetInfo; current catalog/schema; transactions; TLS, mutual TLS, server name,

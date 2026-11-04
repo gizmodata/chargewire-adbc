@@ -349,3 +349,59 @@ func TestIntegrationTransactions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A schema nested in another (DuckDB 2.0: CREATE SCHEMA sales.payroll) is
+// named by its path, sales.payroll, and a top-level schema whose name holds a
+// dot by its quoted name, "sales.payroll" (§10). The driver passes both
+// through as text: listed, filtered and looked up, never split or refused.
+func TestIntegrationNestedSchemas(t *testing.T) {
+	cnxn := openConn(t)
+	execUpdate(t, cnxn, `ATTACH IF NOT EXISTS ':memory:' AS nest; CREATE SCHEMA IF NOT EXISTS nest.sales; `+
+		`CREATE SCHEMA IF NOT EXISTS nest.sales.payroll; CREATE SCHEMA IF NOT EXISTS nest."sales.payroll"; `+
+		`CREATE TABLE IF NOT EXISTS nest.sales.payroll.wages (id INTEGER PRIMARY KEY, amount DECIMAL(10, 2)); `+
+		`CREATE TABLE IF NOT EXISTS nest."sales.payroll".lookalike (x VARCHAR)`)
+	catalog := new("nest")
+	quoted := `"sales.payroll"`
+
+	infos := getObjects(t, cnxn, adbc.ObjectDepthTables, catalog, nil, nil, nil, nil)
+	if len(infos) != 1 {
+		t.Fatalf("catalog nest matched %d catalogs", len(infos))
+	}
+	for name, tables := range map[string][]string{"sales": nil, "sales.payroll": {"wages"}, quoted: {"lookalike"}} {
+		schema := findSchema(&infos[0], name)
+		if schema == nil {
+			var names []string
+			for _, s := range infos[0].CatalogDbSchemas {
+				names = append(names, *s.DbSchemaName)
+			}
+			t.Fatalf("schema %s missing; nest has %q", name, names)
+		}
+		if got := tableNames(schema); !slices.Equal(got, tables) {
+			t.Errorf("tables of %s = %v, want %v", name, got, tables)
+		}
+	}
+
+	// The schema filter matches the path's text (§10).
+	filtered := getObjects(t, cnxn, adbc.ObjectDepthColumns, catalog, new("sales.payroll"), nil, nil, nil)
+	if len(filtered) != 1 || len(filtered[0].CatalogDbSchemas) != 1 || *filtered[0].CatalogDbSchemas[0].DbSchemaName != "sales.payroll" {
+		t.Fatalf("filter sales.payroll matched %+v", filtered)
+	}
+	wages := filtered[0].CatalogDbSchemas[0].DbSchemaTables
+	if len(wages) != 1 || len(wages[0].TableColumns) != 2 || len(wages[0].TableConstraints) == 0 {
+		t.Fatalf("sales.payroll.wages: %+v", wages)
+	}
+
+	for schema, column := range map[string]string{"sales.payroll": "id", quoted: "x"} {
+		table := "wages"
+		if schema == quoted {
+			table = "lookalike"
+		}
+		got, err := cnxn.GetTableSchema(context.Background(), catalog, &schema, table)
+		if err != nil {
+			t.Fatalf("GetTableSchema(nest, %s, %s): %v", schema, table, err)
+		}
+		if got.Field(0).Name != column {
+			t.Errorf("GetTableSchema(nest, %s, %s) = %s", schema, table, got)
+		}
+	}
+}

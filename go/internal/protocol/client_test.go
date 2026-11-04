@@ -30,6 +30,9 @@ type fake struct {
 	created  []map[string]any // options of every session created
 	lifetime int64            // expires_in of issued tokens
 	grants   []map[string]string
+	ended    map[string]string // session id -> the reason it was ended (session_ended)
+	txn      map[string]string // session id -> its transaction, as the session document says
+	ran      []string          // "<session id>: <sql>" of every statement run
 }
 
 func newFake(t *testing.T) *fake {

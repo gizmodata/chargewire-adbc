@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -18,7 +20,12 @@ func (f *fake) withSessions() *fake {
 		return f.auth(func(w http.ResponseWriter, r *http.Request) {
 			f.mu.Lock()
 			_, ok := f.sessions[r.PathValue("id")]
+			reason, ended := f.ended[r.PathValue("id")]
 			f.mu.Unlock()
+			if ended {
+				writeProblem(w, http.StatusUnauthorized, CodeSessionEnded, reason)
+				return
+			}
 			if !ok {
 				writeProblem(w, http.StatusNotFound, CodeSessionNotFound, "")
 				return
@@ -29,8 +36,13 @@ func (f *fake) withSessions() *fake {
 	f.mux.HandleFunc("GET /chargewire/v1/sessions/{id}", known(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		options := f.sessions[r.PathValue("id")]
+		transaction, known := f.txn[r.PathValue("id")]
 		f.mu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{"session_id": r.PathValue("id"), "options": options})
+		doc := map[string]any{"session_id": r.PathValue("id"), "options": options}
+		if known {
+			doc["transaction"] = transaction
+		}
+		writeJSON(w, http.StatusOK, doc)
 	}))
 	f.mux.HandleFunc("PATCH /chargewire/v1/sessions/{id}", known(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -44,6 +56,23 @@ func (f *fake) withSessions() *fake {
 		writeJSON(w, http.StatusOK, map[string]any{"options": body.Options, "errors": refused})
 	}))
 	f.mux.HandleFunc("POST /chargewire/v1/sessions/{id}/statements", known(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			SQL string `json:"sql"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		id := r.PathValue("id")
+		f.mu.Lock()
+		f.ran = append(f.ran, id+": "+body.SQL)
+		if f.txn == nil {
+			f.txn = map[string]string{}
+		}
+		switch word, _, _ := strings.Cut(strings.ToUpper(body.SQL), " "); word {
+		case "BEGIN":
+			f.txn[id] = TransactionOpen
+		case "COMMIT", "ROLLBACK":
+			f.txn[id] = TransactionNone
+		}
+		f.mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]any{"statement_id": "q1", "state": "succeeded",
 			"result": map[string]any{"kind": "update", "rows_affected": 1}})
 	}))
@@ -59,6 +88,23 @@ func (f *fake) evict() {
 	f.sessions = map[string]map[string]any{}
 }
 
+// end makes the server end session id for reason (session_ended, §5.6).
+func (f *fake) end(id, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ended == nil {
+		f.ended = map[string]string{}
+	}
+	f.ended[id] = reason
+}
+
+// statementsRun is how many statements the server ran in session id.
+func (f *fake) statementsRun(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(slices.DeleteFunc(slices.Clone(f.ran), func(ran string) bool { return !strings.HasPrefix(ran, id+": ") }))
+}
+
 func openTestSession(t *testing.T, f *fake, reconnect bool) *Session {
 	t.Helper()
 	session, err := f.client(password, 1).OpenSession(context.Background(), map[string]any{"catalog": "lake"}, reconnect)
@@ -70,12 +116,39 @@ func openTestSession(t *testing.T, f *fake, reconnect bool) *Session {
 
 func submitUpdate(t *testing.T, session *Session) error {
 	t.Helper()
-	body, _ := SubmitDocument("INSERT INTO t VALUES (1)", nil)
-	resp, err := session.Submit(context.Background(), &Submission{Body: body})
+	return submitSQL(t, session, "INSERT INTO t VALUES (1)")
+}
+
+func submitSQL(t *testing.T, session *Session, sql string) error {
+	t.Helper()
+	body, _ := SubmitDocument(sql, nil)
+	resp, err := session.Submit(context.Background(), &Submission{Body: body, SQL: sql})
 	if err == nil {
 		resp.Body.Close()
 	}
 	return err
+}
+
+// assertTransactionLost checks that err reports a session lost with a
+// transaction in it, replaced by a new session (or not, without reconnect),
+// and that nothing ran in the replacement.
+func assertTransactionLost(t *testing.T, f *fake, session *Session, err error, code string, replaced bool) {
+	t.Helper()
+	lost, ok := errors.AsType[*SessionLostError](err)
+	if !ok || !lost.Transaction || lost.Lost != "open transaction" || !HasCode(err, code) {
+		t.Fatalf("error %v, want a lost transaction (%s)", err, code)
+	}
+	if replaced != (lost.NewID != "") || replaced != (session.Replacements() == 1) {
+		t.Fatalf("replaced: new id %q, %d replacements; want replaced=%v", lost.NewID, session.Replacements(), replaced)
+	}
+	if replaced {
+		if n := f.statementsRun(lost.NewID); n != 0 {
+			t.Fatalf("%d statements ran in the replacement session: the lost transaction's statement ran again in autocommit", n)
+		}
+		if !strings.Contains(err.Error(), "did not run again") {
+			t.Errorf("the error does not say the request did not run again: %v", err)
+		}
+	}
 }
 
 // A lost session is replaced with the options the driver set, and the
@@ -241,5 +314,159 @@ func TestCancelAll(t *testing.T) {
 	cancelled, err := session.CancelAll(context.Background())
 	if err != nil || len(cancelled) != 2 || cancelled[0] != "q1" {
 		t.Fatalf("CancelAll: %v, %v", cancelled, err)
+	}
+}
+
+// A session the server ended for idling in a transaction (§5.6, §5.7) is
+// replaced with the same token, and the statement that found it ended fails
+// rather than run again in autocommit: the transaction was begun in SQL,
+// which the driver did not track, and its earlier statements were rolled
+// back. The next statement runs in the replacement. Without reconnect,
+// nothing is replaced.
+func TestSessionEndedIdleInTransaction(t *testing.T) {
+	for _, reconnect := range []bool{true, false} {
+		f := newFake(t).withSessions()
+		session := openTestSession(t, f, reconnect)
+		for _, sql := range []string{"BEGIN", "INSERT INTO t VALUES (1)"} {
+			if err := submitSQL(t, session, sql); err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.end("s1", ReasonIdleInTransaction)
+		err := submitSQL(t, session, "INSERT INTO t VALUES (2)")
+		assertTransactionLost(t, f, session, err, CodeSessionEnded, reconnect)
+		if f.tokens != 1 {
+			t.Fatalf("%d tokens: idle_in_transaction needs no new token (§5.6)", f.tokens)
+		}
+		if !reconnect {
+			continue
+		}
+		if err := submitSQL(t, session, "INSERT INTO t VALUES (3)"); err != nil {
+			t.Fatalf("the replacement session is unusable: %v", err)
+		}
+		if f.statementsRun(session.ID()) != 1 || session.ID() == "s1" {
+			t.Fatalf("the next statement did not run in the replacement: %v", f.ran)
+		}
+	}
+}
+
+// Even when the driver believes no transaction is open (autocommit on, no
+// BEGIN seen), session_ended with idle_in_transaction says one was.
+func TestSessionEndedIdleInTransactionAlwaysHadOne(t *testing.T) {
+	f := newFake(t).withSessions()
+	session := openTestSession(t, f, true)
+	f.end("s1", ReasonIdleInTransaction)
+	assertTransactionLost(t, f, session, submitUpdate(t, session), CodeSessionEnded, true)
+}
+
+// A session lost (session_not_found: evicted, or the server restarted) after
+// SQL BEGIN had a transaction open, which the server rolled back: the next
+// statement must not run again in the replacement, in autocommit.
+func TestLostSessionAfterSQLBegin(t *testing.T) {
+	f := newFake(t).withSessions()
+	session := openTestSession(t, f, true)
+	for _, sql := range []string{"begin transaction", "INSERT INTO t VALUES (1)"} {
+		if err := submitSQL(t, session, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.evict()
+	assertTransactionLost(t, f, session, submitSQL(t, session, "INSERT INTO t VALUES (2)"), CodeSessionNotFound, true)
+	if err := submitUpdate(t, session); err != nil {
+		t.Fatalf("the replacement session is unusable: %v", err)
+	}
+}
+
+// A session-wide request (metadata, options, preparing) that finds the
+// session lost with a transaction in it fails too: run again quietly, it would
+// hide the loss, and the caller's next statements would run outside the
+// transaction it thinks it is in.
+func TestSessionRequestReportsLostTransaction(t *testing.T) {
+	for _, how := range []string{"sql", "autocommit"} {
+		f := newFake(t).withSessions()
+		session := openTestSession(t, f, true)
+		if how == "sql" {
+			if err := submitSQL(t, session, "BEGIN"); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			session.options["autocommit"] = false
+		}
+		f.evict()
+		_, err := session.Get(context.Background())
+		assertTransactionLost(t, f, session, err, CodeSessionNotFound, true)
+	}
+}
+
+// After COMMIT, once the session document says no transaction is open, a lost
+// session is replaced and the statement runs again, as outside any
+// transaction. Until the driver has read it, it does not run again.
+func TestLostSessionAfterCommitRunsAgainOnceConfirmed(t *testing.T) {
+	for _, confirmed := range []bool{true, false} {
+		f := newFake(t).withSessions()
+		session := openTestSession(t, f, true)
+		for _, sql := range []string{"BEGIN", "INSERT INTO t VALUES (1)", "COMMIT"} {
+			if err := submitSQL(t, session, sql); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !session.TransactionUnconfirmed() {
+			t.Fatal("after COMMIT the driver claims to know the transaction without asking")
+		}
+		if confirmed {
+			session.RefreshTransaction(context.Background())
+			if session.MayHaveTransaction() {
+				t.Fatal("the session document said none, but the driver still thinks a transaction may be open")
+			}
+		}
+		f.evict()
+		err := submitSQL(t, session, "INSERT INTO t VALUES (2)")
+		if confirmed {
+			if err != nil || f.statementsRun(session.ID()) != 1 {
+				t.Fatalf("confirmed no transaction: err %v, ran %v", err, f.ran)
+			}
+			continue
+		}
+		assertTransactionLost(t, f, session, err, CodeSessionNotFound, true)
+	}
+}
+
+// RefreshTransaction never replaces a lost session: the next request finds
+// the loss and reports it.
+func TestRefreshTransactionDoesNotReplace(t *testing.T) {
+	f := newFake(t).withSessions()
+	session := openTestSession(t, f, true)
+	if err := submitSQL(t, session, "BEGIN"); err != nil {
+		t.Fatal(err)
+	}
+	f.evict()
+	session.RefreshTransaction(context.Background())
+	if session.Replacements() != 0 || !session.MayHaveTransaction() {
+		t.Fatalf("replacements %d, may have transaction %v", session.Replacements(), session.MayHaveTransaction())
+	}
+	assertTransactionLost(t, f, session, submitUpdate(t, session), CodeSessionNotFound, true)
+}
+
+// Statements without a transaction word leave a session without a
+// transaction as it was; any of them makes the driver unsure. In an open
+// transaction, only the words that can end it do.
+func TestTransactionWords(t *testing.T) {
+	for sql, begins := range map[string]bool{
+		"BEGIN": true, "begin transaction": true, "START TRANSACTION": true, "SET autocommit = 0": true,
+		"EXECUTE p": true, "SELECT 1; BEGIN": true, "SELECT 'BEGIN'": true, "/* begin */ SELECT 1": true,
+		"SELECT 1": false, "INSERT INTO t SELECT start_date, ended FROM s": false,
+		"SELECT CASE WHEN x THEN 1 END": false, "COMMIT": false, "CREATE TABLE beginnings (v INT)": false,
+	} {
+		if got := mayBeginTransaction(sql); got != begins {
+			t.Errorf("mayBeginTransaction(%q) = %v, want %v", sql, got, begins)
+		}
+	}
+	for sql, ends := range map[string]bool{
+		"COMMIT": true, "rollback": true, "END": true, "ABORT": true, "SELECT CASE WHEN x THEN 1 END": true,
+		"INSERT INTO t VALUES (1)": false, "SELECT committed FROM t": false,
+	} {
+		if got := mayEndTransaction(sql); got != ends {
+			t.Errorf("mayEndTransaction(%q) = %v, want %v", sql, got, ends)
+		}
 	}
 }

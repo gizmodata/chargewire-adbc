@@ -304,15 +304,25 @@ Route by something both clients send, or connect both to the instance's own addr
   (`invalid_token` without a reason, with `token_expired`, or with a reason the driver
   doesn't know). After `token_revoked`, `credentials_changed` or `principal_dropped` the
   driver does not sign in again on its own: the error carries the reason.
-- **Lost sessions** (`session_not_found`, or `session_ended` because a token expired, after
-  getting a new token) are replaced by a new session with the options the driver set, and the loss is reported,
-  not hidden: a warning is logged, `adbc.chargewire.session.replacements` counts it, and errors
-  from work in the replacement say it ran there. Inside a transaction nothing runs on the
-  replacement (it would commit half a transaction): the operation fails with the
-  transaction named as lost. A prepared statement is prepared again; a retained result is
-  gone. With `adbc.chargewire.session.reconnect=false` the connection stays broken. A session
-  ended for any other reason (`killed` by an administrator, credentials changed, …) is an
-  error with the reason, and is not replaced.
+- **Lost sessions** (`session_not_found`; `session_ended` because a token expired, after
+  getting a new token; or `session_ended` with `idle_in_transaction`, the server having rolled
+  back a transaction left idle past its `idle_in_transaction_timeout_s`) are replaced by a new
+  session with the options the driver set, and the loss is reported, not hidden: a warning is
+  logged, `adbc.chargewire.session.replacements` counts it, and errors from work in the
+  replacement say it ran there. When a transaction was, or may have been, open in the lost
+  session, nothing runs on the replacement (in autocommit it would commit on its own what was
+  meant as part of a transaction whose earlier work was rolled back): the operation fails with
+  the transaction named as lost, metadata and option calls too, and the next one runs in the
+  replacement. That holds for a transaction begun with SQL `BEGIN` as well as with autocommit
+  off: the driver knows no transaction is open only when the server last said so
+  (`transaction` in the session document) and no statement that could begin one has run since.
+  It reads that document after a statement with a transaction word in it (`BEGIN`, `START`,
+  `TRANSACTION`, `COMMIT`, `ROLLBACK`, `END`, `ABORT`, `AUTOCOMMIT`, `EXECUTE`), so a
+  transaction committed in SQL doesn't keep later statements from running again. A prepared
+  statement is prepared again (outside a transaction); a retained result is gone. With
+  `adbc.chargewire.session.reconnect=false` the connection stays broken. A session ended for
+  any other reason (`killed` by an administrator, credentials changed, …) is an error with the
+  reason, and is not replaced.
 - **Cancel** (`AdbcStatementCancel`, Python's `adbc_cancel()` and Ctrl+C, closing the
   statement while it runs, or a Go context ending) stops the statement on the server with
   `POST …/cancel`. When its answer has not arrived yet, the driver cancels the session's
