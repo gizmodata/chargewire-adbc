@@ -140,6 +140,7 @@ jobs:
       CHARGEWIRE_ADBC_TEST_SERVER_MTLS_FLAG: --mtls-ca-cert
       CHARGEWIRE_ADBC_TEST_SERVER_USERNAME_FLAG: --admin-username
       CHARGEWIRE_ADBC_TEST_SERVER_NAME: Hardcharger
+      CHARGEWIRE_ADBC_TEST_SERVER_IDLE_IN_TRANSACTION_FLAG: --idle-in-transaction-session-timeout
     steps:
       - uses: actions/checkout@v7
 

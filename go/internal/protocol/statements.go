@@ -48,6 +48,10 @@ type Submission struct {
 	// is a submit's {"sql", "parameters"} document.
 	Prepared *PreparedRef
 	Body     *Body
+	// SQL is the statement's text (a prepared statement's too). The driver
+	// reads it only to tell whether the statement may begin or end a
+	// transaction (Session.MayHaveTransaction); empty counts as may.
+	SQL string
 	// Arrow asks for the streamed path (§6.1): a query's rows in the
 	// response. Otherwise the answer is a statement document.
 	Arrow bool
@@ -154,14 +158,27 @@ func (s *Session) Submit(ctx context.Context, sub *Submission) (*http.Response, 
 	if sub.key == "" {
 		sub.key = NewIdempotencyKey()
 	}
+	var resp *http.Response
+	var err error
 	if sub.Prepared != nil {
 		sub.sessionID = sub.Prepared.SessionID
-		return s.doHandle(ctx, sub.sessionID, "prepared statement", sub.request(sub.Arrow, sub.RespondAsync))
+		resp, err = s.doHandle(ctx, sub.sessionID, "prepared statement", sub.request(sub.Arrow, sub.RespondAsync))
+	} else {
+		resp, err = s.do(ctx, ScopeStatement, "", func(id string) (*Request, error) {
+			sub.sessionID = id
+			return sub.request(sub.Arrow, sub.RespondAsync), nil
+		})
 	}
-	return s.do(ctx, ScopeStatement, "", func(id string) (*Request, error) {
-		sub.sessionID = id
-		return sub.request(sub.Arrow, sub.RespondAsync), nil
-	})
+	if _, gone := errors.AsType[*SessionLostError](err); !gone {
+		// The server took the statement (even one that failed): it may have
+		// begun or ended a transaction.
+		sql := sub.SQL
+		if sql == "" {
+			sql = "BEGIN" // unknown text: assume it may have
+		}
+		s.noteStatement(sub.sessionID, sql)
+	}
+	return resp, err
 }
 
 // ErrNotReplayable is a submission that cannot be sent again because its body

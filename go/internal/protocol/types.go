@@ -123,6 +123,10 @@ type SessionDocument struct {
 	// Aborted, or a value a later version adds (§12).
 	Transaction  string `json:"transaction"`
 	IdleTimeoutS int64  `json:"idle_timeout_s"`
+	// IdleInTransactionTimeoutS is how long the session may hold a
+	// transaction open with nothing running before the server ends it
+	// (§5.7); 0 when the server has no such limit.
+	IdleInTransactionTimeoutS int64 `json:"idle_in_transaction_timeout_s"`
 }
 
 // A session's transaction (§5.1).

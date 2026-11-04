@@ -340,7 +340,7 @@ func (st *statementImpl) newSubmission(ctx context.Context, arrowResult bool) (*
 		return nil, nil, st.ErrorHelper.InvalidState("no query set (SetSqlQuery)")
 	}
 	sub := &protocol.Submission{
-		Arrow: arrowResult, Wait: longPoll, Retain: st.opts.retain, Timeout: st.opts.timeout,
+		SQL: st.query, Arrow: arrowResult, Wait: longPoll, Retain: st.opts.retain, Timeout: st.opts.timeout,
 		QueryTag: st.opts.queryTag, Compression: st.codec(),
 	}
 	if st.opts.partitions > 1 && st.cnxn.discovery.Has(protocol.CapabilityResultPartitions) {
@@ -405,8 +405,9 @@ func (st *statementImpl) end(exec *execution) {
 // dropped by the server) is prepared again and the execution retried once,
 // when that is safe: outside a transaction and with the body in memory.
 func (st *statementImpl) submit(ctx context.Context, sub *protocol.Submission, up *upload) (*http.Response, error) {
+	st.refreshTransaction(ctx, 1)
 	resp, err := st.session().Submit(ctx, sub)
-	if sub.Prepared != nil && sub.Body.Replayable() && !st.session().InTransaction() && preparedGone(err) {
+	if sub.Prepared != nil && sub.Body.Replayable() && !st.session().MayHaveTransaction() && preparedGone(err) {
 		st.prepared = nil
 		prepared, prepErr := st.ensurePrepared(ctx)
 		if prepErr != nil {
@@ -423,12 +424,27 @@ func (st *statementImpl) submit(ctx context.Context, sub *protocol.Submission, u
 }
 
 // preparedGone reports an execute refused because its prepared statement no
-// longer exists on the server.
+// longer exists on the server, and running it again is safe: never after the
+// session was lost with a transaction that was, or may have been, open (its
+// work was rolled back; this execution would commit on its own).
 func preparedGone(err error) bool {
 	if lost, ok := errors.AsType[*protocol.SessionLostError](err); ok {
-		return lost.NewID != ""
+		return lost.NewID != "" && !lost.Transaction
 	}
 	return protocol.HasCode(err, protocol.CodePreparedNotFound)
+}
+
+// refreshTransaction asks the server whether a transaction is open, when a
+// statement that could have begun or ended one ran since the driver last knew
+// (protocol.Session.RefreshTransaction), so that a session lost later is
+// replaced and the statement run again only when no transaction was open.
+// It asks only when the connection runs no statement but own: the session
+// document shows a statement's effect once that statement has ended (§5.2).
+func (st *statementImpl) refreshTransaction(ctx context.Context, own int32) {
+	session := st.session()
+	if session.TransactionUnconfirmed() && st.cnxn.running.Load() <= own {
+		session.RefreshTransaction(ctx)
+	}
 }
 
 // fail ends an execution that went wrong and returns its error. When the
@@ -714,6 +730,10 @@ func (st *statementImpl) queryResult(ctx context.Context, exec *execution, doc *
 	if doc.Result.Kind != protocol.ResultRows {
 		st.end(exec)
 		st.free(exec)
+		// ctx is the execution's, which ending it cancelled.
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
+		st.refreshTransaction(refreshCtx, 0)
+		cancel()
 		reader, err := array.NewRecordReader(arrow.NewSchema(nil, nil), nil)
 		return reader, rowsAffected(doc.Result), err
 	}
@@ -819,6 +839,7 @@ func (st *statementImpl) ExecuteUpdate(ctx context.Context) (affected int64, err
 	}
 	st.end(exec)
 	st.free(exec)
+	st.refreshTransaction(ctx, 0)
 	if doc.Result.Kind != protocol.ResultUpdate {
 		return -1, nil
 	}
