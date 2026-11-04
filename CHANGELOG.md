@@ -6,6 +6,45 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-05
+
+For Chargewire 2.1.0 (Hardcharger 2.7.0).
+
+### Fixed
+
+- **A statement never runs again in a replacement session when its transaction was lost.** A
+  session lost while a transaction begun with SQL `BEGIN` was open (`session_not_found` after an
+  idle eviction or a server restart) was replaced and the statement that found it gone was run
+  again in the new session, in autocommit, because the driver knew of a transaction only when
+  autocommit was turned off through it. That committed the statement on its own while the
+  transaction's earlier statements had been rolled back with the session; a prepared statement
+  was prepared again and run the same way. Now the driver runs a request again only when it
+  knows no transaction was open: the server said so in the session document (`transaction`), and
+  no statement that could begin one has run since. After a statement with a transaction word in
+  it (`BEGIN`, `COMMIT`, …) it reads the session document once, when nothing else of the
+  connection is running, so a committed transaction doesn't keep later statements from running
+  again; until it has, it assumes one may be open. Otherwise the request fails with the
+  transaction named as lost (`SessionLostError.Transaction`), and the next one runs in the
+  replacement.
+- Metadata, option and prepare calls that found the session lost inside a transaction (autocommit
+  off, or SQL `BEGIN`) were run again quietly in the replacement session, so the caller never
+  learned that its transaction was gone and its next statements ran outside it. They now fail the
+  same way.
+
+### Added
+
+- `session_ended` with reason `idle_in_transaction` (Chargewire 2.1.0, §5.6): the server ended a
+  session whose transaction sat idle past its `idle_in_transaction_timeout_s` and rolled the
+  transaction back. With `adbc.chargewire.session.reconnect` on (the default) the driver replaces
+  the session with the token it has, and the statement that found it ended fails rather than run
+  again; the next statement runs in the replacement. Before, the error was reported and the
+  connection stayed on the ended session, so every later call failed too. The session document's
+  `idle_in_transaction_timeout_s` is read (`protocol.SessionDocument`).
+- Tests for nested schemas (Chargewire 2.1.0, §10): GetObjects lists `sales.payroll` and a
+  top-level `"sales.payroll"` as the server names them, its schema filter matches the path, and
+  GetTableSchema finds a table in either. The driver passes schema names through as text and
+  needed no change.
+
 ## [2.0.1] - 2026-10-29
 
 ### Fixed
