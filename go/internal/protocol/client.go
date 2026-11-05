@@ -64,8 +64,16 @@ type Config struct {
 	// MaxAttempts bounds how often a request that is safe to repeat is sent
 	// (first try included).
 	MaxAttempts int
-	UserAgent   string
-	Logger      *slog.Logger
+	// ResumeTimeout is how long a request the server answers with
+	// server_resuming is sent again, each time after the answer's Retry-After
+	// (DefaultResumeRetryAfter when it has none, at most MaxResumeRetryAfter),
+	// counted from the request's first attempt. Once the next attempt would
+	// start after that, the server_resuming error is returned. 0 never sends
+	// such a request again. It is separate from MaxAttempts: a resuming server
+	// is not a failing one.
+	ResumeTimeout time.Duration
+	UserAgent     string
+	Logger        *slog.Logger
 	// Fallback, when set, is the spelling Discover tries next when the
 	// server answers discovery at BaseURL with 404: if the server describes
 	// itself in it at Fallback.Root (same scheme and host), the client speaks
@@ -87,6 +95,11 @@ type Client struct {
 	// Set only by Discover, before the client is shared.
 	dialect *Dialect
 
+	resumeTimeout time.Duration
+	// now and sleep are the clock the resume waits use (tests replace them).
+	now   func() time.Time
+	sleep func(ctx context.Context, d time.Duration) error
+
 	tokenMu sync.Mutex
 	token   string
 	renewAt time.Time // when to replace the token; zero when its lifetime is unknown
@@ -98,15 +111,18 @@ type Client struct {
 // NewClient returns a client for cfg.BaseURL.
 func NewClient(cfg Config) *Client {
 	client := &Client{
-		base:        cfg.BaseURL,
-		http:        cfg.HTTPClient,
-		credentials: cfg.Credentials,
-		maxAttempts: max(cfg.MaxAttempts, 1),
-		userAgent:   cfg.UserAgent,
-		logger:      cfg.Logger,
-		fallback:    cfg.Fallback,
-		token:       cfg.Credentials.AccessToken,
-		expiresAt:   TokenExpiry(cfg.Credentials.AccessToken),
+		base:          cfg.BaseURL,
+		http:          cfg.HTTPClient,
+		credentials:   cfg.Credentials,
+		maxAttempts:   max(cfg.MaxAttempts, 1),
+		userAgent:     cfg.UserAgent,
+		resumeTimeout: max(cfg.ResumeTimeout, 0),
+		now:           time.Now,
+		sleep:         gadgets.SleepCtx,
+		logger:        cfg.Logger,
+		fallback:      cfg.Fallback,
+		token:         cfg.Credentials.AccessToken,
+		expiresAt:     TokenExpiry(cfg.Credentials.AccessToken),
 	}
 	if client.http == nil {
 		client.http = http.DefaultClient
@@ -151,14 +167,17 @@ type Request struct {
 // Do sends req and returns a 2xx response, whose body the caller closes. An
 // error response comes back as a *Problem.
 //
-// Do retries what is safe to retry: transport failures and 429/502/503/504
+// Do retries what is safe to retry: transport failures and 421/429/502/503/504
 // answers to idempotent requests (honouring Retry-After), with backoff and
 // jitter. A request refused with invalid_token is sent again once with a
 // fresh token, when the credentials can obtain one and the refusal's reason
-// allows it (§4.2).
+// allows it (§4.2). A request answered with server_resuming is sent again,
+// unchanged, until the server has resumed or the client's ResumeTimeout has
+// passed (see resumeWait); those repeats don't count as attempts.
 func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 	backoff := gadgets.Backoff{Start: 200 * time.Millisecond, Max: 5 * time.Second, Mul: 2}
 	renewed := false
+	started := c.now()
 	for attempt := 1; ; attempt++ {
 		token := ""
 		if !req.Anonymous {
@@ -200,6 +219,21 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 			c.dialect.problem(problem)
 		}
 		switch {
+		case problem.Code == CodeServerResuming:
+			// A stopped server is starting again and did nothing with the
+			// request: send the same request again once it says to, never
+			// through the bounded retry below (a resume takes minutes).
+			wait, ok := c.resumeWait(req, problem, started)
+			if !ok {
+				return nil, problem
+			}
+			c.logger.DebugContext(ctx, "server resuming; waiting to send the request again", "path", req.Path,
+				"wait", wait, "request_id", problem.RequestID)
+			if err := c.sleep(ctx, wait); err != nil {
+				return nil, fmt.Errorf("%w (while waiting for the server to resume: %v)", err, problem)
+			}
+			attempt--
+			continue
 		case problem.Code == CodeInvalidToken && renewable(problem.Reason) && !renewed && !req.Anonymous &&
 			c.credentials.grant() != nil && req.Body.Replayable():
 			// The token expired or the server forgot it: get a new one and
@@ -224,6 +258,48 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 		}
 		return nil, problem
 	}
+}
+
+// Waits between attempts of a request the server answers with
+// server_resuming.
+const (
+	// DefaultResumeTimeout is how long a request is sent again while the
+	// server resumes, unless configured otherwise: a server on a node that has
+	// to be launched first takes minutes.
+	DefaultResumeTimeout = 600 * time.Second
+	// DefaultResumeRetryAfter is the wait when the answer has no Retry-After
+	// (or 0).
+	DefaultResumeRetryAfter = 3 * time.Second
+	// MaxResumeRetryAfter caps a longer Retry-After.
+	MaxResumeRetryAfter = 60 * time.Second
+)
+
+// resumeWait is how long to wait before sending req again after a
+// server_resuming answer, and false when it is not sent again: resume waits
+// are off (ResumeTimeout 0), the next attempt would start after the
+// request's resume deadline (problem's detail then says so), its body was
+// streamed and can't be sent again, or it is a best-effort request with its
+// own MaxAttempts (ending a session as a connection closes), which is not
+// worth a wait for a resume.
+func (c *Client) resumeWait(req *Request, problem *Problem, started time.Time) (time.Duration, bool) {
+	if c.resumeTimeout <= 0 || req.MaxAttempts > 0 || !req.Body.Replayable() {
+		return 0, false
+	}
+	wait := problem.RetryAfter
+	if wait <= 0 {
+		wait = DefaultResumeRetryAfter
+	}
+	wait = min(wait, MaxResumeRetryAfter)
+	if c.now().Add(wait).After(started.Add(c.resumeTimeout)) {
+		suffix := fmt.Sprintf("still resuming after %s, the resume timeout", c.resumeTimeout)
+		if problem.Detail == "" {
+			problem.Detail = "the server is resuming (" + suffix + ")"
+		} else {
+			problem.Detail += " (" + suffix + ")"
+		}
+		return 0, false
+	}
+	return wait, true
 }
 
 // renewable reports an invalid_token reason after which signing in again may

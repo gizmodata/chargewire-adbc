@@ -67,6 +67,7 @@ var wantCodeStatuses = map[string]adbc.Status{
 	"internal_error":                adbc.StatusInternal,
 	"not_implemented":               adbc.StatusNotImplemented,
 	"server_draining":               adbc.StatusIO,
+	"server_resuming":               adbc.StatusIO,
 	"access_denied":                 adbc.StatusUnauthenticated,
 	"identity_provider_error":       adbc.StatusUnauthenticated,
 

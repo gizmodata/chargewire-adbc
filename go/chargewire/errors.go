@@ -184,6 +184,8 @@ var codeStatuses = map[string]adbc.Status{
 	protocol.CodeResultQuotaExceeded: adbc.StatusIO,
 	protocol.CodeRateLimited:         adbc.StatusIO,
 	protocol.CodeServerDraining:      adbc.StatusIO,
+	// A resuming server the driver stopped waiting for (OptionResumeTimeout).
+	protocol.CodeServerResuming: adbc.StatusIO,
 
 	// 422: the statement failed while running; the user's SQL or data.
 	protocol.CodeExecutionError: adbc.StatusInvalidArgument,

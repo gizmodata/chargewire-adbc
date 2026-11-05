@@ -113,6 +113,18 @@ class TestConnect:
             _db_kwargs(mock_db=mock_db)["adbc.chargewire.oauth.browser"] == "firefox --new-window"
         )
 
+    def test_resume_timeout(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
+        from adbc_driver_chargewire.dbapi import connect
+
+        connect(uri="chargewire://h:1", username="u", password="p", resume_timeout=90)
+        assert _db_kwargs(mock_db=mock_db)["adbc.chargewire.resume_timeout"] == "90"
+        mock_db.reset_mock()
+        connect(uri="chargewire://h:1", username="u", password="p", resume_timeout=0)
+        assert _db_kwargs(mock_db=mock_db)["adbc.chargewire.resume_timeout"] == "0"
+        mock_db.reset_mock()
+        connect(uri="chargewire://h:1", username="u", password="p")
+        assert "adbc.chargewire.resume_timeout" not in _db_kwargs(mock_db=mock_db)
+
     def test_pem_text_and_files(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib, tmp_path):
         from adbc_driver_chargewire.dbapi import connect
 

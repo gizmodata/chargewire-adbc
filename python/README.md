@@ -36,6 +36,7 @@ with dbapi.connect(
 | `auth_type` | `"password"` (default), `"client_certificate"` (`"mtls"`): sign in with `tls_client_cert`/`tls_client_key` alone, no password (the server binds the token to the certificate), or `"oauth_browser"`: sign in through a browser with the server's identity provider (servers with capability `oauth_browser`). |
 | `open_browser` | Browser sign-in: `True` (default) opens the system's browser, `False` prints the sign-in URL to stderr, a string is the command that opens it. |
 | `oauth_timeout_seconds` | Browser sign-in: how long the person has to sign in (default 300). |
+| `resume_timeout` | Seconds to keep sending a request again while the server answers `server_resuming` (a stopped server starting again because you connected), each time after its `Retry-After` (default 600; `0`: fail at once). |
 | `tls_root_certs` | CA certificates to trust (PEM text or file path). |
 | `tls_client_cert`, `tls_client_key` | Client certificate for mutual TLS (PEM text or path). |
 | `tls_skip_verify` | Skip certificate verification (development only; off unless set). |

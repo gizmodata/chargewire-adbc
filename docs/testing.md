@@ -108,4 +108,10 @@ recording TCP proxy showing that only the TLS hello, no credential, was sent); c
 statements, connections and the database after the server stopped or while it hangs behind a
 frozen proxy (no error, at most 5 s, no leaked goroutine by goleak). The fake servers cover what the reference server cannot be made to do: token
 expiry mid-connection, partitions on other servers, concurrent session loss, `session_ended`
-reasons, `Retry-After`.
+reasons, `Retry-After`, and a resuming server (`server_resuming` answered to the sign-in and to
+a statement more often than `retry.max_attempts`, then success, each repeat the same request;
+the resume deadline returning the server's error and message; no `Retry-After` waiting 3 s, a
+long one capped at 60 s; `resume_timeout=0` sending once; streamed and best-effort requests not
+repeated; other 503s keeping their bounded retry; a sign-in held 25 s through the driver's real
+transport; and in Python, through the shared library, `resume_timeout` given as a `connect()`
+argument and as a `db_kwargs` option).
