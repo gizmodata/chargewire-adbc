@@ -26,9 +26,9 @@ type NewSession struct {
 	id       string
 	replaces string
 
-	mu       sync.Mutex
-	done     bool // the hook returned: Exec refuses
-	mayBegin bool // a statement that could begin a transaction ran
+	mu   sync.Mutex
+	done bool        // the hook returned: Exec refuses
+	tx   txKnowledge // what the hook's statements leave of the transaction (nextTx)
 }
 
 // ID is the new session's id.
@@ -52,9 +52,7 @@ func (n *NewSession) Exec(ctx context.Context, sql string) error {
 		n.mu.Unlock()
 		return fmt.Errorf("session %s: Exec after its new-session hook returned", n.id)
 	}
-	if mayBeginTransaction(sql) {
-		n.mayBegin = true
-	}
+	n.tx = nextTx(n.tx, sql)
 	n.mu.Unlock()
 	body, err := SubmitDocument(sql, nil)
 	if err != nil {
@@ -119,26 +117,27 @@ func (e *SessionSetupError) Error() string {
 func (e *SessionSetupError) Unwrap() error { return e.Err }
 
 // setUp runs hook on session id, just created (replacing replaces, or ""). It
-// reports whether the hook ran a statement that could have begun a
-// transaction. When the hook fails, the session is ended (best effort) and the
-// error is a *SessionSetupError.
-func (c *Client) setUp(ctx context.Context, hook NewSessionHook, id, replaces string) (bool, error) {
+// reports what the hook's statements leave of the session's transaction
+// (nextTx): possibly open after one that could have begun a transaction. When
+// the hook fails, the session is ended (best effort) and the error is a
+// *SessionSetupError.
+func (c *Client) setUp(ctx context.Context, hook NewSessionHook, id, replaces string) (txKnowledge, error) {
 	if hook == nil {
-		return false, nil
+		return txNone, nil
 	}
 	n := &NewSession{client: c, id: id, replaces: replaces}
 	err := hook(ctx, n)
 	n.mu.Lock()
 	n.done = true
-	mayBegin := n.mayBegin
+	tx := n.tx
 	n.mu.Unlock()
 	if err == nil {
-		return mayBegin, nil
+		return tx, nil
 	}
 	endCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	_, _ = c.doJSON(endCtx, &Request{Method: http.MethodDelete, Path: sessionPath(id), Idempotent: true, MaxAttempts: 1}, nil)
-	return false, &SessionSetupError{SessionID: id, Replaces: replaces, Err: err}
+	return txNone, &SessionSetupError{SessionID: id, Replaces: replaces, Err: err}
 }
 
 // setupFailed reports whether err says a replacement session's setup failed,

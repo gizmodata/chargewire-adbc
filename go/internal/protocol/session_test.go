@@ -37,6 +37,12 @@ func (f *fake) withSessions() *fake {
 		f.mu.Lock()
 		options := f.sessions[r.PathValue("id")]
 		transaction, known := f.txn[r.PathValue("id")]
+		if f.staleTxn {
+			transaction, known = f.prevTxn[r.PathValue("id")], true
+			if transaction == "" {
+				transaction = TransactionNone
+			}
+		}
 		f.mu.Unlock()
 		doc := map[string]any{"session_id": r.PathValue("id"), "options": options}
 		if known {
@@ -65,7 +71,9 @@ func (f *fake) withSessions() *fake {
 		f.ran = append(f.ran, id+": "+body.SQL)
 		if f.txn == nil {
 			f.txn = map[string]string{}
+			f.prevTxn = map[string]string{}
 		}
+		f.prevTxn[id] = f.txn[id]
 		switch word, _, _ := strings.Cut(strings.ToUpper(body.SQL), " "); word {
 		case "BEGIN":
 			f.txn[id] = TransactionOpen
@@ -468,5 +476,70 @@ func TestTransactionWords(t *testing.T) {
 		if got := mayEndTransaction(sql); got != ends {
 			t.Errorf("mayEndTransaction(%q) = %v, want %v", sql, got, ends)
 		}
+	}
+}
+
+// A Chargewire server up to 2.2.0 answers a statement without rows before it
+// records the session's transaction, so the session document read right after
+// BEGIN can still say "none". That read must not let the next statement run
+// again, in autocommit, on a replacement session: the transaction it belonged
+// to was rolled back with the lost session. Each text here can open a
+// transaction, alone or with other statements (one ending in COMMIT
+// included: CASE ... END makes the last word no proof that it ended).
+func TestStaleNoneAfterBeginDoesNotLetAStatementRunAgain(t *testing.T) {
+	for _, opening := range []string{"BEGIN", "start transaction", "BEGIN; INSERT INTO t VALUES (1)",
+		"BEGIN; INSERT INTO t VALUES (1); COMMIT", "SET autocommit = false", "EXECUTE begin_it"} {
+		for _, read := range []string{"refresh", "get"} {
+			f := newFake(t).withSessions()
+			f.staleTxn = true
+			session := openTestSession(t, f, true)
+			if err := submitSQL(t, session, opening); err != nil {
+				t.Fatal(err)
+			}
+			if read == "refresh" {
+				session.RefreshTransaction(context.Background())
+			} else if state, err := session.Transaction(context.Background()); err != nil || state != TransactionNone {
+				t.Fatalf("%q: the stale session document says %q (%v), want %q", opening, state, err, TransactionNone)
+			}
+			if !session.MayHaveTransaction() {
+				t.Errorf("%q, %s: a stale \"none\" read made the driver sure no transaction is open", opening, read)
+			}
+			if err := submitSQL(t, session, "INSERT INTO t VALUES (1)"); err != nil {
+				t.Fatal(err)
+			}
+			f.evict()
+			assertTransactionLost(t, f, session, submitSQL(t, session, "INSERT INTO t VALUES (2)"), CodeSessionNotFound, true)
+		}
+	}
+}
+
+// After COMMIT a stale read says "open": the driver refuses to run a
+// statement again (the safe side) until a later ending statement and a read
+// after it say "none".
+func TestStaleOpenAfterCommitRefusesUntilConfirmed(t *testing.T) {
+	f := newFake(t).withSessions()
+	f.staleTxn = true
+	session := openTestSession(t, f, true)
+	for _, sql := range []string{"BEGIN", "INSERT INTO t VALUES (1)", "COMMIT"} {
+		if err := submitSQL(t, session, sql); err != nil {
+			t.Fatal(err)
+		}
+		session.RefreshTransaction(context.Background())
+	}
+	if !session.MayHaveTransaction() {
+		t.Fatal("a stale \"open\" read after COMMIT made the driver sure no transaction is open")
+	}
+	// ROLLBACK outside a transaction; the document now says "none" (as of
+	// after COMMIT), which an ending statement may trust.
+	if err := submitSQL(t, session, "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	session.RefreshTransaction(context.Background())
+	if session.MayHaveTransaction() {
+		t.Fatal("\"none\" read after an ending statement was not trusted")
+	}
+	f.evict()
+	if err := submitSQL(t, session, "INSERT INTO t VALUES (2)"); err != nil || f.statementsRun(session.ID()) != 1 {
+		t.Fatalf("confirmed no transaction: err %v, ran %v", err, f.ran)
 	}
 }

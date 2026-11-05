@@ -435,7 +435,7 @@ func preparedGone(err error) bool {
 }
 
 // refreshTransaction asks the server whether a transaction is open, when a
-// statement that could have begun or ended one ran since the driver last knew
+// statement that could have ended one ran since the driver last knew
 // (protocol.Session.RefreshTransaction), so that a session lost later is
 // replaced and the statement run again only when no transaction was open.
 // It asks only when the connection runs no statement but own: the session

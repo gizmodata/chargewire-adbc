@@ -32,6 +32,12 @@ type fake struct {
 	grants   []map[string]string
 	ended    map[string]string // session id -> the reason it was ended (session_ended)
 	txn      map[string]string // session id -> its transaction, as the session document says
+	// staleTxn makes the session document lag one statement behind, as a
+	// Chargewire server up to 2.2.0 can: it answers a statement without rows
+	// before it records the session's transaction, so a read right after
+	// BEGIN can say "none" and one right after COMMIT can say "open".
+	staleTxn bool
+	prevTxn  map[string]string // session id -> its transaction before the last statement
 	ran      []string          // "<session id>: <sql>" of every statement run
 }
 

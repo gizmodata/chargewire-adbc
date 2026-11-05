@@ -353,10 +353,13 @@ Route by something both clients send, or connect both to the instance's own addr
   the transaction named as lost, metadata and option calls too, and the next one runs in the
   replacement. That holds for a transaction begun with SQL `BEGIN` as well as with autocommit
   off: the driver knows no transaction is open only when the server last said so
-  (`transaction` in the session document) and no statement that could begin one has run since.
-  It reads that document after a statement with a transaction word in it (`BEGIN`, `START`,
-  `TRANSACTION`, `COMMIT`, `ROLLBACK`, `END`, `ABORT`, `AUTOCOMMIT`, `EXECUTE`), so a
-  transaction committed in SQL doesn't keep later statements from running again. A prepared
+  (`transaction` in the session document) after a statement that could end one, and no statement
+  that could begin one has run since. After a statement with a word that can begin a transaction
+  (`BEGIN`, `START`, `TRANSACTION`, `AUTOCOMMIT`, `EXECUTE`) it assumes one is open, whatever the
+  session document says: a Chargewire server up to 2.2.0 can answer such a statement before its
+  session document shows the transaction. After one with a word that can end it (`COMMIT`,
+  `ROLLBACK`, `END`, `ABORT`) and none that can begin one, it reads the document, so a transaction
+  committed in SQL doesn't keep later statements from running again. A prepared
   statement is prepared again (outside a transaction); a retained result is gone. With
   `adbc.chargewire.session.reconnect=false` the connection stays broken. A session ended for
   any other reason (`killed` by an administrator, credentials changed, …) is an error with the

@@ -260,3 +260,31 @@ func TestNewSessionHookTransactionWord(t *testing.T) {
 		t.Fatal("after a hook ran BEGIN, the driver is sure no transaction is open")
 	}
 }
+
+// A hook's BEGIN leaves the transaction possibly open even when the session
+// document, read right after, says "none" (a stale read, Chargewire up to
+// 2.2.0). A hook whose last transaction statement ended it (BEGIN, COMMIT) can
+// be confirmed by a read that says "none".
+func TestNewSessionHookTransactionWordStaleRead(t *testing.T) {
+	for _, statements := range [][]string{{"BEGIN"}, {"BEGIN", "COMMIT"}} {
+		ended := len(statements) == 2
+		f := newFake(t).withSessions()
+		f.staleTxn = !ended
+		session, err := f.client(password, 1).OpenSessionWithHook(context.Background(), nil, true,
+			func(ctx context.Context, n *NewSession) error {
+				for _, sql := range statements {
+					if err := n.Exec(ctx, sql); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		if err != nil {
+			t.Fatal(err)
+		}
+		session.RefreshTransaction(context.Background())
+		if session.MayHaveTransaction() == ended {
+			t.Errorf("hook %v: may have a transaction %v after a \"none\" read", statements, session.MayHaveTransaction())
+		}
+	}
+}

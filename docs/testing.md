@@ -2,7 +2,7 @@
 
 | Suite | Where | Needs a server | Tests |
 |---|---|---|---|
-| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake; a TLS one for the certificate_required alert) | 59 |
+| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake; a TLS one for the certificate_required alert) | 62 |
 | Go driver unit | `go/chargewire/*_test.go` without the `integration` tag (`unit_test.go`, `errors_unit_test.go`, `fakeserver_test.go`, `attach_unit_test.go`, `hook_unit_test.go`, `resume_unit_test.go`, `browser_unit_test.go`, `mtls_unit_test.go`, `token_unit_test.go`, …) | no (in-process fakes; a TLS one for certificate sign-in) | 75 |
 | Go live | `go/chargewire/*_integration_test.go` (tag `integration`) | yes | 102 |
 | Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py`, `test_dbapi_exceptions_unit.py` | no (the C-ABI test needs the built library) | 33 |

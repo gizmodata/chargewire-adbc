@@ -65,21 +65,67 @@ type Session struct {
 
 // txKnowledge is what the driver knows of a session's transaction (§5.5).
 // The server tells it only in the session document (§5.1, §5.2), so the
-// driver reads that document after a statement that may have begun or ended
-// a transaction, and until it has, assumes one may be open.
+// driver reads that document after a statement that may have ended a
+// transaction, and until it has, assumes one may be open.
+//
+// That read can be stale. A Chargewire server up to 2.2.0 answers a
+// statement without rows on the streamed path as soon as its outcome is
+// known, and records the session's transaction in the document slightly
+// after, so a read right after BEGIN can say "none" and one right after
+// COMMIT can say "open". The rule (nextTx) therefore never lets a read clear
+// what a statement that can open a transaction implies:
+//
+//   - A statement whose text can open a transaction, or change how one
+//     opens (BEGIN, START, TRANSACTION, AUTOCOMMIT, EXECUTE of a prepared
+//     statement), leaves one possibly open (txOpen), and the driver doesn't
+//     read the document after it: a "none" there may be stale.
+//   - A statement whose text can end one (COMMIT, ROLLBACK, END, ABORT) and
+//     has no opening word leaves the driver unsure (txMaybe), and a read
+//     after it is trusted: a stale read there can only say "open", which
+//     errs on the safe side (a request is not run again).
+//   - A text with both kinds (BEGIN; ...; COMMIT) counts as opening, whatever
+//     their order: END closes CASE expressions too, so an ending word last
+//     doesn't prove the transaction ended. The next statement that ends one,
+//     and a read after it that says "none", clear it.
+//
+// So a transaction is assumed open for longer than it is, never shorter; the
+// cost is that a request is refused (SessionLostError.Transaction) rather
+// than run again when a session is lost after such a statement.
 type txKnowledge int
 
 const (
-	// txNone: no transaction is open; the server said so, and no statement
-	// that could open one has run since.
+	// txNone: no transaction is open; the server said so after a statement
+	// that could end one (or of a new session), and no statement that could
+	// open one has run since.
 	txNone txKnowledge = iota
-	// txMaybe: a statement that could have begun or ended a transaction ran
-	// since the server last said; RefreshTransaction asks.
+	// txMaybe: a statement that could have ended a transaction ran since the
+	// server last said; RefreshTransaction asks.
 	txMaybe
-	// txOpen: the server said a transaction is open (or aborted, or a value
-	// this driver doesn't know).
+	// txOpen: a transaction is, or may be, open: a statement that could have
+	// opened one ran, or the server said one is open (or aborted, or a value
+	// this driver doesn't know). Only a statement that can end it, and a read
+	// after that, clear this.
 	txOpen
 )
+
+// nextTx is what the driver knows of the transaction after statement sql
+// ran, given what it knew before (see txKnowledge for the rule).
+func nextTx(tx txKnowledge, sql string) txKnowledge {
+	switch {
+	case mayBeginTransaction(sql):
+		return txOpen
+	case tx == txOpen && mayEndTransaction(sql):
+		return txMaybe
+	}
+	return tx
+}
+
+// afterHook is what the driver knows of a new session's transaction: what
+// its document said when it was created, unless the new-session hook's
+// statements left one possibly open, or left the driver unsure.
+func afterHook(created, hook txKnowledge) txKnowledge {
+	return max(created, hook)
+}
 
 // txFromDocument is what a session document says of the transaction. fresh
 // is a session just created, in which no SQL has run: one that doesn't say
@@ -117,15 +163,12 @@ func (c *Client) OpenSessionWithHook(ctx context.Context, options map[string]any
 	if err != nil {
 		return nil, err
 	}
-	mayBegin, err := c.setUp(ctx, hook, doc.SessionID, "")
+	hookTx, err := c.setUp(ctx, hook, doc.SessionID, "")
 	if err != nil {
 		return nil, err
 	}
 	s.id = doc.SessionID
-	s.tx = txFromDocument(doc, true)
-	if mayBegin && s.tx == txNone {
-		s.tx = txMaybe
-	}
+	s.tx = afterHook(txFromDocument(doc, true), hookTx)
 	return s, nil
 }
 
@@ -205,10 +248,11 @@ func (s *Session) inTransaction() bool {
 }
 
 // MayHaveTransaction reports whether a transaction may be open in the
-// current session: autocommit is off, the server said one is open, or a
-// statement that could have begun one (SQL BEGIN) ran since the server last
-// said none was. A request that finds the session gone runs again on a
-// replacement only when this is false.
+// current session: autocommit is off, the server said one is open, a
+// statement that could have begun one (SQL BEGIN) ran and no statement that
+// could end it has since, or one that could end it ran and the server hasn't
+// said none is open since (see txKnowledge). A request that finds the session
+// gone runs again on a replacement only when this is false.
 func (s *Session) MayHaveTransaction() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -219,9 +263,10 @@ func (s *Session) mayHaveTransaction() bool {
 	return s.tx != txNone || s.inTransaction()
 }
 
-// TransactionUnconfirmed reports whether a statement that could have begun or
-// ended a transaction ran since the server last said what the session's
-// transaction is; RefreshTransaction asks.
+// TransactionUnconfirmed reports whether a statement that could have ended a
+// transaction ran since the server last said what the session's transaction
+// is; RefreshTransaction asks. After one that could have begun a transaction
+// the driver doesn't ask: the answer may be stale (see txKnowledge).
 func (s *Session) TransactionUnconfirmed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -229,30 +274,33 @@ func (s *Session) TransactionUnconfirmed() bool {
 }
 
 // noteStatement records that SQL ran in session id (the server took the
-// request): a statement that could begin or end a transaction leaves the
-// driver unsure of the transaction until it reads the session document.
+// request): a statement that could begin a transaction leaves one possibly
+// open, and one that could end it leaves the driver unsure until it reads the
+// session document (nextTx).
 func (s *Session) noteStatement(id, sql string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.id != id {
 		return
 	}
-	if s.tx == txNone && mayBeginTransaction(sql) || s.tx == txOpen && mayEndTransaction(sql) {
-		s.tx = txMaybe
-	}
+	s.tx = nextTx(s.tx, sql)
 }
 
-// observe records the transaction a session document of session id says.
+// observe records the transaction a session document of session id says,
+// except that it never clears a transaction a statement that could open one
+// left possibly open (txOpen): the document may not show that statement's
+// effect yet (see txKnowledge). Only after a statement that could end the
+// transaction (txMaybe) does a "none" count.
 func (s *Session) observe(id string, doc *SessionDocument) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.id == id {
+	if s.id == id && s.tx != txOpen {
 		s.tx = txFromDocument(doc, false)
 	}
 }
 
 // RefreshTransaction reads the session document (§5.2) when a statement that
-// could have begun or ended a transaction ran since the driver last did, so
+// could have ended a transaction ran since the driver last did, so
 // that it knows whether one is open before the session can be lost. It never
 // replaces a lost session: the next request finds the loss and reports it. It
 // is best effort; on any failure the driver stays unsure, which only means a
@@ -272,16 +320,19 @@ func (s *Session) RefreshTransaction(ctx context.Context) {
 	s.observe(id, doc)
 }
 
-// Words of SQL statements that can begin a transaction (BEGIN, START
-// TRANSACTION, an engine's SET autocommit or EXECUTE of a prepared BEGIN), and
-// those that can end one (COMMIT, ROLLBACK, END, ABORT). A statement that has
-// none of them as a word anywhere in its text, comments and literals
-// included, leaves the session's transaction as it was, except that a
-// failure may abort an open one, which is still a transaction the driver
-// treats as open. Matching more than needed costs one session read.
+// Words of SQL statements that can begin a transaction or change how one
+// begins (BEGIN, START TRANSACTION, an engine's SET autocommit or EXECUTE of a
+// prepared BEGIN), and those that can end one (COMMIT, ROLLBACK, END, ABORT).
+// A statement that has none of them as a word anywhere in its text, comments
+// and literals included, leaves the session's transaction as it was, except
+// that a failure may abort an open one, which is still a transaction the
+// driver treats as open. Matching an opening word where none was meant (a
+// column named start) keeps a transaction assumed open until a statement that
+// can end one and a read after it; matching an ending word costs one session
+// read.
 var (
 	beginWords = []string{"BEGIN", "START", "TRANSACTION", "AUTOCOMMIT", "EXECUTE"}
-	endWords   = []string{"COMMIT", "ROLLBACK", "END", "ABORT", "BEGIN", "START", "TRANSACTION", "AUTOCOMMIT", "EXECUTE"}
+	endWords   = []string{"COMMIT", "ROLLBACK", "END", "ABORT"}
 )
 
 func mayBeginTransaction(sql string) bool { return hasWord(sql, beginWords) }
@@ -419,7 +470,7 @@ func (s *Session) replace(ctx context.Context, failedID string, cause error) (st
 		return "", false, err
 	}
 	txLost := s.mayHaveTransaction() || lostTransaction(cause)
-	mayBegin, err := s.client.setUp(ctx, s.hook, doc.SessionID, failedID)
+	hookTx, err := s.client.setUp(ctx, s.hook, doc.SessionID, failedID)
 	if err != nil {
 		// This failure reports the lost transaction; the next attempt does
 		// not report it again.
@@ -434,10 +485,7 @@ func (s *Session) replace(ctx context.Context, failedID string, cause error) (st
 	}
 	s.lostTx[failedID] = txLost
 	s.id = doc.SessionID
-	s.tx = txFromDocument(doc, true)
-	if mayBegin && s.tx == txNone {
-		s.tx = txMaybe
-	}
+	s.tx = afterHook(txFromDocument(doc, true), hookTx)
 	s.replacements++
 	s.client.logger.WarnContext(ctx, "the server lost the session; opened a replacement with the same options "+
 		"and setup (temporary tables, prepared statements and settings made in SQL of the old session are gone)",

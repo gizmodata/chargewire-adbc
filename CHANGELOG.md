@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-05
+
+### Fixed
+
+- **A statement could run again, in autocommit, after its transaction was lost** when the
+  session document was read too early. A Chargewire server up to 2.2.0 (every Hardcharger
+  through 2.7.0) answers a statement without rows on the streamed path as soon as its outcome is
+  known and records the session's transaction in its document slightly after, so a read right
+  after `BEGIN` could say `"none"`. 2.1.0 and 2.2.0 believed it: after `BEGIN; INSERT 1;` and a
+  lost session (a server restart), `INSERT 2` ran again on the replacement and committed on its
+  own (seen on a busy CI runner). The driver now assumes a transaction is open after any statement
+  with a word that can begin one or change how one begins (`BEGIN`, `START`, `TRANSACTION`,
+  `AUTOCOMMIT`, `EXECUTE`), also in a text that ends with `COMMIT`, and doesn't read the
+  document then. Only a later statement with a word that can end a transaction (`COMMIT`,
+  `ROLLBACK`, `END`, `ABORT`) and none that can begin one, and a read after it that says
+  `"none"`, clear that; a stale `"open"` there only means a request is refused rather than run
+  again. The same holds for statements a new-session hook runs. This holds against servers
+  that keep the race (Chargewire 2.2.1 fixes it on the server).
+
 ## [2.2.0] - 2026-11-05
 
 For Chargewire 2.2.0 (`server_resuming`, spec §11.2: GizmoData Cloud's auto-resume) and Hardcharger 2.7.0.
