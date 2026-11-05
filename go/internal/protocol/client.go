@@ -66,7 +66,8 @@ type Config struct {
 	MaxAttempts int
 	// ResumeTimeout is how long a request the server answers with
 	// server_resuming is sent again, each time after the answer's Retry-After
-	// (DefaultResumeRetryAfter when it has none, at most MaxResumeRetryAfter),
+	// (DefaultResumeRetryAfter when it has none, at least MinResumeRetryAfter
+	// and at most MaxResumeRetryAfter),
 	// counted from the request's first attempt. Once the next attempt would
 	// start after that, the server_resuming error is returned. 0 never sends
 	// such a request again. It is separate from MaxAttempts: a resuming server
@@ -270,6 +271,9 @@ const (
 	// DefaultResumeRetryAfter is the wait when the answer has no Retry-After
 	// (or 0).
 	DefaultResumeRetryAfter = 3 * time.Second
+	// MinResumeRetryAfter is the shortest wait, whatever Retry-After says: a
+	// "0" must not send requests back to back for the whole resume timeout.
+	MinResumeRetryAfter = time.Second
 	// MaxResumeRetryAfter caps a longer Retry-After.
 	MaxResumeRetryAfter = 60 * time.Second
 )
@@ -285,9 +289,9 @@ func (c *Client) resumeWait(req *Request, problem *Problem, started time.Time) (
 	if c.resumeTimeout <= 0 || req.MaxAttempts > 0 || !req.Body.Replayable() {
 		return 0, false
 	}
-	wait := problem.RetryAfter
-	if wait <= 0 {
-		wait = DefaultResumeRetryAfter
+	wait := DefaultResumeRetryAfter
+	if problem.HasRetryAfter {
+		wait = max(problem.RetryAfter, MinResumeRetryAfter)
 	}
 	wait = min(wait, MaxResumeRetryAfter)
 	if c.now().Add(wait).After(started.Add(c.resumeTimeout)) {

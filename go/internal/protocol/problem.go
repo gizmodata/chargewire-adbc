@@ -144,6 +144,9 @@ type Problem struct {
 
 	// RetryAfter is the response's Retry-After, when it had one.
 	RetryAfter time.Duration `json:"-"`
+	// HasRetryAfter reports whether the response had a Retry-After this client
+	// can read (integer seconds), so a "0" can be told from no header at all.
+	HasRetryAfter bool `json:"-"`
 	// StatementID is the response's Chargewire-Statement-Id: the statement that
 	// failed or was cancelled, when the error is a statement's (§6.1).
 	StatementID string `json:"-"`
@@ -233,18 +236,18 @@ func readProblem(resp *http.Response) *Problem {
 		p.RequestID = resp.Header.Get("Chargewire-Request-Id")
 	}
 	p.StatementID = resp.Header.Get("Chargewire-Statement-Id")
-	p.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
+	p.RetryAfter, p.HasRetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
 	return p
 }
 
 // parseRetryAfter reads a Retry-After header: integer delta-seconds, the only
 // form Chargewire servers send (§2.6). Anything else is ignored.
-func parseRetryAfter(value string) time.Duration {
+func parseRetryAfter(value string) (time.Duration, bool) {
 	seconds, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil || seconds < 0 {
-		return 0
+		return 0, false
 	}
-	return time.Duration(seconds) * time.Second
+	return time.Duration(seconds) * time.Second, true
 }
 
 // TLS alerts a server refuses a client certificate with (§4.4), RFC 8446 §6.
