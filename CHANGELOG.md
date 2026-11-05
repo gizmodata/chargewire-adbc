@@ -8,7 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [2.2.0] - 2026-11-05
 
-For Chargewire 2.1.0 (Hardcharger 2.7.0) and GizmoData Cloud's auto-resume.
+For Chargewire 2.2.0 (`server_resuming`, spec §11.2: GizmoData Cloud's auto-resume) and Hardcharger 2.7.0.
 
 ### Added
 
