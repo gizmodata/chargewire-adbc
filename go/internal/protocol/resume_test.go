@@ -220,9 +220,9 @@ func TestServerResumingDeadlineReturnsTheError(t *testing.T) {
 	}
 }
 
-// Without Retry-After (or with 0) the wait is 3 s.
+// Without a Retry-After this client can read the wait is 3 s.
 func TestServerResumingWithoutRetryAfterWaitsThreeSeconds(t *testing.T) {
-	for _, retryAfter := range []string{"", "0"} {
+	for _, retryAfter := range []string{"", "soon"} {
 		s := newResumingServer(t, retryAfter, map[string]int{routeExecute: 2})
 		client, clock := s.client(4, DefaultResumeTimeout)
 		if err := execute(context.Background(), client); err != nil {
@@ -231,6 +231,18 @@ func TestServerResumingWithoutRetryAfterWaitsThreeSeconds(t *testing.T) {
 		if got := clock.recorded(); !slices.Equal(got, repeat(3*time.Second, 2)) {
 			t.Fatalf("Retry-After %q: waits %v, want two of 3s", retryAfter, got)
 		}
+	}
+}
+
+// Retry-After 0 waits 1 s, never sending requests back to back.
+func TestServerResumingRetryAfterZeroWaitsOneSecond(t *testing.T) {
+	s := newResumingServer(t, "0", map[string]int{routeExecute: 2})
+	client, clock := s.client(4, DefaultResumeTimeout)
+	if err := execute(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
+	if got := clock.recorded(); !slices.Equal(got, repeat(time.Second, 2)) {
+		t.Fatalf("waits %v, want two of 1s", got)
 	}
 }
 

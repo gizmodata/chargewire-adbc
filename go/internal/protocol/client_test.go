@@ -287,9 +287,14 @@ func TestErrorsWithoutProblemDocuments(t *testing.T) {
 }
 
 func TestParseRetryAfter(t *testing.T) {
-	for value, want := range map[string]time.Duration{"3": 3 * time.Second, " 0 ": 0, "": 0, "-1": 0, "Wed, 21 Oct 2026 07:28:00 GMT": 0} {
-		if got := parseRetryAfter(value); got != want {
-			t.Errorf("parseRetryAfter(%q) = %v, want %v", value, got, want)
+	type parsed struct {
+		wait time.Duration
+		ok   bool
+	}
+	for value, want := range map[string]parsed{"3": {3 * time.Second, true}, " 0 ": {0, true}, "": {0, false},
+		"-1": {0, false}, "Wed, 21 Oct 2026 07:28:00 GMT": {0, false}} {
+		if wait, ok := parseRetryAfter(value); wait != want.wait || ok != want.ok {
+			t.Errorf("parseRetryAfter(%q) = %v, %v, want %v, %v", value, wait, ok, want.wait, want.ok)
 		}
 	}
 }

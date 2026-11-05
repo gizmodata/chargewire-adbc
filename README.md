@@ -329,7 +329,7 @@ Route by something both clients send, or connect both to the instance's own addr
   request but discovery and health, and may hold a request, the sign-in above all, for up to
   25 s before it answers; the driver sets no per-request time limit that would cut a held
   request short. On `server_resuming` the driver waits the answer's `Retry-After` (3 s when
-  it has none, at most 60 s) and sends the same request again, every request, the sign-in
+  it has none, at least 1 s and at most 60 s) and sends the same request again, every request, the sign-in
   included, and not counted against `retry.max_attempts`, until `resume_timeout` (default
   600 s, counted from the request's first send) would pass before the next send. Then the
   error is returned: `server_resuming`, `StatusIO`, with the server's message and how long the
