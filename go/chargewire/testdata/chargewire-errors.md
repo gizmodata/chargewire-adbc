@@ -1,6 +1,7 @@
 <!--
 The error table of the Chargewire spec (spec/chargewire.md §11), copied from
-gizmodata/chargewire spec/v1.0 at eaf71d3. TestErrorStatusesCoverTheSpec reads
+gizmodata/chargewire spec/v1.0 at eaf71d3, plus the server_resuming row of the
+spec's feat/server-resuming branch. TestErrorStatusesCoverTheSpec reads
 it: every code in it must have a status in codeStatuses (errors.go). When the
 spec gains a code, copy the new table here; with CHARGEWIRE_ADBC_TEST_SPEC set to
 a chargewire.md, the test also fails while this copy is behind that spec.
@@ -43,4 +44,5 @@ a chargewire.md, the test also fails while this copy is behind that spec.
 | `internal_error` | 500 | The server failed in a way that is not the request's doing (a bug, a broken invariant) |
 | `not_implemented` | 501 | The server does not implement this operation (browser sign-in on a server without `oauth_browser`, §4.3) |
 | `server_draining` | 503 | The server is shutting down; with `Retry-After` |
+| `server_resuming` | 503 | A stopped server is starting again; the same request may be sent again after `Retry-After` (§2.6) |
 | `access_denied`, `identity_provider_error` | — | A failed browser sign-in's `error.code` in the poll answer, as is `invalid_credentials` (§4.3.2); never a response's status |

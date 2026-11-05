@@ -34,6 +34,10 @@ class DatabaseOptions(enum.Enum):
     SUBJECT_TOKEN = "adbc.chargewire.auth.subject_token"
     #: How often a request that is safe to repeat is sent, first try included.
     RETRY_MAX_ATTEMPTS = "adbc.chargewire.retry.max_attempts"
+    #: How long, in seconds, a request is sent again while the server answers
+    #: ``server_resuming`` (a stopped server starting again), each time after its
+    #: Retry-After: "600" (the default); "0" returns the error at once.
+    RESUME_TIMEOUT = "adbc.chargewire.resume_timeout"
     #: Replace a session the server lost with a new one ("true", the default).
     SESSION_RECONNECT = "adbc.chargewire.session.reconnect"
 

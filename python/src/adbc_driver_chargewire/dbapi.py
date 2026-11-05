@@ -150,6 +150,7 @@ def connect(
     auth_type: Optional[str] = None,
     open_browser: Union[bool, str] = True,
     oauth_timeout_seconds: Optional[float] = None,
+    resume_timeout: Optional[float] = None,
     tls_skip_verify: bool = False,
     tls_root_certs: Optional[PemSource] = None,
     tls_client_cert: Optional[PemSource] = None,
@@ -184,6 +185,10 @@ def connect(
             string is the command that opens it (the URL is appended).
         oauth_timeout_seconds: Browser sign-in: how long the person has to
             sign in (default 300).
+        resume_timeout: How long, in seconds, the driver keeps sending a request
+            again while the server answers that it is resuming (a stopped server
+            starting again because this client connected); default 600, 0 returns
+            the error at once.
         tls_skip_verify: Do not verify the server's certificate (development
             only).
         tls_root_certs: CA certificates to trust, as PEM text or a file path.
@@ -230,6 +235,8 @@ def connect(
         db_kwargs.setdefault(
             DatabaseOptions.OAUTH_TIMEOUT_SECONDS.value, str(oauth_timeout_seconds)
         )
+    if resume_timeout is not None:
+        db_kwargs.setdefault(DatabaseOptions.RESUME_TIMEOUT.value, str(resume_timeout))
     if tls_skip_verify:
         db_kwargs.setdefault(DatabaseOptions.TLS_SKIP_VERIFY.value, "true")
     pem_options = {

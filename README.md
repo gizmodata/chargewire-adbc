@@ -115,7 +115,7 @@ drivers, so Python raises `ProgrammingError`; SQLSTATE `42P01` is `StatusNotFoun
 `StatusAlreadyExists` and class `23` (a constraint) `StatusIntegrity` (`IntegrityError`).
 Cancels and timeouts are `StatusCancelled` and `StatusTimeout` (`OperationalError`), sign-in
 failures `StatusUnauthenticated`, missing privileges `StatusUnauthorized`, limits and a
-draining server `StatusIO`. Only a server or driver fault (`internal_error`, an answer that
+draining or resuming server `StatusIO`. Only a server or driver fault (`internal_error`, an answer that
 breaks the protocol) is `StatusInternal` (`InternalError`). A code the driver doesn't know
 falls back to its HTTP status. The SQLSTATE, when the server sent one, is in the error's
 `SqlState` (Python: `error.sqlstate`).
@@ -194,6 +194,7 @@ Database options (with the standard `uri`, `username`, `password` and `adbc.tele
 | `adbc.chargewire.auth.access_token_expires_at` | | Read-only: when that token expires, RFC 3339 UTC (`2026-10-20T15:14:13Z`), from the token response's `expires_in` or the token's own `exp`; `""` when unknown |
 | `adbc.chargewire.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
 | `adbc.chargewire.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
+| `adbc.chargewire.resume_timeout` | `600` | Seconds (fractions allowed) to keep sending a request again while the server answers `server_resuming`, a stopped server starting again (see "A resuming server" under How it behaves); `0`: return the error at once |
 | `adbc.chargewire.session.reconnect` | `true` | Replace a session the server lost (see below) |
 | `adbc.chargewire.session.id` | | Attach every connection to this existing session instead of creating one ([below](#attaching-to-an-existing-session)) |
 | `adbc.chargewire.session.close_on_release` | `true` for a created session, `false` for an attached one | Whether closing a connection ends its session on the server; also a connection option, settable any time |
@@ -319,9 +320,23 @@ Route by something both clients send, or connect both to the instance's own addr
   for a complete result.
 - **Retries.** Every submit, prepared execute and ingest carries an `Idempotency-Key`, so
   a request whose answer was lost is sent again without running twice. Reads, deletes and
-  idempotent writes are retried after transport errors and 429/502/503/504 (honouring
-  `Retry-After`). Commit and rollback are never retried. Uploads up to 16 MiB are kept in
-  memory so they can be retried; larger ones stream (chunked) and are sent once.
+  idempotent writes are retried after transport errors and 421/429/502/503/504 (honouring
+  `Retry-After`), up to `retry.max_attempts` sends. Commit and rollback are never retried.
+  Uploads up to 16 MiB are kept in memory so they can be retried; larger ones stream
+  (chunked) and are sent once.
+- **A resuming server.** A stopped server that is starting again because a client connected
+  (or something standing in for it while it starts) answers `server_resuming` (503) to any
+  request but discovery and health, and may hold a request, the sign-in above all, for up to
+  25 s before it answers; the driver sets no per-request time limit that would cut a held
+  request short. On `server_resuming` the driver waits the answer's `Retry-After` (3 s when
+  it has none, at most 60 s) and sends the same request again, every request, the sign-in
+  included, and not counted against `retry.max_attempts`, until `resume_timeout` (default
+  600 s, counted from the request's first send) would pass before the next send. Then the
+  error is returned: `server_resuming`, `StatusIO`, with the server's message and how long the
+  driver waited. A request whose body was streamed (an upload over 16 MiB) can't be sent
+  again and fails at once, as do best-effort requests such as ending a session when a
+  connection closes. A Go context that ends during a wait ends the request with the
+  context's error.
 - **Tokens** are renewed before they expire and, once, when the server refuses one
   (`invalid_token` without a reason, with `token_expired`, or with a reason the driver
   doesn't know). After `token_revoked`, `credentials_changed` or `principal_dropped` the

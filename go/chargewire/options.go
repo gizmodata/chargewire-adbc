@@ -74,6 +74,19 @@ const (
 	// repeat is sent, first try included (default 4; 1 turns retries off).
 	OptionRetryMaxAttempts = "adbc.chargewire.retry.max_attempts"
 
+	// OptionResumeTimeout is how long, in seconds (fractions allowed), a
+	// request is sent again while the server answers it with server_resuming:
+	// a stopped server starting again because this client connected (default
+	// 600; 0: never, the error is returned at once). Each repeat waits the
+	// answer's Retry-After (3 seconds when it has none, at most 60), and the
+	// time counts from the request's first attempt, so the sign-in that wakes
+	// a server waits through its resume, however long the server holds each
+	// attempt before answering. Once the next attempt would start later than
+	// that, the server_resuming error is returned (StatusIO), with the
+	// server's message. Repeats for a resuming server don't count against
+	// OptionRetryMaxAttempts.
+	OptionResumeTimeout = "adbc.chargewire.resume_timeout"
+
 	// OptionSessionReconnect ("true"/"false", default "true") says whether a
 	// session the server lost (evicted when idle, server restarted, or ended
 	// for idling in a transaction) is replaced by a new one with the

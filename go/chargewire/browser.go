@@ -90,7 +90,8 @@ type BrowserSignInResult struct {
 }
 
 // BrowserSignIn runs a browser sign-in against the server the options name:
-// the uri and the adbc.chargewire.tls.* options, as for a database. It fails with
+// the uri, the adbc.chargewire.tls.* options and OptionResumeTimeout, as for
+// a database. It fails with
 // StatusUnauthenticated when the server doesn't offer browser sign-in, the
 // person or the identity provider refused, or the server refused who signed
 // in (with the server's detail); StatusTimeout after timeout (0: the
@@ -103,8 +104,13 @@ func BrowserSignIn(ctx context.Context, options map[string]string, open BrowserO
 		return nil, adbc.Error{Code: adbc.StatusInvalidArgument, Msg: fmt.Sprintf("[%s] %v", driverName, err)}
 	}
 	var tls tlsOptions
+	resumeTimeout := protocol.DefaultResumeTimeout
 	for key, value := range options {
 		switch key {
+		case OptionResumeTimeout:
+			if resumeTimeout, err = parseResumeTimeout(value); err != nil {
+				return nil, err
+			}
 		case OptionTLSSkipVerify:
 			if tls.skipVerify, err = parseBool(key, value); err != nil {
 				return nil, err
@@ -125,7 +131,7 @@ func BrowserSignIn(ctx context.Context, options map[string]string, open BrowserO
 	}
 	defer transport.CloseIdleConnections()
 	client := protocol.NewClient(protocol.Config{BaseURL: base, HTTPClient: &http.Client{Transport: transport},
-		MaxAttempts: defaultMaxAttempts, UserAgent: userAgent(), Fallback: fallbackFor(base)})
+		MaxAttempts: defaultMaxAttempts, ResumeTimeout: resumeTimeout, UserAgent: userAgent(), Fallback: fallbackFor(base)})
 	discovery, err := client.Discover(ctx)
 	if err != nil {
 		if hint := plainHTTPError(err, options[adbc.OptionKeyURI], base); hint != nil {

@@ -54,6 +54,9 @@ type fakeChargewire struct {
 	sessionDelete atomic.Pointer[http.HandlerFunc]
 	// submit, when set, answers a submit.
 	submit atomic.Pointer[http.HandlerFunc]
+	// token, when set, answers a sign-in first; it reports whether it did,
+	// or leaves the request to the fake's own answer.
+	token atomic.Pointer[func(http.ResponseWriter, *http.Request) bool]
 	// submits are the headers of every submit; deleted the statements
 	// deleted.
 	submits []http.Header
@@ -87,6 +90,12 @@ func (f *fakeChargewire) lastSubmit() http.Header {
 	return f.submits[len(f.submits)-1]
 }
 
+// setToken makes handler see sign-ins first: when it returns false, the fake
+// answers with a token.
+func (f *fakeChargewire) setToken(handler func(http.ResponseWriter, *http.Request) bool) {
+	f.token.Store(&handler)
+}
+
 // setSessionDelete makes handler answer DELETE of a session.
 func (f *fakeChargewire) setSessionDelete(handler http.HandlerFunc) { f.sessionDelete.Store(&handler) }
 
@@ -101,6 +110,9 @@ func newFakeChargewire(t *testing.T) *fakeChargewire {
 			"capabilities": f.capabilities, "auth": map[string]any{"grant_types": []string{"password"}}})
 	})
 	mux.HandleFunc("POST /chargewire/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		if handler := f.token.Load(); handler != nil && (*handler)(w, r) {
+			return
+		}
 		n := f.tokens.Add(1)
 		fakeJSON(w, http.StatusOK, map[string]any{"access_token": fmt.Sprintf("tok%d", n), "token_type": "Bearer", "expires_in": f.tokenTTL})
 	})

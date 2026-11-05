@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -29,8 +30,10 @@ type databaseImpl struct {
 	credentials protocol.Credentials
 	tls         tlsOptions
 	maxAttempts int
-	reconnect   bool
-	defaults    execOptions
+	// resumeTimeout is OptionResumeTimeout.
+	resumeTimeout time.Duration
+	reconnect     bool
+	defaults      execOptions
 	// attachSession is the session every connection attaches to
 	// (OptionSessionID); "" creates one per connection.
 	attachSession string
@@ -67,7 +70,8 @@ func newDatabase(ctx context.Context, driver *driverbase.DriverImplBase, opts ma
 	}
 	// Each database learns its own server's vendor name and version.
 	base.DriverInfo = cloneDriverInfo(driver.DriverInfo)
-	db := &databaseImpl{DatabaseImplBase: base, maxAttempts: defaultMaxAttempts, reconnect: true,
+	db := &databaseImpl{DatabaseImplBase: base, maxAttempts: defaultMaxAttempts,
+		resumeTimeout: protocol.DefaultResumeTimeout, reconnect: true,
 		defaults: defaultExecOptions()}
 	for key, value := range currentOptions(opts) {
 		if err := db.SetOption(ctx, key, value); err != nil {
@@ -164,6 +168,12 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 			return invalidOption(key, value, "a whole number, 1 or more")
 		}
 		d.maxAttempts = n
+	case OptionResumeTimeout:
+		timeout, err := parseResumeTimeout(value)
+		if err != nil {
+			return err
+		}
+		d.resumeTimeout = timeout
 	case OptionSessionReconnect:
 		b, err := parseBool(key, value)
 		if err != nil {
@@ -216,6 +226,8 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 		return d.tls.serverName, nil
 	case OptionRetryMaxAttempts:
 		return strconv.Itoa(d.maxAttempts), nil
+	case OptionResumeTimeout:
+		return strconv.FormatFloat(d.resumeTimeout.Seconds(), 'f', -1, 64), nil
 	case OptionSessionReconnect:
 		return strconv.FormatBool(d.reconnect), nil
 	case OptionSessionID:
@@ -315,13 +327,14 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 		return nil, nil, err
 	}
 	client := protocol.NewClient(protocol.Config{
-		BaseURL:     base,
-		HTTPClient:  &http.Client{Transport: transport},
-		Credentials: d.credentials,
-		MaxAttempts: d.maxAttempts,
-		UserAgent:   userAgent(),
-		Logger:      d.Logger,
-		Fallback:    fallbackFor(base),
+		BaseURL:       base,
+		HTTPClient:    &http.Client{Transport: transport},
+		Credentials:   d.credentials,
+		MaxAttempts:   d.maxAttempts,
+		ResumeTimeout: d.resumeTimeout,
+		UserAgent:     userAgent(),
+		Logger:        d.Logger,
+		Fallback:      fallbackFor(base),
 	})
 	discovery, err := client.Discover(ctx)
 	if err != nil {
@@ -360,6 +373,19 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 	d.client, d.transport, d.discovery = client, transport, discovery
 	return client, discovery, nil
 }
+
+// parseResumeTimeout reads OptionResumeTimeout: seconds, 0 or more.
+func parseResumeTimeout(value string) (time.Duration, error) {
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || seconds < 0 || math.IsInf(seconds, 0) || math.IsNaN(seconds) || seconds > maxResumeTimeoutSeconds {
+		return 0, invalidOption(OptionResumeTimeout, value, "a number of seconds, 0 or more (0: don't wait for a resuming server)")
+	}
+	return time.Duration(seconds * float64(time.Second)), nil
+}
+
+// maxResumeTimeoutSeconds keeps OptionResumeTimeout within a time.Duration
+// (a year is far more than any resume).
+const maxResumeTimeoutSeconds = 365 * 24 * 3600
 
 // replaceAccessToken gives an open database a new access token, when it signs
 // in with one (OptionAccessToken, or a browser sign-in): its connections send

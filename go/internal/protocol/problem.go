@@ -58,6 +58,11 @@ const (
 	CodeInternalError        = "internal_error"
 	CodeNotImplemented       = "not_implemented"
 	CodeServerDraining       = "server_draining"
+	// CodeServerResuming (503, with Retry-After) means a stopped server is
+	// starting again: the request did nothing, and the same request may be
+	// sent again after Retry-After. Any request but discovery and health may
+	// get it, and a request may be held for a while before it is answered.
+	CodeServerResuming = "server_resuming"
 
 	// Client certificate sign-in and certificate-bound tokens (§4.4).
 	CodeCertificateRequired         = "certificate_required"
