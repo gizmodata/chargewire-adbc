@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-05
+
+For Chargewire 2.1.0 (Hardcharger 2.7.0) and GizmoData Cloud's auto-resume.
+
 ### Added
 
 - **A new-session hook** (Go): `chargewire.WithNewSessionHook(ctx, hook)` on `Database.Open`'s
@@ -21,10 +25,10 @@ All notable changes to this project are documented here. The format follows
 - Waiting for a resuming server. A stopped server that is starting again because a client
   connected answers `server_resuming` (HTTP 503 with `Retry-After`), and may hold a request,
   the sign-in above all, for up to 25 s before it answers. The driver now sends the same
-  request again after each `Retry-After` (3 s when there is none, at most 60 s), for every
-  request including the sign-in, until the new option `adbc.chargewire.resume_timeout`
-  (seconds, default 600, `0`: don't wait) has passed; then it returns the server's error
-  (`server_resuming`, `StatusIO`) with its message. These repeats don't count against
+  request again after each `Retry-After` (at least 1 s and at most 60 s; 3 s when there is none
+  or it isn't a whole number), for every request including the sign-in, until the new option
+  `adbc.chargewire.resume_timeout` (seconds, default 600, `0`: don't wait) has passed; then it
+  returns the server's error (`server_resuming`, `StatusIO`) with its message. These repeats don't count against
   `adbc.chargewire.retry.max_attempts`, and other 503s keep their bounded retry. Python's
   `connect()` takes it as `resume_timeout`; `DatabaseOptions.RESUME_TIMEOUT` names the option.
 - `server_resuming` in the error mapping (`StatusIO`).
