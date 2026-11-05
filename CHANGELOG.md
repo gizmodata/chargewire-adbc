@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A new-session hook** (Go): `chargewire.WithNewSessionHook(ctx, hook)` on `Database.Open`'s
+  context runs `hook` on every session the driver creates for that connection, the first inside
+  `Open` and every replacement of a lost one (an idle eviction, `token_expired`,
+  `idle_in_transaction`), before any request of the application runs on it, even one then refused
+  because a transaction was lost. The hook gets a `NewSession` (`ID`, `Replaces`, `Exec`), whose
+  `Exec` runs SQL in that session only. It is for state the session options can't carry: a
+  replacement had the options but not what SQL had set (a driver built on this one lost its
+  settings and tags). When the hook fails, the new session is ended instead of used without its
+  setup: `Open` fails, or the request that found the session lost fails (`StatusIO`, the message
+  saying the setup failed and why) and the next request opens and sets up another.
+
 ## [2.1.0] - 2026-11-05
 
 For Chargewire 2.1.0 (Hardcharger 2.7.0).

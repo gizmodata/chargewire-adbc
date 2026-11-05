@@ -43,6 +43,9 @@ const (
 type Session struct {
 	client    *Client
 	reconnect bool
+	// hook sets up every session this Session creates, before any other
+	// request uses it (OpenSessionWithHook).
+	hook NewSessionHook
 
 	mu           sync.Mutex
 	id           string
@@ -98,7 +101,15 @@ func txFromDocument(doc *SessionDocument, fresh bool) txKnowledge {
 // OpenSession creates a session (§5.1). With reconnect, a session the server
 // later loses is replaced by a new one with the same options.
 func (c *Client) OpenSession(ctx context.Context, options map[string]any, reconnect bool) (*Session, error) {
-	s := &Session{client: c, reconnect: reconnect, options: maps.Clone(options)}
+	return c.OpenSessionWithHook(ctx, options, reconnect, nil)
+}
+
+// OpenSessionWithHook is OpenSession with a hook that sets up the session,
+// and every session that replaces it, before any other request uses it. When
+// the hook fails on the first session, the session is ended and the error is
+// a *SessionSetupError.
+func (c *Client) OpenSessionWithHook(ctx context.Context, options map[string]any, reconnect bool, hook NewSessionHook) (*Session, error) {
+	s := &Session{client: c, reconnect: reconnect, options: maps.Clone(options), hook: hook}
 	if s.options == nil {
 		s.options = map[string]any{}
 	}
@@ -106,8 +117,15 @@ func (c *Client) OpenSession(ctx context.Context, options map[string]any, reconn
 	if err != nil {
 		return nil, err
 	}
+	mayBegin, err := c.setUp(ctx, hook, doc.SessionID, "")
+	if err != nil {
+		return nil, err
+	}
 	s.id = doc.SessionID
 	s.tx = txFromDocument(doc, true)
+	if mayBegin && s.tx == txNone {
+		s.tx = txMaybe
+	}
 	return s, nil
 }
 
@@ -318,9 +336,12 @@ func (e *SessionLostError) Error() string {
 			b.WriteString(", so this request did not run again in a new session, where it would have committed on its own")
 		}
 	}
-	if e.NewID != "" {
+	switch {
+	case e.NewID != "":
 		fmt.Fprintf(&b, "; the driver opened session %s with the connection's options, so the connection can be used again", e.NewID)
-	} else {
+	case setupFailed(e.Cause):
+		b.WriteString("; the connection's next request opens and sets up another session")
+	default:
 		b.WriteString("; the connection must be reopened")
 	}
 	return b.String()
@@ -330,7 +351,9 @@ func (e *SessionLostError) Unwrap() error { return e.Cause }
 
 // SessionReplacedError is an error from a request that ran on a replacement
 // session. It says so, because the error may be a consequence: the old
-// session's temporary tables and SQL-level settings did not carry over.
+// session's temporary tables, prepared statements and the settings its SQL
+// made did not carry over (only the options, and what the connection's
+// new-session hook sets up).
 type SessionReplacedError struct {
 	OldID, NewID string
 	Err          error
@@ -338,8 +361,8 @@ type SessionReplacedError struct {
 
 func (e *SessionReplacedError) Error() string {
 	return fmt.Sprintf("%v (note: the server lost session %s and this ran in replacement session %s, "+
-		"which has the connection's options but not the old session's temporary tables, "+
-		"SQL-level settings or prepared statements)", e.Err, e.OldID, e.NewID)
+		"which has the connection's options and setup but not the old session's temporary tables, "+
+		"prepared statements or settings made in SQL)", e.Err, e.OldID, e.NewID)
 }
 
 func (e *SessionReplacedError) Unwrap() error { return e.Err }
@@ -369,8 +392,11 @@ func lostTransaction(err error) bool {
 }
 
 // replace opens a replacement for the session failedID, unless that already
-// happened. It returns the current session id, and whether a transaction may
-// have been open in the lost session.
+// happened, and sets it up with the hook before any other request can use it
+// (s.mu is held throughout). It returns the current session id, and whether a
+// transaction may have been open in the lost session, which it also reports
+// with a failed setup: the replacement is then ended, failedID stays the
+// current session, and the next request that finds it gone tries again.
 func (s *Session) replace(ctx context.Context, failedID string, cause error) (string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -393,15 +419,28 @@ func (s *Session) replace(ctx context.Context, failedID string, cause error) (st
 		return "", false, err
 	}
 	txLost := s.mayHaveTransaction() || lostTransaction(cause)
+	mayBegin, err := s.client.setUp(ctx, s.hook, doc.SessionID, failedID)
+	if err != nil {
+		// This failure reports the lost transaction; the next attempt does
+		// not report it again.
+		s.tx = txNone
+		s.client.logger.WarnContext(ctx, "the server lost the session, and setting up its replacement failed; "+
+			"the next request tries again", "old_session", failedID, "new_session", doc.SessionID,
+			"cause", cause.Error(), "error", err.Error(), "transaction_lost", txLost)
+		return "", txLost, err
+	}
 	if s.lostTx == nil {
 		s.lostTx = map[string]bool{}
 	}
 	s.lostTx[failedID] = txLost
 	s.id = doc.SessionID
 	s.tx = txFromDocument(doc, true)
+	if mayBegin && s.tx == txNone {
+		s.tx = txMaybe
+	}
 	s.replacements++
 	s.client.logger.WarnContext(ctx, "the server lost the session; opened a replacement with the same options "+
-		"(temporary tables, SQL-level settings and prepared statements of the old session are gone)",
+		"and setup (temporary tables, prepared statements and settings made in SQL of the old session are gone)",
 		"old_session", failedID, "new_session", doc.SessionID, "cause", cause.Error(), "transaction_lost", txLost)
 	return doc.SessionID, txLost, nil
 }
@@ -432,7 +471,7 @@ func (s *Session) do(ctx context.Context, scope Scope, lostWhat string, build fu
 	}
 	newID, txLost, replaceErr := s.replace(ctx, id, err)
 	if replaceErr != nil {
-		return nil, lostError(id, "", lostWhat, s.MayHaveTransaction() || lostTransaction(err), errors.Join(err, replaceErr))
+		return nil, lostError(id, "", lostWhat, txLost || s.MayHaveTransaction() || lostTransaction(err), errors.Join(err, replaceErr))
 	}
 	switch {
 	case scope == ScopeHandle:
@@ -472,7 +511,7 @@ func (s *Session) doHandle(ctx context.Context, sessionID, what string, req *Req
 	}
 	newID, txLost, replaceErr := s.replace(ctx, sessionID, err)
 	if replaceErr != nil {
-		return nil, lostError(sessionID, "", what, s.MayHaveTransaction() || lostTransaction(err), errors.Join(err, replaceErr))
+		return nil, lostError(sessionID, "", what, txLost || s.MayHaveTransaction() || lostTransaction(err), errors.Join(err, replaceErr))
 	}
 	return nil, lostError(sessionID, newID, what, txLost, err)
 }
