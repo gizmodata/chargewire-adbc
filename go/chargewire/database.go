@@ -261,7 +261,7 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 		}
 		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(false)), nil
 	}
-	session, err := client.OpenSession(ctx, nil, d.reconnect)
+	session, err := client.OpenSessionWithHook(ctx, nil, d.reconnect, newSessionHook(ctx))
 	if err != nil {
 		return nil, wrapError(err, "opening a session")
 	}

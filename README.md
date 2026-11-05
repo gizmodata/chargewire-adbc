@@ -120,6 +120,28 @@ breaks the protocol) is `StatusInternal` (`InternalError`). A code the driver do
 falls back to its HTTP status. The SQLSTATE, when the server sent one, is in the error's
 `SqlState` (Python: `error.sqlstate`).
 
+#### Setting up every session: the new-session hook
+
+The driver replays the session options (catalog, schema, autocommit) on a session that replaces
+a lost one, but not what SQL set in the old session. For a Go program, or a driver built on this
+one, that needs SQL-level state in every session (settings, tags, a search path),
+`chargewire.WithNewSessionHook` gives `Open` a hook that runs on every session the driver creates
+for that connection: the first, inside `Open`, and each replacement, before any request of the
+application runs on it, including one that is then refused because a transaction was lost:
+
+```go
+cnxn, err := db.Open(chargewire.WithNewSessionHook(ctx, func(ctx context.Context, s chargewire.NewSession) error {
+	return s.Exec(ctx, "SET search_path = 'analytics'")
+}))
+```
+
+`NewSession.Exec` runs one statement in that session only (`ID()`; `Replaces()` is the lost
+session's id, or "" for the first). When the hook fails, the driver ends the new session rather
+than use it without the setup: on the first session `Open` fails with the hook's error; on a
+replacement the request that found the session lost fails (`StatusIO`, the error saying why),
+and the connection's next request opens another session and runs the hook again. A session the
+driver attached to (`adbc.chargewire.session.id`) is not set up.
+
 ### Python
 
 ```python
@@ -307,7 +329,8 @@ Route by something both clients send, or connect both to the instance's own addr
 - **Lost sessions** (`session_not_found`; `session_ended` because a token expired, after
   getting a new token; or `session_ended` with `idle_in_transaction`, the server having rolled
   back a transaction left idle past its `idle_in_transaction_timeout_s`) are replaced by a new
-  session with the options the driver set, and the loss is reported, not hidden: a warning is
+  session with the options the driver set (and set up by the connection's new-session hook, if
+  it has one, before anything else runs there), and the loss is reported, not hidden: a warning is
   logged, `adbc.chargewire.session.replacements` counts it, and errors from work in the
   replacement say it ran there. When a transaction was, or may have been, open in the lost
   session, nothing runs on the replacement (in autocommit it would commit on its own what was
