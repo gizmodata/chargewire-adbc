@@ -543,3 +543,90 @@ func TestStaleOpenAfterCommitRefusesUntilConfirmed(t *testing.T) {
 		t.Fatalf("confirmed no transaction: err %v, ran %v", err, f.ran)
 	}
 }
+
+// assertStateLost checks that err reports a session lost after SQL changed
+// its state (USE, SET, ...), replaced, and that the request did not run in the
+// replacement, where it would have run without that state.
+func assertStateLost(t *testing.T, f *fake, session *Session, err error, sql string) {
+	t.Helper()
+	lost, ok := errors.AsType[*SessionLostError](err)
+	// EXECUTE is a transaction word too, so Transaction may be set as well.
+	if !ok || !lost.State || lost.Transaction != mayBeginTransaction(sql) || lost.NewID == "" || !HasCode(err, CodeSessionNotFound) {
+		t.Fatalf("after %q: error %v, want a session lost with its SQL state", sql, err)
+	}
+	if n := f.statementsRun(lost.NewID); n != 0 {
+		t.Fatalf("after %q: %d statements ran in the replacement session without the old session's state", sql, n)
+	}
+	for _, want := range []string{"settings and USE", "did not run again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("after %q: the error does not say %q: %v", sql, want, err)
+		}
+	}
+}
+
+// A statement that changes the session's state in SQL (USE, SET, RESET,
+// PRAGMA, by its first word) makes a lost session's requests fail rather than
+// run again: in the replacement, an INSERT INTO t would land in another
+// schema's table, or run with other settings, without an error. The next
+// request runs in the replacement. The twins below change no session state
+// (SET inside UPDATE, a word in a literal) and run again.
+func TestLostSessionAfterSQLStateIsNotRunAgain(t *testing.T) {
+	for _, sql := range []string{"USE other.s2", "SET threads = 4", "reset threads", "PRAGMA enable_profiling",
+		"/* why */ use s2", "-- note\n  SET search_path = 'x'", "SELECT 1; SET x = 1", "SET VARIABLE v = 1",
+		"EXECUTE set_it"} {
+		f := newFake(t).withSessions()
+		session := openTestSession(t, f, true)
+		if err := submitSQL(t, session, sql); err != nil {
+			t.Fatal(err)
+		}
+		f.evict()
+		assertStateLost(t, f, session, submitSQL(t, session, "INSERT INTO t VALUES (2)"), sql)
+		if err := submitSQL(t, session, "INSERT INTO t VALUES (3)"); err != nil || f.statementsRun(session.ID()) != 1 {
+			t.Fatalf("after %q: the next statement did not run in the replacement: %v, %v", sql, err, f.ran)
+		}
+	}
+	for _, sql := range []string{"UPDATE t SET a = 1", "SELECT 'USE x'", "INSERT INTO settings VALUES (1)",
+		"CREATE TABLE pragma_log (v INT)"} {
+		f := newFake(t).withSessions()
+		session := openTestSession(t, f, true)
+		if err := submitSQL(t, session, sql); err != nil {
+			t.Fatal(err)
+		}
+		f.evict()
+		if err := submitSQL(t, session, "INSERT INTO t VALUES (2)"); err != nil || f.statementsRun(session.ID()) != 1 {
+			t.Fatalf("after %q: err %v, ran %v; want the statement run again in the replacement", sql, err, f.ran)
+		}
+	}
+}
+
+// A session-wide request (metadata, options) is not run again either.
+func TestLostSessionAfterSQLStateRefusesSessionRequests(t *testing.T) {
+	f := newFake(t).withSessions()
+	session := openTestSession(t, f, true)
+	if err := submitSQL(t, session, "USE other"); err != nil {
+		t.Fatal(err)
+	}
+	f.evict()
+	_, err := session.Get(context.Background())
+	if lost, ok := errors.AsType[*SessionLostError](err); !ok || !lost.State || lost.NewID == "" {
+		t.Fatalf("error %v, want a session lost with its SQL state", err)
+	}
+}
+
+// A statement whose state the caller restores in every session (through the
+// new-session hook) doesn't stop a request from running again.
+func TestLostSessionAfterRestoredSQLStateRunsAgain(t *testing.T) {
+	f := newFake(t).withSessions()
+	session := openTestSession(t, f, true)
+	body, _ := SubmitDocument("SET SESSION hardcharger.query_tag = '{}'", nil)
+	resp, err := session.Submit(context.Background(), &Submission{Body: body, SQL: "SET SESSION hardcharger.query_tag = '{}'",
+		StateRestored: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	f.evict()
+	if err := submitSQL(t, session, "INSERT INTO t VALUES (2)"); err != nil || f.statementsRun(session.ID()) != 1 {
+		t.Fatalf("err %v, ran %v; want the statement run again in the replacement", err, f.ran)
+	}
+}

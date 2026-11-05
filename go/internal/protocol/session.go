@@ -30,7 +30,9 @@ const (
 	// ScopeStatement requests run SQL. They run again on a replacement
 	// session only when the driver knows no transaction was open in the lost
 	// one: inside one, the work before them is gone (rolled back), and running
-	// the rest would commit half a transaction.
+	// the rest would commit half a transaction. Neither kind runs again when
+	// SQL changed the lost session's state (USE, SET, RESET, PRAGMA): the
+	// replacement doesn't have it (see changesSessionState).
 	ScopeStatement
 	// ScopeHandle requests name something that lived in the lost session: a
 	// statement, a prepared statement, the open transaction. They fail.
@@ -61,6 +63,12 @@ type Session struct {
 	// transaction may have been open in it, for requests that find the
 	// session gone after another request replaced it.
 	lostTx map[string]bool
+	// sqlState says SQL changed the current session's state (USE, SET,
+	// RESET, PRAGMA) in a way the driver doesn't restore in a replacement:
+	// a request that finds the session gone then fails rather than run again
+	// without that state. lostState is the same for each replaced session id.
+	sqlState  bool
+	lostState map[string]bool
 }
 
 // txKnowledge is what the driver knows of a session's transaction (§5.5).
@@ -277,13 +285,74 @@ func (s *Session) TransactionUnconfirmed() bool {
 // request): a statement that could begin a transaction leaves one possibly
 // open, and one that could end it leaves the driver unsure until it reads the
 // session document (nextTx).
-func (s *Session) noteStatement(id, sql string) {
+//
+// A statement that changes the session's state in SQL (changesSessionState)
+// marks it, unless restored says the caller sets that state up again in every
+// new session (with its new-session hook).
+func (s *Session) noteStatement(id, sql string, restored bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.id != id {
 		return
 	}
 	s.tx = nextTx(s.tx, sql)
+	if !restored && changesSessionState(sql) {
+		s.sqlState = true
+	}
+}
+
+// stateWords are the first words of SQL statements that change the session's
+// state, which a replacement session doesn't have: USE (the current catalog
+// and schema), SET and RESET (settings, variables), PRAGMA, and EXECUTE (of a
+// statement prepared in SQL, which may be one of them). The driver doesn't
+// restore what they set; the session options it replays (catalog, schema,
+// autocommit) are set through the protocol, not SQL.
+var stateWords = []string{"USE", "SET", "RESET", "PRAGMA", "EXECUTE"}
+
+// changesSessionState reports whether a statement of sql (split at every
+// semicolon, literals and comments included, which can only find more) starts
+// with one of stateWords, after any comments. The first word only: UPDATE t
+// SET a = 1 changes no session state.
+func changesSessionState(sql string) bool {
+	for _, part := range strings.Split(sql, ";") {
+		word := firstWord(part)
+		for _, w := range stateWords {
+			if strings.EqualFold(word, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// firstWord is the first word of a statement, after white space, comments
+// (-- to the end of the line, /* ... */) and opening parentheses.
+func firstWord(sql string) string {
+	for {
+		sql = strings.TrimLeft(sql, " \t\r\n\f(")
+		switch {
+		case strings.HasPrefix(sql, "--"):
+			_, rest, found := strings.Cut(sql, "\n")
+			if !found {
+				return ""
+			}
+			sql = rest
+		case strings.HasPrefix(sql, "/*"):
+			_, rest, found := strings.Cut(sql[2:], "*/")
+			if !found {
+				return ""
+			}
+			sql = rest
+		default:
+			end := strings.IndexFunc(sql, func(r rune) bool {
+				return !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z')
+			})
+			if end < 0 {
+				return sql
+			}
+			return sql[:end]
+		}
+	}
 }
 
 // observe records the transaction a session document of session id says,
@@ -369,7 +438,11 @@ type SessionLostError struct {
 	// session: its work was rolled back, so the request was not run again
 	// on the replacement session, where it would have committed on its own.
 	Transaction bool
-	Cause       error
+	// State says statements in the lost session changed its state in SQL
+	// (USE, SET, RESET, PRAGMA), which the replacement session doesn't have,
+	// so the request was not run again there.
+	State bool
+	Cause error
 }
 
 func (e *SessionLostError) Error() string {
@@ -385,6 +458,12 @@ func (e *SessionLostError) Error() string {
 		b.WriteString(" (rolled back)")
 		if e.NewID != "" {
 			b.WriteString(", so this request did not run again in a new session, where it would have committed on its own")
+		}
+	}
+	if e.State {
+		b.WriteString("; settings and USE made in SQL in it (USE, SET, RESET, PRAGMA) are gone too")
+		if e.NewID != "" && !e.Transaction {
+			b.WriteString(", so this request did not run again in a new session, where it would have run without them")
 		}
 	}
 	switch {
@@ -448,58 +527,80 @@ func lostTransaction(err error) bool {
 // transaction may have been open in the lost session, which it also reports
 // with a failed setup: the replacement is then ended, failedID stays the
 // current session, and the next request that finds it gone tries again.
-func (s *Session) replace(ctx context.Context, failedID string, cause error) (string, bool, error) {
+func (s *Session) replace(ctx context.Context, failedID string, cause error) (string, lostState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return "", false, errSessionClosed
+		return "", lostState{}, errSessionClosed
 	}
 	if s.id != failedID {
-		return s.id, s.lostTx[failedID] || lostTransaction(cause), nil
+		return s.id, lostState{tx: s.lostTx[failedID] || lostTransaction(cause), sql: s.lostState[failedID]}, nil
 	}
 	if p, ok := errors.AsType[*Problem](cause); ok && p.Code == CodeSessionEnded && p.Reason == ReasonTokenExpired {
 		// §5.6: get a new access token before creating a new session. A
 		// token issued elsewhere can't be replaced, so no session is made.
 		// After idle_in_transaction the token still stands.
 		if err := s.client.renewToken(ctx, s.client.currentToken()); err != nil {
-			return "", false, err
+			return "", lostState{}, err
 		}
 	}
 	doc, err := s.create(ctx)
 	if err != nil {
-		return "", false, err
+		return "", lostState{}, err
 	}
 	txLost := s.mayHaveTransaction() || lostTransaction(cause)
+	lost := lostState{tx: txLost, sql: s.sqlState}
 	hookTx, err := s.client.setUp(ctx, s.hook, doc.SessionID, failedID)
 	if err != nil {
-		// This failure reports the lost transaction; the next attempt does
-		// not report it again.
+		// This failure reports the lost transaction and state; the next
+		// attempt does not report them again.
 		s.tx = txNone
+		s.sqlState = false
 		s.client.logger.WarnContext(ctx, "the server lost the session, and setting up its replacement failed; "+
 			"the next request tries again", "old_session", failedID, "new_session", doc.SessionID,
-			"cause", cause.Error(), "error", err.Error(), "transaction_lost", txLost)
-		return "", txLost, err
+			"cause", cause.Error(), "error", err.Error(), "transaction_lost", txLost, "sql_state_lost", lost.sql)
+		return "", lost, err
 	}
 	if s.lostTx == nil {
 		s.lostTx = map[string]bool{}
+		s.lostState = map[string]bool{}
 	}
 	s.lostTx[failedID] = txLost
+	s.lostState[failedID] = lost.sql
+	s.sqlState = false
 	s.id = doc.SessionID
 	s.tx = afterHook(txFromDocument(doc, true), hookTx)
 	s.replacements++
 	s.client.logger.WarnContext(ctx, "the server lost the session; opened a replacement with the same options "+
 		"and setup (temporary tables, prepared statements and settings made in SQL of the old session are gone)",
-		"old_session", failedID, "new_session", doc.SessionID, "cause", cause.Error(), "transaction_lost", txLost)
-	return doc.SessionID, txLost, nil
+		"old_session", failedID, "new_session", doc.SessionID, "cause", cause.Error(), "transaction_lost", txLost,
+		"sql_state_lost", lost.sql)
+	return doc.SessionID, lost, nil
+}
+
+// lostState is what was lost with a replaced session that decides whether a
+// request may run again on its replacement: a transaction that was, or may
+// have been, open, and state set in SQL (USE, SET, ...).
+type lostState struct {
+	tx  bool
+	sql bool
 }
 
 // lostError is the error for a request that found session id gone and was not
 // run again: what was lost, and whether a transaction may have been.
-func lostError(id, newID, lostWhat string, txLost bool, cause error) *SessionLostError {
+func lostError(id, newID, lostWhat string, txLost, stateLost bool, cause error) *SessionLostError {
 	if txLost && lostWhat == "" {
 		lostWhat = "open transaction"
 	}
-	return &SessionLostError{OldID: id, NewID: newID, Lost: lostWhat, Transaction: txLost, Cause: cause}
+	return &SessionLostError{OldID: id, NewID: newID, Lost: lostWhat, Transaction: txLost, State: stateLost, Cause: cause}
+}
+
+// sqlStateOf reports whether SQL changed the state of session id, the current
+// one or one already replaced.
+func (s *Session) sqlStateOf(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lostState[id] || id == s.id && s.sqlState
 }
 
 // do sends a request built for the current session, and handles the session
@@ -515,22 +616,28 @@ func (s *Session) do(ctx context.Context, scope Scope, lostWhat string, build fu
 		return resp, err
 	}
 	if !s.reconnect {
-		return nil, lostError(id, "", lostWhat, s.MayHaveTransaction() || lostTransaction(err), err)
+		return nil, lostError(id, "", lostWhat, s.MayHaveTransaction() || lostTransaction(err), s.sqlStateOf(id), err)
 	}
-	newID, txLost, replaceErr := s.replace(ctx, id, err)
+	newID, lost, replaceErr := s.replace(ctx, id, err)
 	if replaceErr != nil {
-		return nil, lostError(id, "", lostWhat, txLost || s.MayHaveTransaction() || lostTransaction(err), errors.Join(err, replaceErr))
+		return nil, lostError(id, "", lostWhat, lost.tx || s.MayHaveTransaction() || lostTransaction(err),
+			lost.sql || s.sqlStateOf(id), errors.Join(err, replaceErr))
 	}
 	switch {
 	case scope == ScopeHandle:
-		return nil, lostError(id, newID, lostWhat, txLost, err)
-	case txLost:
+		return nil, lostError(id, newID, lostWhat, lost.tx, lost.sql, err)
+	case lost.tx:
 		// The transaction's earlier work was rolled back with the session:
 		// running this request in the replacement, in autocommit, would
 		// commit it on its own, and a session-wide request that succeeded
 		// would hide the loss from the caller, whose next statements would
 		// run outside the transaction they think they are in.
-		return nil, lostError(id, newID, "open transaction", true, err)
+		return nil, lostError(id, newID, "open transaction", true, lost.sql, err)
+	case lost.sql:
+		// USE, SET, ... of the lost session are gone: in the replacement,
+		// INSERT INTO t would land in another schema's table, or a statement
+		// run with other settings, without an error.
+		return nil, lostError(id, newID, lostWhat, false, true, err)
 	case !req.Body.Replayable():
 		return nil, &SessionLostError{OldID: id, NewID: newID, Lost: "upload (it streamed, so it cannot be sent again)", Cause: err}
 	}
@@ -555,13 +662,14 @@ func (s *Session) doHandle(ctx context.Context, sessionID, what string, req *Req
 		s.mu.Lock()
 		txLost := s.lostTx[sessionID] || sessionID == s.id && s.mayHaveTransaction() || lostTransaction(err)
 		s.mu.Unlock()
-		return nil, lostError(sessionID, "", what, txLost, err)
+		return nil, lostError(sessionID, "", what, txLost, s.sqlStateOf(sessionID), err)
 	}
-	newID, txLost, replaceErr := s.replace(ctx, sessionID, err)
+	newID, lost, replaceErr := s.replace(ctx, sessionID, err)
 	if replaceErr != nil {
-		return nil, lostError(sessionID, "", what, txLost || s.MayHaveTransaction() || lostTransaction(err), errors.Join(err, replaceErr))
+		return nil, lostError(sessionID, "", what, lost.tx || s.MayHaveTransaction() || lostTransaction(err),
+			lost.sql || s.sqlStateOf(sessionID), errors.Join(err, replaceErr))
 	}
-	return nil, lostError(sessionID, newID, what, txLost, err)
+	return nil, lostError(sessionID, newID, what, lost.tx, lost.sql, err)
 }
 
 // Get reads the session document (§5.2).

@@ -341,7 +341,7 @@ func (st *statementImpl) newSubmission(ctx context.Context, arrowResult bool) (*
 	}
 	sub := &protocol.Submission{
 		SQL: st.query, Arrow: arrowResult, Wait: longPoll, Retain: st.opts.retain, Timeout: st.opts.timeout,
-		QueryTag: st.opts.queryTag, Compression: st.codec(),
+		QueryTag: st.opts.queryTag, Compression: st.codec(), StateRestored: sessionStateRestored(ctx),
 	}
 	if st.opts.partitions > 1 && st.cnxn.discovery.Has(protocol.CapabilityResultPartitions) {
 		sub.Partitions, sub.AnyOrder = st.opts.partitions, st.opts.anyOrder
@@ -426,10 +426,12 @@ func (st *statementImpl) submit(ctx context.Context, sub *protocol.Submission, u
 // preparedGone reports an execute refused because its prepared statement no
 // longer exists on the server, and running it again is safe: never after the
 // session was lost with a transaction that was, or may have been, open (its
-// work was rolled back; this execution would commit on its own).
+// work was rolled back; this execution would commit on its own), nor after SQL
+// changed the lost session's state (USE, SET, ...), which the replacement
+// doesn't have.
 func preparedGone(err error) bool {
 	if lost, ok := errors.AsType[*protocol.SessionLostError](err); ok {
-		return lost.NewID != "" && !lost.Transaction
+		return lost.NewID != "" && !lost.Transaction && !lost.State
 	}
 	return protocol.HasCode(err, protocol.CodePreparedNotFound)
 }

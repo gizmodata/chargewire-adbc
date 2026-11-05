@@ -359,7 +359,16 @@ Route by something both clients send, or connect both to the instance's own addr
   session document says: a Chargewire server up to 2.2.0 can answer such a statement before its
   session document shows the transaction. After one with a word that can end it (`COMMIT`,
   `ROLLBACK`, `END`, `ABORT`) and none that can begin one, it reads the document, so a transaction
-  committed in SQL doesn't keep later statements from running again. A prepared
+  committed in SQL doesn't keep later statements from running again. Nor does anything run again
+  after SQL changed the lost session's state: a statement starting with `USE`, `SET`, `RESET`,
+  `PRAGMA` or `EXECUTE` (by its first word; `UPDATE … SET` doesn't count). The replacement
+  session doesn't have that state, so an `INSERT INTO t` would land in another schema's table,
+  or a statement run with other settings, without an error; the request fails with an error
+  saying that the session's settings and `USE` are gone, and the next one runs in the
+  replacement. Set the current catalog and schema through the connection
+  (`adbc.connection.catalog`, `adbc.connection.db_schema`), which the driver replays, or, from Go,
+  restore SQL state in a new-session hook and execute the statements that set it with
+  `chargewire.WithSessionStateRestored(ctx)`. A prepared
   statement is prepared again (outside a transaction); a retained result is gone. With
   `adbc.chargewire.session.reconnect=false` the connection stays broken. A session ended for
   any other reason (`killed` by an administrator, credentials changed, …) is an error with the

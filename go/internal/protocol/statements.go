@@ -52,6 +52,11 @@ type Submission struct {
 	// reads it only to tell whether the statement may begin or end a
 	// transaction (Session.MayHaveTransaction); empty counts as may.
 	SQL string
+	// StateRestored says the caller restores whatever state this statement
+	// sets (USE, SET, ...) in every session the driver creates, with its
+	// new-session hook: the statement doesn't stop a request from running
+	// again on a replacement session.
+	StateRestored bool
 	// Arrow asks for the streamed path (§6.1): a query's rows in the
 	// response. Otherwise the answer is a statement document.
 	Arrow bool
@@ -176,7 +181,7 @@ func (s *Session) Submit(ctx context.Context, sub *Submission) (*http.Response, 
 		if sql == "" {
 			sql = "BEGIN" // unknown text: assume it may have
 		}
-		s.noteStatement(sub.sessionID, sql)
+		s.noteStatement(sub.sessionID, sql, sub.StateRestored)
 	}
 	return resp, err
 }

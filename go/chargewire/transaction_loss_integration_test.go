@@ -176,3 +176,72 @@ func TestIntegrationIdleInTransaction(t *testing.T) {
 		}
 	}
 }
+
+// A session lost after SQL USE: the replacement session is back in the
+// connection's own schema, so an INSERT INTO t run again there would land in
+// another schema's table without an error. It fails, saying why, and the
+// connection works again afterwards. The twin without USE runs again; so does
+// one whose USE the caller restores in every new session
+// (WithSessionStateRestored).
+func TestIntegrationLostSessionAfterSQLUse(t *testing.T) {
+	setup := openConn(t)
+	execUpdate(t, setup, "CREATE SCHEMA IF NOT EXISTS lost_use_other")
+	// "" is the connection's own schema.
+	qualified := func(schema string) string {
+		if schema == "" {
+			return "lost_use_t"
+		}
+		return schema + ".lost_use_t"
+	}
+	for _, schema := range []string{"", "lost_use_other"} {
+		execUpdate(t, setup, "CREATE OR REPLACE TABLE "+qualified(schema)+" (v INTEGER)")
+	}
+	sum := func(schema string) int64 {
+		return tableSum(t, shared, qualified(schema))
+	}
+	for _, how := range []string{"use", "no use", "restored"} {
+		cnxn := openConn(t)
+		ctx := context.Background()
+		if how == "restored" {
+			ctx = WithSessionStateRestored(ctx)
+		}
+		if how != "no use" {
+			stmt := newStmt(t, cnxn)
+			setQuery(t, stmt, "USE lost_use_other")
+			if _, err := stmt.ExecuteUpdate(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		killSession(t, cnxn)
+		stmt := newStmt(t, cnxn)
+		setQuery(t, stmt, "INSERT INTO lost_use_t VALUES (1)")
+		_, err := stmt.ExecuteUpdate(context.Background())
+		if how == "use" {
+			assertStatus(t, err, adbc.StatusIO, "session_not_found")
+			if !strings.Contains(err.Error(), "settings and USE") || !strings.Contains(err.Error(), "did not run again") {
+				t.Errorf("the error does not say the session's USE was lost and the statement not run again: %v", err)
+			}
+			if got := replacements(t, cnxn); got != "1" {
+				t.Errorf("replacements = %s, want 1: the connection should be usable again", got)
+			}
+			if a, b := sum(""), sum("lost_use_other"); a != 0 || b != 0 {
+				t.Fatalf("own schema %d, lost_use_other %d: the INSERT ran again in the replacement", a, b)
+			}
+			// The replacement session runs statements, in its own schema.
+			execUpdate(t, cnxn, "INSERT INTO lost_use_t VALUES (100)")
+			if got := sum(""); got != 100 {
+				t.Fatalf("own schema sum = %d, want 100", got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: %v; want the INSERT run again in the replacement", how, err)
+		}
+	}
+	// "no use" and "restored" each ran their INSERT again, in the
+	// replacement's own schema: this test restores nothing, it only shows
+	// that the mark lets the request run again.
+	if got := sum(""); got != 102 {
+		t.Fatalf("own schema sum = %d, want 102", got)
+	}
+}

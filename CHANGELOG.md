@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-11-05
+
+### Fixed
+
+- **A request ran again without the lost session's `USE` and settings.** When the server lost a
+  session (an idle eviction, a restart) and no transaction was open, the driver ran the request
+  again on the replacement session, which has none of what SQL had set in the old one: after
+  `USE other_schema`, an `INSERT INTO t` landed in the connection's own schema's `t`, and after
+  `SET …` a statement ran with other settings, without any error. After a statement whose first
+  word is `USE`, `SET`, `RESET`, `PRAGMA` or `EXECUTE` (`UPDATE … SET` doesn't count; every
+  statement of a multi-statement text counts), no request runs again on a replacement: it fails
+  (`StatusIO`, `session_not_found`) with a message that the session's settings and `USE` are gone
+  and the request did not run again, and the next request runs in the replacement. A prepared
+  statement is not prepared and run again either. Statements a new-session hook runs don't
+  count.
+
+### Added
+
+- `chargewire.WithSessionStateRestored(ctx)` (Go): execute a statement that sets session state
+  in SQL with this context when the connection's new-session hook sets the same state up in every
+  new session; the statement then doesn't keep a request from running again on a replacement.
+
 ## [2.2.1] - 2026-11-05
 
 ### Fixed

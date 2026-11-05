@@ -2,9 +2,9 @@
 
 | Suite | Where | Needs a server | Tests |
 |---|---|---|---|
-| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake; a TLS one for the certificate_required alert) | 62 |
+| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake; a TLS one for the certificate_required alert) | 65 |
 | Go driver unit | `go/chargewire/*_test.go` without the `integration` tag (`unit_test.go`, `errors_unit_test.go`, `fakeserver_test.go`, `attach_unit_test.go`, `hook_unit_test.go`, `resume_unit_test.go`, `browser_unit_test.go`, `mtls_unit_test.go`, `token_unit_test.go`, …) | no (in-process fakes; a TLS one for certificate sign-in) | 75 |
-| Go live | `go/chargewire/*_integration_test.go` (tag `integration`) | yes | 102 |
+| Go live | `go/chargewire/*_integration_test.go` (tag `integration`) | yes | 103 |
 | Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py`, `test_dbapi_exceptions_unit.py` | no (the C-ABI test needs the built library) | 33 |
 | Python live | `python/tests/test_integration.py`, `test_cancel_integration.py`, `test_polish_integration.py`, `test_error_classes_integration.py` | yes | 95 |
 
@@ -92,7 +92,8 @@ upload sent again arriving every time, directly and through the proxy (which rea
 request body to its end, so it loses no answer itself); retried status polls;
 failures mid-stream; lost sessions (replaced with options replayed, temporary state
 reported, refused inside a transaction begun with autocommit off or with SQL `BEGIN`, for plain,
-queried and prepared statements and metadata calls, run again after a SQL `COMMIT`, commit
+queried and prepared statements and metadata calls, run again after a SQL `COMMIT`, refused after
+SQL `USE` (and run again without it, or with the state marked restored), commit
 refused, reconnect off, prepared statement re-prepared, retained result lost); a session the
 server ended for idling in a transaction (`idle_in_transaction`, a server of its own started with
 the idle-in-transaction timeout flag named by `CHARGEWIRE_ADBC_TEST_SERVER_IDLE_IN_TRANSACTION_FLAG`,

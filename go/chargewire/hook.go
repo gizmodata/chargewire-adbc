@@ -64,6 +64,36 @@ func WithNewSessionHook(ctx context.Context, hook NewSessionHook) context.Contex
 	return context.WithValue(ctx, hookKey{}, hook)
 }
 
+// stateRestoredKey marks a context whose statements set only state the
+// connection's new-session hook restores (WithSessionStateRestored).
+type stateRestoredKey struct{}
+
+// WithSessionStateRestored marks ctx for executing statements that change the
+// session's state in SQL (USE, SET, RESET, PRAGMA) when the connection's
+// NewSessionHook sets that same state up again in every new session. Without
+// the mark, such a statement keeps the driver from running a request again on
+// a session that replaces a lost one: the replacement would run it without
+// that state (another schema's table for INSERT INTO t, other settings), so
+// the request fails with an error that says so. With it, the request runs
+// again, as after any other statement. A wrapping driver that keeps settings
+// in its hook uses it for the statements that apply those settings:
+//
+//	err := stmt.SetSqlQuery(ctx, "SET SESSION search_path = 'analytics'")
+//	// ... and the hook runs the same statement in every new session
+//	_, err = stmt.ExecuteUpdate(chargewire.WithSessionStateRestored(ctx))
+//
+// Statements a NewSessionHook runs (NewSession.Exec) never count.
+func WithSessionStateRestored(ctx context.Context) context.Context {
+	return context.WithValue(ctx, stateRestoredKey{}, true)
+}
+
+// sessionStateRestored reports whether ctx is marked by
+// WithSessionStateRestored.
+func sessionStateRestored(ctx context.Context) bool {
+	restored, _ := ctx.Value(stateRestoredKey{}).(bool)
+	return restored
+}
+
 // newSessionHook is the protocol hook for Open's context, or nil.
 func newSessionHook(ctx context.Context) protocol.NewSessionHook {
 	hook, _ := ctx.Value(hookKey{}).(NewSessionHook)
