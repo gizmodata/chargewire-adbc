@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -762,7 +763,9 @@ func (s *Session) SetOptions(ctx context.Context, options map[string]any) error 
 var errSessionClosed = errors.New("the connection is closed")
 
 // Close ends the session (§5.4). A session the server no longer has counts as
-// closed. A closed session is never replaced.
+// closed, and so does one whose close the server refused for its token: the
+// driver never signs in to close (Request.NoRenew), and a session left on
+// the server idles out. A closed session is never replaced.
 func (s *Session) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.closed = true
@@ -772,11 +775,29 @@ func (s *Session) Close(ctx context.Context) error {
 	// already closed): a stopped server must not hold up a close, and a
 	// session whose end the server never heard idles out there.
 	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: sessionPath(id), Idempotent: true,
-		MaxAttempts: 2}, nil)
-	if HasCode(err, CodeSessionNotFound) {
+		MaxAttempts: 2, NoRenew: true}, nil)
+	if nothingToClose(err) {
 		return nil
 	}
 	return err
+}
+
+// nothingToClose reports an answer to a close (of a session, statement,
+// prepared statement or ingest) after which nothing is left to close: the
+// server no longer has it (session_not_found or one of codes), its session
+// ended (session_ended), or the server refused the token (invalid_token),
+// which a close does not replace (Request.NoRenew). Then the session is gone
+// or idles out, and whatever it held goes with it.
+func nothingToClose(err error, codes ...string) bool {
+	p, ok := errors.AsType[*Problem](err)
+	if !ok {
+		return false
+	}
+	switch p.Code {
+	case CodeSessionNotFound, CodeSessionEnded, CodeInvalidToken:
+		return true
+	}
+	return slices.Contains(codes, p.Code)
 }
 
 // Detach stops using the session without ending it on the server: its

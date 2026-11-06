@@ -73,7 +73,7 @@ func (n *NewSession) Exec(ctx context.Context, sql string) error {
 		freeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_, _ = n.client.doJSON(freeCtx, &Request{Method: http.MethodDelete, Path: ref.path(), Idempotent: true,
-			MaxAttempts: 1}, nil)
+			MaxAttempts: 1, NoRenew: true}, nil)
 	}()
 	for !doc.State.Terminal() {
 		header := http.Header{"Prefer": {"wait=" + strconv.Itoa(int(hookWait/time.Second))}}
@@ -136,7 +136,8 @@ func (c *Client) setUp(ctx context.Context, hook NewSessionHook, id, replaces st
 	}
 	endCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	_, _ = c.doJSON(endCtx, &Request{Method: http.MethodDelete, Path: sessionPath(id), Idempotent: true, MaxAttempts: 1}, nil)
+	_, _ = c.doJSON(endCtx, &Request{Method: http.MethodDelete, Path: sessionPath(id), Idempotent: true, MaxAttempts: 1,
+		NoRenew: true}, nil)
 	return txNone, &SessionSetupError{SessionID: id, Replaces: replaces, Err: err}
 }
 

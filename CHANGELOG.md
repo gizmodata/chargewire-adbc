@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Closing a connection late in its token's life signed in again, which woke a stopped server.**
+  The driver renews its access token with the saved credentials shortly before it expires, on
+  whatever request comes next; a close or cancel was such a request. Against a server that
+  resumes when someone signs in (a stopped GizmoData Cloud cluster with auto-resume), closing a
+  connection two minutes before the token expired started the server for nobody, or undid a
+  person's Stop. Closes and cancels (ending a session, statement, prepared statement or ingest;
+  cancelling a statement or a session's work, and the request that learns a statement's id to
+  cancel it) now never sign in, before sending or after an `invalid_token` refusal: they carry the
+  token the driver has. A close the server refuses for its token, or whose session ended
+  (`session_ended`), is done, like one for a session the server no longer has: the session is
+  gone or idles out. A cancel reports the refusal. Requests that do work renew the token as
+  before.
+- **Aborting a partitioned ingest of a lost session opened a replacement session**, and after
+  `session_ended` with `token_expired` signed in first. It now counts as done
+  (`session_not_found`), opening nothing; the next request that does work replaces the session.
+- **Closes and cancels waited for a resuming server** (`server_resuming`) for up to the resume
+  timeout (10 minutes by default): freeing a statement, closing a prepared statement, aborting an
+  ingest or cancelling held on. They now return `server_resuming` at once, as closing a session
+  already did: a resuming server holds nothing they would end.
+
 ## [2.2.2] - 2026-11-05
 
 ### Fixed
