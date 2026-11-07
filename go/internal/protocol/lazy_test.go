@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/url"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -137,5 +138,36 @@ func TestClosedLazySessionIsNotOpened(t *testing.T) {
 	}
 	if sent := f.sent(); len(sent) != 1 {
 		t.Fatalf("requests %v, want the discovery request only", sent)
+	}
+}
+
+// Connections opened lazily at the same point share one fresh sign-in: the
+// first that does work signs in, and the others use that token, issued after
+// they opened. A connection opened after it signs in afresh again.
+func TestLazySessionsSignInOnceAfterTheyOpened(t *testing.T) {
+	f := newFake(t).withSessions()
+	f.state = ServerStateStopped
+	client := f.client(password, 1)
+	if err := client.Authenticate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sessions := []*Session{lazyConnect(t, f, client), lazyConnect(t, f, client), lazyConnect(t, f, client)}
+	var wg sync.WaitGroup
+	for _, session := range sessions {
+		wg.Go(func() {
+			if err := submitUpdate(t, session); err != nil {
+				t.Errorf("first statement: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	if n := f.signIns(); n != 2 {
+		t.Fatalf("%d sign-ins, want 2 (the database's, then one for the connections opened after it)", n)
+	}
+	if err := submitUpdate(t, lazyConnect(t, f, client)); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.signIns(); n != 3 {
+		t.Fatalf("%d sign-ins, want 3: a connection opened later signs in afresh", n)
 	}
 }

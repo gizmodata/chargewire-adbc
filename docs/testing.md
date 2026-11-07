@@ -121,4 +121,5 @@ Python's `connect()`; the first statement signs in, opens the session with the o
 before it and runs through a `server_resuming` wait; a wrong password fails that statement,
 not the connect; without `state` connecting signs in at once; one database whose server stops
 between Opens reads discovery again and opens lazily, and one whose server started signs in at
-Open).
+Open; a connection opened after a stop that revoked the database's token signs in afresh, while
+one from before the stop doesn't sign in again).

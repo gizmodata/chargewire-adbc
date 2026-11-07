@@ -67,6 +67,9 @@ type fakeChargewire struct {
 	requests []string
 	// mux routes the requests, for tests that add endpoints.
 	mux *http.ServeMux
+	// revoked are tokens the fake refuses with invalid_token and reason
+	// token_revoked (a person stopped the server, which ended them).
+	revoked map[string]bool
 }
 
 // setSubmit makes handler answer submits.
@@ -165,7 +168,15 @@ func newFakeChargewire(t *testing.T) *fakeChargewire {
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
+		revoked := f.revoked[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
 		f.mu.Unlock()
+		if revoked {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": 401, "code": "invalid_token",
+				"reason": "token_revoked", "detail": "fake invalid_token: the token was revoked"})
+			return
+		}
 		mux.ServeHTTP(w, r)
 	}))
 	t.Cleanup(f.server.Close)
@@ -184,6 +195,16 @@ func (f *fakeChargewire) serverState() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.state
+}
+
+// revoke makes the fake refuse token from now on (token_revoked).
+func (f *fakeChargewire) revoke(token string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.revoked == nil {
+		f.revoked = map[string]bool{}
+	}
+	f.revoked[token] = true
 }
 
 // sent is every request the fake got, as "METHOD /path".

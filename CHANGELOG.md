@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.6] - 2026-11-07
+
+### Fixed
+
+- **A connection opened after a person stopped the server could never start it again.** Stopping
+  a server ends the tokens issued until then, and its stand-in refuses them with
+  `invalid_token` and reason `token_revoked`. A database that had signed in while the server was
+  serving kept that token, so a connection opened lazily after the stop sent it at its first
+  request, got `token_revoked`, and (rightly, spec §4.2) didn't sign in again: every new
+  connection of that database failed until the database was made again. A lazily opened
+  connection's first request that does work now signs in afresh with the database's credentials
+  unless the database already signed in after this connection opened, so connecting again after a
+  stop starts the server, as it should. Connections opened before the stop, and connections opened
+  at once (to a serving server), still never sign in again after `token_revoked`. A token issued
+  elsewhere (`auth.access_token`) is sent as it is.
+
 ## [2.2.5] - 2026-11-07
 
 ### Fixed
