@@ -114,7 +114,7 @@ func newFakeChargewire(t *testing.T) *fakeChargewire {
 		fakeJSON(w, http.StatusOK, map[string]any{"protocol": "chargewire", "protocol_versions": []string{"1"},
 			"server":       map[string]string{"name": "fake-chargewire", "version": "9.9"},
 			"capabilities": f.capabilities, "auth": map[string]any{"grant_types": []string{"password"}},
-			"state": f.state})
+			"state": f.serverState()})
 	})
 	mux.HandleFunc("POST /chargewire/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		if handler := f.token.Load(); handler != nil && (*handler)(w, r) {
@@ -170,6 +170,20 @@ func newFakeChargewire(t *testing.T) *fakeChargewire {
 	}))
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+// setState sets the discovery document's state ("stopped", or "" for a
+// serving server), as a server that stops or starts between connections.
+func (f *fakeChargewire) setState(state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state = state
+}
+
+func (f *fakeChargewire) serverState() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.state
 }
 
 // sent is every request the fake got, as "METHOD /path".

@@ -25,7 +25,7 @@ const (
 // pool's refills don't start the server.
 func TestLazyConnectToAStoppedServerSendsNothing(t *testing.T) {
 	f := newFakeChargewire(t)
-	f.state = "stopped"
+	f.setState("stopped")
 	db := openFakeDatabase(t, f, nil)
 	ctx := context.Background()
 	for range 3 {
@@ -45,8 +45,9 @@ func TestLazyConnectToAStoppedServerSendsNothing(t *testing.T) {
 			t.Fatalf("Close: %v", err)
 		}
 	}
-	if sent := f.sent(); !slices.Equal(sent, []string{discoveryRequest}) {
-		t.Fatalf("requests %v, want the discovery request only", sent)
+	// One discovery read per Open: the server may have started since.
+	if sent := f.sent(); !slices.Equal(sent, []string{discoveryRequest, discoveryRequest, discoveryRequest}) {
+		t.Fatalf("requests %v, want a discovery request per Open only", sent)
 	}
 }
 
@@ -54,7 +55,7 @@ func TestLazyConnectToAStoppedServerSendsNothing(t *testing.T) {
 // answers server_resuming once), opens the session and runs the query.
 func TestLazyConnectFirstStatementSignsInAndRuns(t *testing.T) {
 	f := newFakeChargewire(t)
-	f.state = "stopped"
+	f.setState("stopped")
 	signIn, signIns := resumingFor(1)
 	f.setToken(signIn)
 	cnxn := f.connect(t, nil)
@@ -80,7 +81,7 @@ func TestLazyConnectFirstStatementSignsInAndRuns(t *testing.T) {
 // would have given (unauthenticated); connecting succeeded.
 func TestLazyConnectWrongPasswordFailsTheFirstStatement(t *testing.T) {
 	f := newFakeChargewire(t)
-	f.state = "stopped"
+	f.setState("stopped")
 	f.setToken(func(w http.ResponseWriter, r *http.Request) bool {
 		fakeProblem(w, http.StatusUnauthorized, "invalid_credentials")
 		return true
@@ -105,5 +106,70 @@ func TestConnectToAServingServerSignsInAtOnce(t *testing.T) {
 	want := []string{discoveryRequest, signInRequest, openRequest}
 	if sent := f.sent(); !slices.Equal(sent, want) {
 		t.Fatalf("requests %v, want %v", sent, want)
+	}
+}
+
+// requestsSince returns the requests the fake got after the first n.
+func (f *fakeChargewire) requestsSince(n int) []string {
+	return f.sent()[n:]
+}
+
+// One database whose server stops between connections, as a pool sees it:
+// the first Open signs in and opens a session; after the server stopped (its
+// stand-in answers discovery with "state": "stopped"), the next Open reads
+// discovery again and sends nothing else, and closing it sends nothing.
+func TestLazyConnectAfterTheServerStoppedReadsDiscoveryAgain(t *testing.T) {
+	f := newFakeChargewire(t)
+	db := openFakeDatabase(t, f, nil)
+	ctx := context.Background()
+	first, err := db.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.query(t, first); err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Close(ctx)
+	if sent := f.sent(); !slices.Contains(sent, signInRequest) || !slices.Contains(sent, openRequest) {
+		t.Fatalf("requests %v, want a sign-in and a session for the serving server", sent)
+	}
+	f.setState("stopped")
+	before := len(f.sent())
+	for range 2 {
+		cnxn, err := db.Open(ctx)
+		if err != nil {
+			t.Fatalf("Open after the server stopped: %v", err)
+		}
+		if err := cnxn.Close(ctx); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+	if sent := f.requestsSince(before); !slices.Equal(sent, []string{discoveryRequest, discoveryRequest}) {
+		t.Fatalf("requests for two Opens and Closes after the server stopped %v, want one discovery each", sent)
+	}
+}
+
+// The twin: a database whose server was stopped at its first connection
+// (which therefore sent nothing) and is serving at the next one signs in and
+// opens that connection's session at Open, as against any serving server.
+func TestConnectAfterTheServerStartedSignsInAtOpen(t *testing.T) {
+	f := newFakeChargewire(t)
+	f.setState("stopped")
+	db := openFakeDatabase(t, f, nil)
+	ctx := context.Background()
+	first, err := db.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Close(ctx)
+	f.setState("")
+	before := len(f.sent())
+	second, err := db.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close(ctx)
+	if sent := f.requestsSince(before); !slices.Equal(sent, []string{discoveryRequest, signInRequest, openRequest}) {
+		t.Fatalf("requests for an Open after the server started %v, want discovery, a sign-in and a session", sent)
 	}
 }

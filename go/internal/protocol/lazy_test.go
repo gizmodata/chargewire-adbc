@@ -88,9 +88,6 @@ func TestLazySessionOpensAtTheFirstStatement(t *testing.T) {
 	if session.Pending() || session.ID() != "s1" || f.statementsRun("s1") != 1 {
 		t.Fatalf("pending %v, id %q, %d statements run", session.Pending(), session.ID(), f.statementsRun("s1"))
 	}
-	if !client.Used() {
-		t.Fatal("the client does not know the server served it")
-	}
 	if err := session.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
