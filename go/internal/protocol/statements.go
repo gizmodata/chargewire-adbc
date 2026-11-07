@@ -198,7 +198,9 @@ func (s *Session) Recall(ctx context.Context, sub *Submission) (StatementRef, er
 		return StatementRef{}, ErrNotReplayable
 	}
 	doc := &StatementDocument{}
-	if _, err := s.client.doJSON(ctx, sub.request(false, true), doc); err != nil {
+	req := sub.request(false, true)
+	req.NoRenew = true // only to cancel it
+	if _, err := s.client.doJSON(ctx, req, doc); err != nil {
 		return StatementRef{}, err
 	}
 	return StatementRef{SessionID: sub.sessionID, StatementID: doc.StatementID}, nil
@@ -260,30 +262,34 @@ func (s *Session) Result(ctx context.Context, rr ResultRequest) (*http.Response,
 }
 
 // Cancel asks the server to stop a statement (§6.8). Cancelling a finished
-// statement is harmless.
+// statement is harmless. A cancel never signs in (Request.NoRenew).
 func (s *Session) Cancel(ctx context.Context, ref StatementRef) error {
-	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodPost, Path: ref.path() + "/cancel", Idempotent: true}, nil)
+	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodPost, Path: ref.path() + "/cancel", Idempotent: true,
+		NoRenew: true}, nil)
 	return err
 }
 
 // CancelAll cancels every statement of the session that is queued or running
 // (§6.8), for a client that has no statement id yet. It returns the ids it
-// cancelled.
+// cancelled. A cancel never signs in (Request.NoRenew).
 func (s *Session) CancelAll(ctx context.Context) ([]string, error) {
 	id := s.ID()
 	answer := &struct {
 		Cancelled []string `json:"cancelled"`
 	}{}
-	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodPost, Path: sessionPath(id) + "/cancel", Idempotent: true}, answer)
+	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodPost, Path: sessionPath(id) + "/cancel", Idempotent: true,
+		NoRenew: true}, answer)
 	return answer.Cancelled, err
 }
 
 // DeleteStatement says the client is done with a statement (§6.8): its result
 // is freed, a running query is cancelled, and a running write finishes with
-// its rows discarded. To stop a write, Cancel it first.
+// its rows discarded. To stop a write, Cancel it first. It never signs in
+// (Request.NoRenew); see nothingToClose for the answers that count as done.
 func (s *Session) DeleteStatement(ctx context.Context, ref StatementRef) error {
-	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: ref.path(), Idempotent: true}, nil)
-	if HasCode(err, CodeStatementNotFound) || HasCode(err, CodeSessionNotFound) {
+	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: ref.path(), Idempotent: true,
+		NoRenew: true}, nil)
+	if nothingToClose(err, CodeStatementNotFound) {
 		return nil
 	}
 	return err
@@ -310,10 +316,12 @@ func (s *Session) Prepare(ctx context.Context, sql string) (*PreparedDocument, P
 	return doc, PreparedRef{SessionID: sessionID, PreparedID: doc.PreparedID}, nil
 }
 
-// ClosePrepared deletes a prepared statement (§7.3).
+// ClosePrepared deletes a prepared statement (§7.3). It never signs in
+// (Request.NoRenew); see nothingToClose for the answers that count as done.
 func (s *Session) ClosePrepared(ctx context.Context, ref PreparedRef) error {
-	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: ref.path(), Idempotent: true}, nil)
-	if HasCode(err, CodePreparedNotFound) || HasCode(err, CodeSessionNotFound) {
+	_, err := s.client.doJSON(ctx, &Request{Method: http.MethodDelete, Path: ref.path(), Idempotent: true,
+		NoRenew: true}, nil)
+	if nothingToClose(err, CodePreparedNotFound) {
 		return nil
 	}
 	return err

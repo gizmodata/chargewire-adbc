@@ -334,13 +334,16 @@ Route by something both clients send, or connect both to the instance's own addr
   600 s, counted from the request's first send) would pass before the next send. Then the
   error is returned: `server_resuming`, `StatusIO`, with the server's message and how long the
   driver waited. A request whose body was streamed (an upload over 16 MiB) can't be sent
-  again and fails at once, as do best-effort requests such as ending a session when a
-  connection closes. A Go context that ends during a wait ends the request with the
+  again and fails at once, as do closes and cancels (ending a session when a connection
+  closes, freeing a statement, cancelling one). A Go context that ends during a wait ends the request with the
   context's error.
 - **Tokens** are renewed before they expire and, once, when the server refuses one
   (`invalid_token` without a reason, with `token_expired`, or with a reason the driver
   doesn't know). After `token_revoked`, `credentials_changed` or `principal_dropped` the
-  driver does not sign in again on its own: the error carries the reason.
+  driver does not sign in again on its own: the error carries the reason. Closes and cancels
+  never sign in, so closing a connection doesn't wake a stopped server that resumes on
+  sign-in: they carry the token the driver has, and a close refused for its token is done (the
+  session is gone or idles out).
 - **Lost sessions** (`session_not_found`; `session_ended` because a token expired, after
   getting a new token; or `session_ended` with `idle_in_transaction`, the server having rolled
   back a transaction left idle past its `idle_in_transaction_timeout_s`) are replaced by a new

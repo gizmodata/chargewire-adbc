@@ -163,6 +163,13 @@ type Request struct {
 	// below the client's own bound (best-effort requests such as ending a
 	// session when a connection closes).
 	MaxAttempts int
+	// NoRenew sends the request with the token the client has, never signing
+	// in for it, before (a token near its expiry) or after (invalid_token): a
+	// close or cancel (ending a session, statement, prepared statement or
+	// ingest) must not sign in, because a sign-in wakes a stopped server that
+	// resumes on sign-in, for nobody. Nor is it sent again while the server
+	// resumes (server_resuming): a resuming server holds nothing to end.
+	NoRenew bool
 }
 
 // Do sends req and returns a 2xx response, whose body the caller closes. An
@@ -172,16 +179,21 @@ type Request struct {
 // answers to idempotent requests (honouring Retry-After), with backoff and
 // jitter. A request refused with invalid_token is sent again once with a
 // fresh token, when the credentials can obtain one and the refusal's reason
-// allows it (§4.2). A request answered with server_resuming is sent again,
-// unchanged, until the server has resumed or the client's ResumeTimeout has
-// passed (see resumeWait); those repeats don't count as attempts.
+// allows it (§4.2), unless it is a close or cancel (Request.NoRenew). A
+// request answered with server_resuming is sent again, unchanged, until the
+// server has resumed or the client's ResumeTimeout has passed (see
+// resumeWait); those repeats don't count as attempts.
 func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 	backoff := gadgets.Backoff{Start: 200 * time.Millisecond, Max: 5 * time.Second, Mul: 2}
 	renewed := false
 	started := c.now()
 	for attempt := 1; ; attempt++ {
 		token := ""
-		if !req.Anonymous {
+		switch {
+		case req.Anonymous:
+		case req.NoRenew:
+			token = c.currentToken()
+		default:
 			var err error
 			if token, err = c.accessToken(ctx); err != nil {
 				return nil, err
@@ -236,7 +248,7 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 			attempt--
 			continue
 		case problem.Code == CodeInvalidToken && renewable(problem.Reason) && !renewed && !req.Anonymous &&
-			c.credentials.grant() != nil && req.Body.Replayable():
+			!req.NoRenew && c.credentials.grant() != nil && req.Body.Replayable():
 			// The token expired or the server forgot it: get a new one and
 			// send the request again, once (§4.2). This is not a retry of the
 			// operation, which the server refused before running it.
@@ -283,10 +295,10 @@ const (
 // are off (ResumeTimeout 0), the next attempt would start after the
 // request's resume deadline (problem's detail then says so), its body was
 // streamed and can't be sent again, or it is a best-effort request with its
-// own MaxAttempts (ending a session as a connection closes), which is not
-// worth a wait for a resume.
+// own MaxAttempts (ending a session as a connection closes) or a close or
+// cancel (NoRenew), which is not worth a wait for a resume.
 func (c *Client) resumeWait(req *Request, problem *Problem, started time.Time) (time.Duration, bool) {
-	if c.resumeTimeout <= 0 || req.MaxAttempts > 0 || !req.Body.Replayable() {
+	if c.resumeTimeout <= 0 || req.MaxAttempts > 0 || req.NoRenew || !req.Body.Replayable() {
 		return 0, false
 	}
 	wait := DefaultResumeRetryAfter

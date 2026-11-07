@@ -133,3 +133,31 @@ func (f *fakeChargewire) countSessionDeletes() func() int {
 	})
 	return func() int { n := <-count; count <- n; return n }
 }
+
+// Closing statements and the connection late in the token's life sends the
+// token the driver has and never signs in: against a stopped server that
+// resumes on sign-in, a close must not wake it for nobody. A statement at the
+// same point still renews the token first (the twin).
+func TestCloseLateInTheTokensLifeDoesNotSignIn(t *testing.T) {
+	f := newFakeChargewire(t)
+	f.tokenTTL = 1 // renewed 0.75 s after it is issued
+	deleted := f.countSessionDeletes()
+	db, cnxn, stmts := openAgainst(t, f)
+	time.Sleep(800 * time.Millisecond)
+	before := f.tokens.Load()
+	if _, err := f.query(t, cnxn); err != nil {
+		t.Fatal(err)
+	}
+	if after := f.tokens.Load(); after != before+1 {
+		t.Fatalf("%d sign-ins for a statement past the token's renew point, want 1", after-before)
+	}
+	time.Sleep(800 * time.Millisecond)
+	before = f.tokens.Load()
+	closeAll(t, db, cnxn, stmts)
+	if got := deleted(); got != 1 {
+		t.Errorf("%d session deletes, want 1", got)
+	}
+	if after := f.tokens.Load(); after != before {
+		t.Fatalf("%d sign-ins while closing, want none", after-before)
+	}
+}

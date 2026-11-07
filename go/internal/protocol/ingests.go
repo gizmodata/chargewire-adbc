@@ -110,11 +110,14 @@ func (s *Session) CommitIngest(ctx context.Context, h IngestHandle, parts int) (
 }
 
 // AbortIngest aborts an ingest: nothing it received is written. An ingest
-// the server no longer knows is already gone.
+// the server no longer knows is already gone. It never signs in
+// (Request.NoRenew), and a lost session is not replaced for it: opening a
+// session would wake a stopped server for nothing (see nothingToClose for the
+// answers that count as done).
 func (s *Session) AbortIngest(ctx context.Context, h IngestHandle) error {
-	req := &Request{Method: http.MethodDelete, Path: h.path(), Idempotent: true}
-	resp, err := s.doHandle(ctx, h.SessionID, "partitioned ingest", req)
-	if HasCode(err, CodeIngestNotFound) {
+	req := &Request{Method: http.MethodDelete, Path: h.path(), Idempotent: true, NoRenew: true}
+	resp, err := s.client.Do(ctx, req)
+	if nothingToClose(err, CodeIngestNotFound) {
 		return nil
 	}
 	if err != nil {
