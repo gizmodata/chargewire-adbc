@@ -110,6 +110,22 @@ func (c *Client) UseAccessTokenUntil(token string, lifetime time.Duration) {
 	}
 }
 
+// ReplaceAccessTokenUntil is ReplaceAccessToken for a token whose lifetime
+// the server gave (0: unknown), such as a browser sign-in's.
+func (c *Client) ReplaceAccessTokenUntil(token string, lifetime time.Duration) {
+	c.ReplaceAccessToken(token)
+	if lifetime > 0 {
+		c.tokenMu.Lock()
+		c.expiresAt = time.Now().Add(lifetime)
+		c.tokenMu.Unlock()
+	}
+}
+
+// Token is the access token the client sends now, without renewing it.
+func (c *Client) Token() string {
+	return c.currentToken()
+}
+
 // ReplaceAccessToken sends token from now on in place of the token issued
 // elsewhere that the client uses. Safe while the client is in use; only for
 // a client whose credentials are such a token.

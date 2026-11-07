@@ -44,6 +44,9 @@ type databaseImpl struct {
 	browserSignIn  bool
 	browserCommand string
 	browserTimeout time.Duration
+	// reauthMu runs one browser sign-in again at a time
+	// (signInThroughTheBrowserAgain).
+	reauthMu sync.Mutex
 
 	// Set by the first successful Open; the options above are fixed from
 	// then on.
@@ -290,7 +293,13 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 		}
 	}
 	if lazy {
-		session := client.NewLazySession(nil, d.reconnect, newSessionHook(ctx), reauthenticate(ctx))
+		reauth := reauthenticate(ctx)
+		if reauth == nil && d.browserSignIn {
+			// The database's own browser sign-in: run it again, once, when the
+			// first request finds the token from before a stop revoked.
+			reauth = d.signInThroughTheBrowserAgain
+		}
+		session := client.NewLazySession(nil, d.reconnect, newSessionHook(ctx), reauth)
 		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(true)), nil
 	}
 	session, err := client.OpenSessionWithHook(ctx, nil, d.reconnect, newSessionHook(ctx))
@@ -413,6 +422,30 @@ func parseResumeTimeout(value string) (time.Duration, error) {
 // maxResumeTimeoutSeconds keeps OptionResumeTimeout within a time.Duration
 // (a year is far more than any resume).
 const maxResumeTimeoutSeconds = 365 * 24 * 3600
+
+// signInThroughTheBrowserAgain runs the database's browser sign-in again for a
+// connection opened while the server was stopped whose first request found
+// refused, the database's token, revoked (a person stopped the server, which
+// ended the tokens issued until then). The identity provider usually signs
+// the person in again at once (single sign-on). When another connection
+// already replaced the token, that one is used, so connections that find the
+// token revoked together share one sign-in.
+func (d *databaseImpl) signInThroughTheBrowserAgain(ctx context.Context, refused string) error {
+	d.reauthMu.Lock()
+	defer d.reauthMu.Unlock()
+	d.mu.Lock()
+	client, discovery := d.client, d.discovery
+	d.mu.Unlock()
+	if client.Token() != refused {
+		return nil
+	}
+	signedIn, err := runBrowserSignIn(ctx, client, discovery, openBrowser(d.browserCommand), d.browserTimeout)
+	if err != nil {
+		return err
+	}
+	client.ReplaceAccessTokenUntil(signedIn.AccessToken, signedIn.ExpiresIn)
+	return nil
+}
 
 // replaceAccessToken gives an open database a new access token, when it signs
 // in with one (OptionAccessToken, or a browser sign-in): its connections send
