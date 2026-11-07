@@ -52,6 +52,35 @@ type NewSession interface {
 
 type hookKey struct{}
 
+// Reauthenticate gets a database that signs in with a token issued elsewhere
+// (OptionAccessToken, a browser sign-in) a new token, by setting
+// OptionAccessToken on it again. refused is the token the server refused.
+type Reauthenticate func(ctx context.Context, refused string) error
+
+type reauthKey struct{}
+
+// WithReauthenticate returns a context for Database.Open (of this driver, or
+// of one built on it) whose connection calls reauth, once, when it was opened
+// while the server was stopped (connecting lazily) and its first request finds
+// the database's token refused as revoked (invalid_token, token_revoked: a
+// person stopped the server, which ended the tokens issued until then). reauth
+// gives the database a new token (a wrapping driver runs its browser sign-in
+// again); the request is then sent again, and a second refusal is the error.
+// Connections opened before the stop never call it. Without it, the refusal is
+// the error, saying the token was likely issued before the stop.
+func WithReauthenticate(ctx context.Context, reauth Reauthenticate) context.Context {
+	return context.WithValue(ctx, reauthKey{}, reauth)
+}
+
+// reauthenticate is the protocol callback for Open's context, or nil.
+func reauthenticate(ctx context.Context) protocol.Reauthenticate {
+	reauth, _ := ctx.Value(reauthKey{}).(Reauthenticate)
+	if reauth == nil {
+		return nil
+	}
+	return protocol.Reauthenticate(reauth)
+}
+
 // WithNewSessionHook returns a context for Database.Open (of this driver, or
 // of one built on it) whose connection runs hook on every session the driver
 // creates for it. The hook belongs to that one connection, so it can carry

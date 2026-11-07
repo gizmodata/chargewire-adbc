@@ -62,6 +62,9 @@ type Session struct {
 	// session was made.
 	pending  bool
 	tokenGen uint64
+	// reauth gets the client a new token when the first request finds the
+	// token from before the session was made revoked (NewLazySession).
+	reauth Reauthenticate
 	// tx is what the driver knows of the current session's transaction,
 	// which SQL (BEGIN) changes without the driver's say: it decides whether
 	// a request may run again on a replacement session.
@@ -197,9 +200,18 @@ func (c *Client) OpenSessionWithHook(ctx context.Context, options map[string]any
 // connection opened for nothing, such as a pool's refill, then doesn't start
 // it (§3.1). A failure to open (wrong credentials, a server that can't be
 // reached) is the error of that first request, and the next one tries again.
-func (c *Client) NewLazySession(options map[string]any, reconnect bool, hook NewSessionHook) *Session {
+//
+// When the request that opens the session is refused because the token is
+// revoked (invalid_token, token_revoked: a person stopped the server, which
+// ended the tokens issued until then) and the client can't sign in itself (a
+// token issued elsewhere, such as a browser sign-in's), reauth, when set, is
+// called once to give the client a new token, and the request is sent again;
+// a second refusal is the error. Without reauth the refusal is the error, and
+// its detail says the token is likely from before the stop.
+func (c *Client) NewLazySession(options map[string]any, reconnect bool, hook NewSessionHook,
+	reauth Reauthenticate) *Session {
 	s := &Session{client: c, reconnect: reconnect, options: maps.Clone(options), hook: hook, pending: true,
-		tokenGen: c.tokenGeneration()}
+		tokenGen: c.tokenGeneration(), reauth: reauth}
 	if s.options == nil {
 		s.options = map[string]any{}
 	}
@@ -223,7 +235,19 @@ func (s *Session) Open(ctx context.Context) error {
 	if err := s.client.signInAfter(ctx, s.tokenGen); err != nil {
 		return err
 	}
+	sent := s.client.currentToken()
 	doc, err := s.create(ctx)
+	if tokenRevoked(err) && s.client.credentials.grant() == nil {
+		// A token issued elsewhere, from before the stop: the client can't
+		// sign in for a new one itself.
+		if s.reauth == nil {
+			return issuedBeforeStop(err)
+		}
+		if reauthErr := s.reauth(ctx, sent); reauthErr != nil {
+			return reauthErr
+		}
+		doc, err = s.create(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -235,6 +259,27 @@ func (s *Session) Open(ctx context.Context) error {
 	s.tx = afterHook(txFromDocument(doc, true), hookTx)
 	s.pending = false
 	return nil
+}
+
+// Reauthenticate gets a client whose credentials are a token issued elsewhere
+// a new token (Client.ReplaceAccessToken) after the server refused the token
+// it sent, refused, as revoked (NewLazySession).
+type Reauthenticate func(ctx context.Context, refused string) error
+
+// tokenRevoked reports a refusal of the token as revoked (§4.2).
+func tokenRevoked(err error) bool {
+	p, ok := errors.AsType[*Problem](err)
+	return ok && p.Code == CodeInvalidToken && p.Reason == ReasonTokenRevoked
+}
+
+// issuedBeforeStop is a token_revoked refusal at a new connection's first
+// request, with a detail that says what that usually means and what to do.
+func issuedBeforeStop(err error) error {
+	p, _ := errors.AsType[*Problem](err)
+	refusal := *p
+	refusal.Detail = strings.TrimSpace(refusal.Detail + " (the token was likely issued before the server was " +
+		"stopped, which revoked it; supply a new one)")
+	return &refusal
 }
 
 // Pending reports a session NewLazySession made that is not open yet.

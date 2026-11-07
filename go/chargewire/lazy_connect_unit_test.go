@@ -5,12 +5,14 @@ package chargewire
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/apache/arrow-adbc/go/adbc"
+	"github.com/apache/arrow-go/v18/arrow/memory"
 )
 
 const (
@@ -229,5 +231,100 @@ func TestConnectionFromBeforeAStopDoesNotSignInAgain(t *testing.T) {
 	}
 	if n := f.tokens.Load(); n != 1 {
 		t.Fatalf("%d sign-ins, want 1: the old connection signed in again", n)
+	}
+}
+
+// openWithToken opens a database that signs in with an access token issued
+// elsewhere (as a browser sign-in's), and a connection with ctx.
+func openWithToken(t *testing.T, f *fakeChargewire, ctx context.Context) (adbc.DatabaseWithContext, adbc.ConnectionWithContext) {
+	t.Helper()
+	db, err := NewDriver(memory.DefaultAllocator).NewDatabaseWithContext(context.Background(), map[string]string{
+		adbc.OptionKeyURI: f.server.URL, OptionAccessToken: "elsewhere1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close(context.Background()) })
+	cnxn, err := db.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cnxn.Close(context.Background()) })
+	return db, cnxn
+}
+
+// A token issued elsewhere can't be renewed by the driver: when a connection
+// opened after a stop finds it revoked at its first request, the error says
+// the token is likely from before the stop and to supply a new one.
+func TestLazyConnectionWithARevokedTokenFromElsewhereSaysSupplyANewOne(t *testing.T) {
+	f := newFakeChargewire(t)
+	f.setState("stopped")
+	f.revoke("elsewhere1")
+	_, cnxn := openWithToken(t, f, context.Background())
+	_, err := f.query(t, cnxn)
+	if adbcErr, ok := errors.AsType[adbc.Error](err); !ok || adbcErr.Code != adbc.StatusUnauthenticated ||
+		!strings.Contains(err.Error(), "token_revoked") ||
+		!strings.Contains(err.Error(), "issued before the server was stopped") || !strings.Contains(err.Error(), "supply a new one") {
+		t.Fatalf("first statement: %v, want the token_revoked refusal saying to supply a new token", err)
+	}
+}
+
+// With WithReauthenticate (a wrapping driver's browser sign-in), that refusal
+// gets the database a new token, once, and the request runs with it.
+func TestLazyConnectionReauthenticatesOnceAfterAStop(t *testing.T) {
+	f := newFakeChargewire(t)
+	f.setState("stopped")
+	f.revoke("elsewhere1")
+	var db adbc.DatabaseWithContext
+	var refused []string
+	ctx := WithReauthenticate(context.Background(), func(ctx context.Context, token string) error {
+		refused = append(refused, token)
+		return db.(adbc.GetSetOptionsWithContext).SetOption(ctx, OptionAccessToken, "elsewhere2")
+	})
+	db, cnxn := openWithToken(t, f, ctx)
+	if _, err := f.query(t, cnxn); err != nil {
+		t.Fatalf("first statement after reauthenticating: %v", err)
+	}
+	if !slices.Equal(refused, []string{"elsewhere1"}) {
+		t.Fatalf("reauthenticated for %v, want once, for elsewhere1", refused)
+	}
+}
+
+// A second refusal, after reauthenticating, is the error: no loop.
+func TestLazyConnectionReportsARefusalAfterReauthenticating(t *testing.T) {
+	f := newFakeChargewire(t)
+	f.setState("stopped")
+	f.revoke("elsewhere1")
+	f.revoke("elsewhere2")
+	var db adbc.DatabaseWithContext
+	calls := 0
+	ctx := WithReauthenticate(context.Background(), func(ctx context.Context, token string) error {
+		calls++
+		return db.(adbc.GetSetOptionsWithContext).SetOption(ctx, OptionAccessToken, "elsewhere2")
+	})
+	db, cnxn := openWithToken(t, f, ctx)
+	_, err := f.query(t, cnxn)
+	if !strings.Contains(fmt.Sprint(err), "token_revoked") || calls != 1 {
+		t.Fatalf("first statement: %v after %d reauthentications, want the second refusal after one", err, calls)
+	}
+}
+
+// The twin: a connection opened while the server was serving never
+// reauthenticates; its refusal after the stop is the error (§4.2).
+func TestConnectionFromBeforeAStopDoesNotReauthenticate(t *testing.T) {
+	f := newFakeChargewire(t)
+	calls := 0
+	ctx := WithReauthenticate(context.Background(), func(context.Context, string) error {
+		calls++
+		return nil
+	})
+	_, cnxn := openWithToken(t, f, ctx)
+	if _, err := f.query(t, cnxn); err != nil {
+		t.Fatal(err)
+	}
+	f.setState("stopped")
+	f.revoke("elsewhere1")
+	_, err := f.query(t, cnxn)
+	if !strings.Contains(fmt.Sprint(err), "token_revoked") || calls != 0 {
+		t.Fatalf("statement after the stop: %v after %d reauthentications, want the refusal and none", err, calls)
 	}
 }

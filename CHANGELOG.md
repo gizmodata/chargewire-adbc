@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.7] - 2026-11-07
+
+### Added
+
+- **`chargewire.WithReauthenticate` (Go): a new token for a connection opened after a stop.** A
+  database that signs in with a token issued elsewhere (`adbc.chargewire.auth.access_token`, a
+  wrapping driver's browser sign-in) can't sign in afresh as 2.2.6 does with a password. When a
+  connection opened while the server was stopped finds that token revoked at its first request
+  (`invalid_token`, reason `token_revoked`), the function given to `Open` with
+  `WithReauthenticate` is called once to give the database a new token (setting
+  `adbc.chargewire.auth.access_token` again); the request is then sent again, and a second refusal
+  is the error. Connections opened before the stop never call it.
+
+### Changed
+
+- **That refusal says what to do.** Without `WithReauthenticate`, the `token_revoked` refusal at a
+  new connection's first request now adds that the token was likely issued before the server was
+  stopped, and to supply a new one.
+
 ## [2.2.6] - 2026-11-07
 
 ### Fixed

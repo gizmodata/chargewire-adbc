@@ -290,7 +290,7 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 		}
 	}
 	if lazy {
-		session := client.NewLazySession(nil, d.reconnect, newSessionHook(ctx))
+		session := client.NewLazySession(nil, d.reconnect, newSessionHook(ctx), reauthenticate(ctx))
 		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(true)), nil
 	}
 	session, err := client.OpenSessionWithHook(ctx, nil, d.reconnect, newSessionHook(ctx))
