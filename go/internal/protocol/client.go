@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase/gadgets"
@@ -100,6 +101,10 @@ type Client struct {
 	// now and sleep are the clock the resume waits use (tests replace them).
 	now   func() time.Time
 	sleep func(ctx context.Context, d time.Duration) error
+
+	// used is set once a request carrying the client's token has
+	// succeeded: the server is serving it, or was woken for it.
+	used atomic.Bool
 
 	tokenMu sync.Mutex
 	token   string
@@ -225,6 +230,9 @@ func (c *Client) Do(ctx context.Context, req *Request) (*http.Response, error) {
 			continue
 		}
 		if resp.StatusCode < 300 {
+			if !req.Anonymous {
+				c.used.Store(true)
+			}
 			return resp, nil
 		}
 		problem := readProblem(resp)
@@ -520,6 +528,13 @@ func (c *Client) discover(ctx context.Context, base *url.URL) (*Discovery, error
 	doc.RTT = rtt
 	mu.Unlock()
 	return doc, nil
+}
+
+// Used reports whether a request carrying the client's token has succeeded
+// (not a sign-in alone): after one, the server was serving this client, so
+// its connections no longer need to open lazily.
+func (c *Client) Used() bool {
+	return c.used.Load()
 }
 
 // Authenticate obtains an access token now, so that wrong credentials fail

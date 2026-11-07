@@ -115,4 +115,8 @@ the resume deadline returning the server's error and message; no `Retry-After` w
 waiting 1 s, a long one capped at 60 s; `resume_timeout=0` sending once; streamed and best-effort requests not
 repeated; other 503s keeping their bounded retry; a sign-in held 25 s through the driver's real
 transport; and in Python, through the shared library, `resume_timeout` given as a `connect()`
-argument and as a `db_kwargs` option).
+argument and as a `db_kwargs` option), and a stopped server (discovery `"state": "stopped"`:
+connecting, a pool's checks and closing send nothing but discovery, in Go and through
+Python's `connect()`; the first statement signs in, opens the session with the options set
+before it and runs through a `server_resuming` wait; a wrong password fails that statement,
+not the connect; without `state` connecting signs in at once).

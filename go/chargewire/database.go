@@ -252,7 +252,12 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 }
 
 // Open creates a session on the server. The first Open also discovers the
-// server and signs in; later ones share that client and its token.
+// server and signs in; later ones share that client and its token. When
+// discovery said the server is stopped (a stand-in answers for it and starts
+// it when someone signs in, §3.1) and nothing has been run through the client
+// since, Open sends nothing: the connection signs in and opens its session at
+// its first request that does work, so that a connection opened for nothing
+// (a pool's refill) doesn't start the server.
 func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContext, err error) {
 	ctx, span := d.StartSpan(ctx, "Database.Open")
 	defer driverbase.EndSpanWithError(span, &err)
@@ -272,6 +277,10 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 			return nil, wrapError(err, op)
 		}
 		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(false)), nil
+	}
+	if discovery.Stopped() && !client.Used() {
+		session := client.NewLazySession(nil, d.reconnect, newSessionHook(ctx))
+		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(true)), nil
 	}
 	session, err := client.OpenSessionWithHook(ctx, nil, d.reconnect, newSessionHook(ctx))
 	if err != nil {
@@ -361,9 +370,13 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 			transport.CloseIdleConnections()
 			return nil, nil, d.ErrorHelper.Unauthenticated("the server does not accept the %s grant (it offers %v)", grant, discovery.Auth.GrantTypes)
 		}
-		if err := client.Authenticate(ctx); err != nil {
-			transport.CloseIdleConnections()
-			return nil, nil, wrapError(err, "signing in")
+		// A stopped server starts when someone signs in: sign in at the
+		// first request that does work instead (Open).
+		if !discovery.Stopped() {
+			if err := client.Authenticate(ctx); err != nil {
+				transport.CloseIdleConnections()
+				return nil, nil, wrapError(err, "signing in")
+			}
 		}
 	}
 	d.DriverInfo.MustRegister(map[adbc.InfoCode]any{

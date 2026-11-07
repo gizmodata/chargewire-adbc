@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.4] - 2026-11-07
+
+### Added
+
+- **Connecting to a stopped server is lazy, so a pool's refills don't start it.** A connection
+  pool opens connections on a timer, and every new connection signed in and opened a session.
+  Against a server that a stand-in answers for while it is stopped and starts when someone signs
+  in (a GizmoData Cloud cluster with auto-resume), a pooled app started an idle-stopped server
+  every time the pool refilled, and right after a person stopped it. When the discovery document
+  says `"state": "stopped"`, opening a connection (`AdbcConnectionInit`, Python's `connect()`)
+  now sends nothing more. The connection signs in and opens its session at its first request
+  that does work: a statement (executing or preparing), metadata, an ingest, a commit or
+  rollback, or reading the session (its id, transaction, current catalog or schema). Before
+  that, reading the connection's own options and the driver's info, closing it and cancelling
+  send nothing. Session options set before it (current catalog or schema, autocommit) go with the
+  request that opens the session. A wrong password or a refused option fails that first request
+  instead of the connect, with the same error (`StatusUnauthenticated` for the password). Once a
+  request has run, the database's next connections open as before. Without `state` (a serving
+  server) nothing changes. Browser sign-in and attaching to a session still happen at connect.
+
 ## [2.2.3] - 2026-11-06
 
 ### Fixed

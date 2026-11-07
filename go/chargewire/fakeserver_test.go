@@ -61,6 +61,12 @@ type fakeChargewire struct {
 	// deleted.
 	submits []http.Header
 	deleted []string
+	// state is the discovery document's state ("" for none); requests is
+	// "METHOD /path" of every request.
+	state    string
+	requests []string
+	// mux routes the requests, for tests that add endpoints.
+	mux *http.ServeMux
 }
 
 // setSubmit makes handler answer submits.
@@ -107,7 +113,8 @@ func newFakeChargewire(t *testing.T) *fakeChargewire {
 	mux.HandleFunc("GET /chargewire", func(w http.ResponseWriter, r *http.Request) {
 		fakeJSON(w, http.StatusOK, map[string]any{"protocol": "chargewire", "protocol_versions": []string{"1"},
 			"server":       map[string]string{"name": "fake-chargewire", "version": "9.9"},
-			"capabilities": f.capabilities, "auth": map[string]any{"grant_types": []string{"password"}}})
+			"capabilities": f.capabilities, "auth": map[string]any{"grant_types": []string{"password"}},
+			"state": f.state})
 	})
 	mux.HandleFunc("POST /chargewire/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		if handler := f.token.Load(); handler != nil && (*handler)(w, r) {
@@ -154,9 +161,22 @@ func newFakeChargewire(t *testing.T) *fakeChargewire {
 		fakeJSON(w, http.StatusOK, f.document())
 	})
 	mux.HandleFunc("GET /chargewire/v1/sessions/{s}/statements/{q}/result", f.result)
-	f.server = httptest.NewServer(mux)
+	f.mux = mux
+	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
+		f.mu.Unlock()
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+// sent is every request the fake got, as "METHOD /path".
+func (f *fakeChargewire) sent() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.requests)
 }
 
 func (f *fakeChargewire) result(w http.ResponseWriter, r *http.Request) {
@@ -504,7 +524,7 @@ func TestFakeSessionTransaction(t *testing.T) {
 	f := newFakeChargewire(t)
 	var transaction atomic.Value
 	transaction.Store("open")
-	f.server.Config.Handler.(*http.ServeMux).HandleFunc("GET /chargewire/v1/sessions/{s}", func(w http.ResponseWriter, r *http.Request) {
+	f.mux.HandleFunc("GET /chargewire/v1/sessions/{s}", func(w http.ResponseWriter, r *http.Request) {
 		fakeJSON(w, http.StatusOK, map[string]any{"session_id": "s1", "options": map[string]any{}, "transaction": transaction.Load()})
 	})
 	cnxn := f.connect(t, nil).(adbc.GetSetOptionsWithContext)

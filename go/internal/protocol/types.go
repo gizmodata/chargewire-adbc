@@ -83,10 +83,27 @@ type Discovery struct {
 			Provider string `json:"provider"`
 		} `json:"oauth_browser"`
 	} `json:"auth"`
+	// State is what a stand-in answering for the server says of it (§3.1):
+	// ServerStateStopped from one that answers while the server is stopped
+	// and starts it when someone signs in. Empty from a server that is
+	// serving; open, like every enumeration (§12).
+	State string `json:"state"`
 	// RTT is how long the discovery request took to answer once sent: about
 	// one network round trip (the server answers it at once). Zero when it
 	// could not be measured.
 	RTT time.Duration `json:"-"`
+}
+
+// ServerStateStopped is the discovery state of a stopped server that starts
+// again when a client signs in or opens a session (§3.1, §11.2).
+const ServerStateStopped = "stopped"
+
+// Stopped reports a discovery document that says the server is stopped: a
+// client connects lazily then, signing in and opening its session at the
+// first request that does work, so that a connection opened for nothing (a
+// pool's refill) does not start the server.
+func (d *Discovery) Stopped() bool {
+	return d.State == ServerStateStopped
 }
 
 // BrowserSignInProvider is the identity provider's name the server gives for
