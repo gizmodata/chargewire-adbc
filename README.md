@@ -142,8 +142,13 @@ replacement the request that found the session lost fails (`StatusIO`, the error
 and the connection's next request opens another session and runs the hook again. A session the
 driver attached to (`adbc.chargewire.session.id`) is not set up.
 
-A database that signs in with a token issued elsewhere (`adbc.chargewire.auth.access_token`, a
-wrapping driver's browser sign-in) can't get a new token itself. When a connection opened while
+A database that signs in through the browser (`auth.type` `oauth_browser`) does that by itself:
+a connection opened while the server was stopped whose first request finds the browser sign-in's
+token revoked signs in through the browser again, once (with single sign-on, usually without
+asking), and the request runs with the new token; a second refusal is the error, and connections
+opened before the stop never do it. A database that signs in with a token issued elsewhere
+(`adbc.chargewire.auth.access_token`, a wrapping driver's browser sign-in) can't get a new token
+itself. When a connection opened while
 the server was stopped finds that token revoked at its first request (`invalid_token`, reason
 `token_revoked`: a person stopped the server, which ended the tokens issued until then),
 `chargewire.WithReauthenticate` lets the caller give the database a new token, once, and the

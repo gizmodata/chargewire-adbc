@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.8] - 2026-11-07
+
+### Fixed
+
+- **A browser sign-in database's connections opened after a Stop could never start the server.**
+  With `adbc.chargewire.auth.type` `oauth_browser`, the database kept its browser sign-in's token,
+  which a person's Stop revokes (`invalid_token`, reason `token_revoked`), and 2.2.6's fresh
+  sign-in needs a password, so every connection opened after the Stop failed at its first
+  request. Such a connection now runs the database's browser sign-in again, once (usually silent
+  with single sign-on), and the request runs with the new token, which starts the server; a
+  second refusal is the error. Connections that find the token revoked together share one
+  sign-in. Connections opened before the Stop never run it. (A `WithReauthenticate` given to
+  `Open` takes its place.)
+
 ## [2.2.7] - 2026-11-07
 
 ### Added
