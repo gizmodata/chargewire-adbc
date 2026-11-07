@@ -22,7 +22,7 @@ func lazyConnect(t *testing.T, f *fake, client *Client) *Session {
 		t.Fatal(err)
 	}
 	if discovery.Stopped() {
-		return client.NewLazySession(map[string]any{"catalog": "lake"}, true, nil)
+		return client.NewLazySession(map[string]any{"catalog": "lake"}, true, nil, nil)
 	}
 	if err := client.Authenticate(ctx); err != nil {
 		t.Fatal(err)

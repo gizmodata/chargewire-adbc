@@ -142,6 +142,26 @@ replacement the request that found the session lost fails (`StatusIO`, the error
 and the connection's next request opens another session and runs the hook again. A session the
 driver attached to (`adbc.chargewire.session.id`) is not set up.
 
+A database that signs in with a token issued elsewhere (`adbc.chargewire.auth.access_token`, a
+wrapping driver's browser sign-in) can't get a new token itself. When a connection opened while
+the server was stopped finds that token revoked at its first request (`invalid_token`, reason
+`token_revoked`: a person stopped the server, which ended the tokens issued until then),
+`chargewire.WithReauthenticate` lets the caller give the database a new token, once, and the
+request is sent again; a second refusal is the error:
+
+```go
+cnxn, err := db.Open(chargewire.WithReauthenticate(ctx, func(ctx context.Context, refused string) error {
+	token, err := newToken(ctx) // however your program gets a token: a sign-in, a token service
+	if err != nil {
+		return err
+	}
+	return db.(adbc.GetSetOptionsWithContext).SetOption(ctx, chargewire.OptionAccessToken, token)
+}))
+```
+
+Without it, that refusal says the token was likely issued before the server was stopped and to
+supply a new one. Connections opened before the stop never call it.
+
 ### Python
 
 ```python
@@ -352,7 +372,8 @@ Route by something both clients send, or connect both to the instance's own addr
   That first request signs in afresh with the database's credentials even when the database
   already holds a token: a person who stopped the server ended the tokens issued before, and a
   connection opened after the stop is a new one, so it starts the server like any other
-  (connections opened before the stop still don't sign in again on their own, see Tokens).
+  (connections opened before the stop still don't sign in again on their own, see Tokens). A
+  token issued elsewhere can't be renewed that way: see `WithReauthenticate` under Go.
   A wrong password, too, fails the first request that does work, with the error a connect would
   have given (`StatusUnauthenticated`), not the connect. Each connection decides when it opens:
   after a database's first connection, every Open reads discovery again (one small GET, which
