@@ -62,6 +62,10 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 	}
 	switch key {
 	case OptionSessionID:
+		// The session's id names a session on the server: open a lazy one.
+		if err := c.session.Open(ctx); err != nil {
+			return "", wrapError(err, "opening the session")
+		}
 		return c.session.ID(), nil
 	case OptionSessionReplacements:
 		return strconv.Itoa(c.session.Replacements()), nil

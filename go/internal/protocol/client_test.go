@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,6 +40,12 @@ type fake struct {
 	staleTxn bool
 	prevTxn  map[string]string // session id -> its transaction before the last statement
 	ran      []string          // "<session id>: <sql>" of every statement run
+	// state is the discovery document's state ("" for none).
+	state string
+	// resuming answers server_resuming (Retry-After 1) to the next requests
+	// of each "METHOD /path", as many times as it says.
+	resuming map[string]int
+	requests []string // "METHOD /path" of every request
 }
 
 func newFake(t *testing.T) *fake {
@@ -46,7 +53,7 @@ func newFake(t *testing.T) *fake {
 	f.mux.HandleFunc("GET /chargewire", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"protocol": "chargewire", "protocol_versions": []string{"1"},
 			"server": map[string]string{"name": "fake", "version": "1"}, "capabilities": []string{"transactions"},
-			"auth": map[string]any{"grant_types": []string{"password"}}})
+			"auth": map[string]any{"grant_types": []string{"password"}}, "state": f.discoveryState()})
 	})
 	f.mux.HandleFunc("POST /chargewire/v1/auth/token", func(w http.ResponseWriter, r *http.Request) {
 		var grant map[string]string
@@ -79,9 +86,44 @@ func newFake(t *testing.T) *fake {
 		f.mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]any{"session_id": id, "options": body.Options, "idle_timeout_s": 900})
 	}))
-	f.server = httptest.NewServer(f.mux)
+	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+// serve records the request, answers server_resuming when f.resuming says
+// so, and otherwise hands it to the mux.
+func (f *fake) serve(w http.ResponseWriter, r *http.Request) {
+	route := r.Method + " " + r.URL.Path
+	f.mu.Lock()
+	f.requests = append(f.requests, route)
+	resume := f.resuming[route] > 0
+	if resume {
+		f.resuming[route]--
+	}
+	f.mu.Unlock()
+	if resume {
+		w.Header().Set("Retry-After", "1")
+		writeProblem(w, http.StatusServiceUnavailable, CodeServerResuming, "")
+		return
+	}
+	f.mux.ServeHTTP(w, r)
+}
+
+func (f *fake) discoveryState() any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.state == "" {
+		return nil
+	}
+	return f.state
+}
+
+// sent is every request the server got, as "METHOD /path".
+func (f *fake) sent() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.requests)
 }
 
 // auth checks the bearer token, as every authenticated endpoint does.

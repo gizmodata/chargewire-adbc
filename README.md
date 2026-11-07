@@ -337,6 +337,23 @@ Route by something both clients send, or connect both to the instance's own addr
   again and fails at once, as do closes and cancels (ending a session when a connection
   closes, freeing a statement, cancelling one). A Go context that ends during a wait ends the request with the
   context's error.
+- **A stopped server: connecting lazily.** When the discovery document says
+  `"state": "stopped"` (a stand-in answering for a stopped server that starts it when someone
+  signs in, such as a GizmoData Cloud cluster with auto-resume), opening a connection
+  (`AdbcConnectionInit`, Python's `connect()`) sends nothing more: no sign-in, no session. The
+  connection signs in and opens its session at its first request that does work: a statement
+  (executing or preparing), metadata, an ingest, a commit or rollback, or reading the session
+  (its id, its transaction, the current catalog or schema). That sign-in starts the server, and
+  the wait above follows. Until then, reading the connection's own options and the driver's
+  info, closing the connection and cancelling send nothing, so a pool that opens and closes idle
+  connections on a timer doesn't start the server. Session options set before that (the
+  current catalog or schema, `catalog=`/`db_schema=` in Python's `connect()`, autocommit) are
+  sent with the request that opens the session, so an unknown catalog fails that first request.
+  A wrong password, too, fails the first request that does work, with the error a connect would
+  have given (`StatusUnauthenticated`), not the connect. Once a request has run, a connection
+  of the same database opens as usual. Without `state` (a server that is serving), connecting
+  signs in and opens the session as before. Browser sign-in (`oauth_browser`) and attaching to
+  a session still happen when the connection opens.
 - **Tokens** are renewed before they expire and, once, when the server refuses one
   (`invalid_token` without a reason, with `token_expired`, or with a reason the driver
   doesn't know). After `token_revoked`, `credentials_changed` or `principal_dropped` the

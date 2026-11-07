@@ -56,6 +56,9 @@ type Session struct {
 	replacements int
 	closed       bool // Close or Detach was called: never replace it
 	attached     bool // AttachSession: another connection created it
+	// pending: the session is not open on the server yet (NewLazySession);
+	// the first request that does work opens it (open).
+	pending bool
 	// tx is what the driver knows of the current session's transaction,
 	// which SQL (BEGIN) changes without the driver's say: it decides whether
 	// a request may run again on a replacement session.
@@ -181,6 +184,55 @@ func (c *Client) OpenSessionWithHook(ctx context.Context, options map[string]any
 	return s, nil
 }
 
+// NewLazySession is OpenSessionWithHook without a request: the session opens
+// on the server, signing in first when the client has no token, at the first
+// request that does work (a statement, preparing, metadata, an ingest, a
+// commit or rollback, reading the session). Until then nothing is sent:
+// options set on it are kept and sent with the request that opens it,
+// closing or detaching it sends nothing, and there is nothing to cancel. For
+// a server whose discovery said it is stopped (Discovery.Stopped): a
+// connection opened for nothing, such as a pool's refill, then doesn't start
+// it (§3.1). A failure to open (wrong credentials, a server that can't be
+// reached) is the error of that first request, and the next one tries again.
+func (c *Client) NewLazySession(options map[string]any, reconnect bool, hook NewSessionHook) *Session {
+	s := &Session{client: c, reconnect: reconnect, options: maps.Clone(options), hook: hook, pending: true}
+	if s.options == nil {
+		s.options = map[string]any{}
+	}
+	return s
+}
+
+// Open opens a session NewLazySession made, unless it is open already.
+func (s *Session) Open(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.pending {
+		return nil
+	}
+	if s.closed {
+		return errSessionClosed
+	}
+	doc, err := s.create(ctx)
+	if err != nil {
+		return err
+	}
+	hookTx, err := s.client.setUp(ctx, s.hook, doc.SessionID, "")
+	if err != nil {
+		return err
+	}
+	s.id = doc.SessionID
+	s.tx = afterHook(txFromDocument(doc, true), hookTx)
+	s.pending = false
+	return nil
+}
+
+// Pending reports a session NewLazySession made that is not open yet.
+func (s *Session) Pending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pending
+}
+
 // AttachSession uses the existing session id instead of creating one: it reads
 // the session (§5.2) to check that the server has it for this principal. A
 // session of another principal is session_not_found too (§9.2). An attached
@@ -228,7 +280,7 @@ func (s *Session) create(ctx context.Context) (*SessionDocument, error) {
 	return doc, nil
 }
 
-// ID is the current session id.
+// ID is the current session id, "" while the session is pending (Open).
 func (s *Session) ID() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -607,6 +659,9 @@ func (s *Session) sqlStateOf(id string) bool {
 // do sends a request built for the current session, and handles the session
 // being gone as scope allows.
 func (s *Session) do(ctx context.Context, scope Scope, lostWhat string, build func(sessionID string) (*Request, error)) (*http.Response, error) {
+	if err := s.Open(ctx); err != nil {
+		return nil, err
+	}
 	id := s.ID()
 	req, err := build(id)
 	if err != nil {
@@ -716,8 +771,17 @@ func (e *OptionError) Error() string {
 func (e *OptionError) Unwrap() error { return e.Problem }
 
 // SetOptions sets session options (§5.3) and remembers the ones the server
-// took, to replay them on a replacement session.
+// took, to replay them on a replacement session. On a pending session
+// (NewLazySession) they are kept and sent with the request that opens it,
+// which fails if the server refuses one.
 func (s *Session) SetOptions(ctx context.Context, options map[string]any) error {
+	s.mu.Lock()
+	if s.pending && !s.closed {
+		maps.Copy(s.options, options)
+		s.mu.Unlock()
+		return nil
+	}
+	s.mu.Unlock()
 	body, err := JSONBody(map[string]any{"options": options})
 	if err != nil {
 		return err
@@ -769,8 +833,11 @@ var errSessionClosed = errors.New("the connection is closed")
 func (s *Session) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.closed = true
-	id := s.id
+	id, pending := s.id, s.pending
 	s.mu.Unlock()
+	if pending {
+		return nil // never opened: nothing to end
+	}
 	// Two attempts at most (the second for a pooled connection the server had
 	// already closed): a stopped server must not hold up a close, and a
 	// session whose end the server never heard idles out there.
@@ -821,6 +888,9 @@ func (s *Session) Rollback(ctx context.Context) error {
 }
 
 func (s *Session) endTransaction(ctx context.Context, action string) error {
+	if err := s.Open(ctx); err != nil {
+		return err
+	}
 	id := s.ID()
 	resp, err := s.doHandle(ctx, id, "open transaction", &Request{Method: http.MethodPost, Path: sessionPath(id) + "/" + action})
 	if err != nil {

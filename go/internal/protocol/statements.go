@@ -273,6 +273,9 @@ func (s *Session) Cancel(ctx context.Context, ref StatementRef) error {
 // (§6.8), for a client that has no statement id yet. It returns the ids it
 // cancelled. A cancel never signs in (Request.NoRenew).
 func (s *Session) CancelAll(ctx context.Context) ([]string, error) {
+	if s.Pending() {
+		return nil, nil // never opened: nothing runs there
+	}
 	id := s.ID()
 	answer := &struct {
 		Cancelled []string `json:"cancelled"`

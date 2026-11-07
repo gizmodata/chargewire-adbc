@@ -23,7 +23,7 @@ type sessionRecorder struct {
 
 func recordSessions(f *fakeChargewire) *sessionRecorder {
 	rec := &sessionRecorder{}
-	mux := f.server.Config.Handler.(*http.ServeMux)
+	mux := f.mux
 	mux.HandleFunc("GET /chargewire/v1/sessions/{s}", func(w http.ResponseWriter, r *http.Request) {
 		if r.PathValue("s") != "s9" {
 			fakeProblem(w, http.StatusNotFound, "session_not_found")
