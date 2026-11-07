@@ -349,6 +349,10 @@ Route by something both clients send, or connect both to the instance's own addr
   connections on a timer doesn't start the server. Session options set before that (the
   current catalog or schema, `catalog=`/`db_schema=` in Python's `connect()`, autocommit) are
   sent with the request that opens the session, so an unknown catalog fails that first request.
+  That first request signs in afresh with the database's credentials even when the database
+  already holds a token: a person who stopped the server ended the tokens issued before, and a
+  connection opened after the stop is a new one, so it starts the server like any other
+  (connections opened before the stop still don't sign in again on their own, see Tokens).
   A wrong password, too, fails the first request that does work, with the error a connect would
   have given (`StatusUnauthenticated`), not the connect. Each connection decides when it opens:
   after a database's first connection, every Open reads discovery again (one small GET, which

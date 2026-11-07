@@ -57,8 +57,11 @@ type Session struct {
 	closed       bool // Close or Detach was called: never replace it
 	attached     bool // AttachSession: another connection created it
 	// pending: the session is not open on the server yet (NewLazySession);
-	// the first request that does work opens it (open).
-	pending bool
+	// the first request that does work opens it (open), signing in first
+	// unless the client did after tokenGen, its sign-in count when the
+	// session was made.
+	pending  bool
+	tokenGen uint64
 	// tx is what the driver knows of the current session's transaction,
 	// which SQL (BEGIN) changes without the driver's say: it decides whether
 	// a request may run again on a replacement session.
@@ -195,7 +198,8 @@ func (c *Client) OpenSessionWithHook(ctx context.Context, options map[string]any
 // it (§3.1). A failure to open (wrong credentials, a server that can't be
 // reached) is the error of that first request, and the next one tries again.
 func (c *Client) NewLazySession(options map[string]any, reconnect bool, hook NewSessionHook) *Session {
-	s := &Session{client: c, reconnect: reconnect, options: maps.Clone(options), hook: hook, pending: true}
+	s := &Session{client: c, reconnect: reconnect, options: maps.Clone(options), hook: hook, pending: true,
+		tokenGen: c.tokenGeneration()}
 	if s.options == nil {
 		s.options = map[string]any{}
 	}
@@ -211,6 +215,13 @@ func (s *Session) Open(ctx context.Context) error {
 	}
 	if s.closed {
 		return errSessionClosed
+	}
+	// A new connection signs in, even when the client holds a token from
+	// before it opened: a person who stopped the server ended those tokens,
+	// and connecting again after that starts the server (§4.2 keeps only
+	// connections opened before the stop from signing in on their own).
+	if err := s.client.signInAfter(ctx, s.tokenGen); err != nil {
+		return err
 	}
 	doc, err := s.create(ctx)
 	if err != nil {

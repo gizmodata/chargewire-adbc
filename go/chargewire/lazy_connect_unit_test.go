@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/apache/arrow-adbc/go/adbc"
@@ -171,5 +172,62 @@ func TestConnectAfterTheServerStartedSignsInAtOpen(t *testing.T) {
 	defer second.Close(ctx)
 	if sent := f.requestsSince(before); !slices.Equal(sent, []string{discoveryRequest, signInRequest, openRequest}) {
 		t.Fatalf("requests for an Open after the server started %v, want discovery, a sign-in and a session", sent)
+	}
+}
+
+// A person stopped the server, which ended the tokens issued until then (the
+// stand-in refuses them with token_revoked). A connection opened after that
+// is a new one: its first statement signs in afresh with the database's
+// credentials, instead of sending the database's old token, and runs.
+func TestLazyConnectionAfterAStopSignsInAfresh(t *testing.T) {
+	f := newFakeChargewire(t)
+	db := openFakeDatabase(t, f, nil)
+	ctx := context.Background()
+	first, err := db.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.query(t, first); err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Close(ctx)
+	if n := f.tokens.Load(); n != 1 {
+		t.Fatalf("%d sign-ins while serving, want 1 (tok1)", n)
+	}
+	f.setState("stopped")
+	f.revoke("tok1")
+	second, err := db.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close(ctx)
+	values, err := f.query(t, second)
+	if err != nil {
+		t.Fatalf("first statement of a connection opened after the stop: %v", err)
+	}
+	wantSequence(t, values, 1, f.batches)
+	if n := f.tokens.Load(); n != 2 {
+		t.Fatalf("%d sign-ins, want 2 (a fresh tok2 for the new connection)", n)
+	}
+}
+
+// The twin: a connection opened before the stop, whose token the stand-in
+// refuses with token_revoked, does not sign in again on its own (§4.2): its
+// next statement fails with the refusal.
+func TestConnectionFromBeforeAStopDoesNotSignInAgain(t *testing.T) {
+	f := newFakeChargewire(t)
+	cnxn := f.connect(t, nil)
+	if _, err := f.query(t, cnxn); err != nil {
+		t.Fatal(err)
+	}
+	f.setState("stopped")
+	f.revoke("tok1")
+	_, err := f.query(t, cnxn)
+	if adbcErr, ok := errors.AsType[adbc.Error](err); !ok || adbcErr.Code != adbc.StatusUnauthenticated ||
+		!strings.Contains(err.Error(), "token_revoked") {
+		t.Fatalf("statement after the stop: %v, want the token_revoked refusal", err)
+	}
+	if n := f.tokens.Load(); n != 1 {
+		t.Fatalf("%d sign-ins, want 1: the old connection signed in again", n)
 	}
 }

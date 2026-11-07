@@ -102,8 +102,11 @@ type Client struct {
 	sleep func(ctx context.Context, d time.Duration) error
 
 	tokenMu sync.Mutex
-	token   string
-	renewAt time.Time // when to replace the token; zero when its lifetime is unknown
+	// tokenGen counts the client's sign-ins: which token a lazy session's
+	// first request may use (signInAfter).
+	tokenGen uint64
+	token    string
+	renewAt  time.Time // when to replace the token; zero when its lifetime is unknown
 	// expiresAt is when the token expires, from the token response's
 	// expires_in or the token's own exp claim; zero when unknown.
 	expiresAt time.Time
@@ -588,6 +591,38 @@ func (c *Client) renewToken(ctx context.Context, stale string) error {
 	if c.token != stale && c.tokenFresh() {
 		return nil
 	}
+	return c.signIn(ctx)
+}
+
+// tokenGeneration is how many times the client has signed in.
+func (c *Client) tokenGeneration() uint64 {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	return c.tokenGen
+}
+
+// signInAfter signs in unless the client already did after its sign-in
+// number gen (tokenGeneration), so that a connection opened at gen uses a
+// token issued after it opened. A token from before may have been revoked
+// on purpose since (a person stopped the server, which ends the tokens issued
+// until then), and a connection opened after that is a new one, which signs
+// in like any. Credentials that can't sign in (a token issued elsewhere) keep
+// their token.
+func (c *Client) signInAfter(ctx context.Context, gen uint64) error {
+	if c.credentials.grant() == nil {
+		return nil
+	}
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	if c.tokenGen > gen {
+		return nil
+	}
+	return c.signIn(ctx)
+}
+
+// signIn gets a new token with the client's credentials. The caller holds
+// tokenMu.
+func (c *Client) signIn(ctx context.Context) error {
 	grant := c.credentials.grant()
 	if grant == nil {
 		return errors.New("a new access token is needed, but the driver was given a token issued elsewhere, which it cannot renew")
@@ -605,6 +640,7 @@ func (c *Client) renewToken(ctx context.Context, stale string) error {
 		return errors.New("the token endpoint did not return a bearer token")
 	}
 	c.token = answer.AccessToken
+	c.tokenGen++
 	c.renewAt = time.Time{}
 	c.expiresAt = TokenExpiry(answer.AccessToken)
 	if answer.ExpiresIn > 0 {
