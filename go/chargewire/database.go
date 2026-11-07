@@ -252,17 +252,19 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 }
 
 // Open creates a session on the server. The first Open also discovers the
-// server and signs in; later ones share that client and its token. When
-// discovery said the server is stopped (a stand-in answers for it and starts
-// it when someone signs in, §3.1) and nothing has been run through the client
-// since, Open sends nothing: the connection signs in and opens its session at
-// its first request that does work, so that a connection opened for nothing
-// (a pool's refill) doesn't start the server.
+// server and signs in; later ones share that client and its token. When the
+// server is stopped (a stand-in answers discovery for it with state stopped
+// and starts it when someone signs in, §3.1), Open sends nothing more: the
+// connection signs in and opens its session at its first request that does
+// work, so that a connection opened for nothing (a pool's refill) doesn't
+// start the server. Every later Open reads discovery again (one GET, which
+// never wakes a server) and decides from that answer, since the server may
+// have stopped or started since the database's first connection.
 func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContext, err error) {
 	ctx, span := d.StartSpan(ctx, "Database.Open")
 	defer driverbase.EndSpanWithError(span, &err)
 
-	client, discovery, err := d.connect(ctx)
+	client, discovery, fresh, err := d.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +280,16 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 		}
 		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(false)), nil
 	}
-	if discovery.Stopped() && !client.Used() {
+	// The first Open's discovery is current; a later one's is from before
+	// the server may have stopped (a pool's refill after an idle stop) or
+	// started.
+	lazy := discovery.Stopped()
+	if !fresh {
+		if lazy, err = client.ServerStopped(ctx); err != nil {
+			return nil, wrapError(err, "reading the server's state")
+		}
+	}
+	if lazy {
 		session := client.NewLazySession(nil, d.reconnect, newSessionHook(ctx))
 		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(true)), nil
 	}
@@ -318,22 +329,25 @@ func (d *databaseImpl) closeOnReleaseOr(def bool) bool {
 	return def
 }
 
-func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol.Discovery, error) {
+// connect returns the database's client and its discovery document,
+// discovering the server and signing in first (fresh) when this is the first
+// connection.
+func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol.Discovery, bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.client != nil {
-		return d.client, d.discovery, nil
+		return d.client, d.discovery, false, nil
 	}
 	base, err := parseURI(d.uri)
 	if err != nil {
-		return nil, nil, d.ErrorHelper.InvalidArgument("%s", err)
+		return nil, nil, false, d.ErrorHelper.InvalidArgument("%s", err)
 	}
 	if err := d.checkCredentials(base); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	transport, err := d.newTransport(base)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	client := protocol.NewClient(protocol.Config{
 		BaseURL:       base,
@@ -349,33 +363,33 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 	if err != nil {
 		transport.CloseIdleConnections()
 		if hint := plainHTTPError(err, d.uri, base); hint != nil {
-			return nil, nil, hint
+			return nil, nil, false, hint
 		}
-		return nil, nil, wrapError(err, "connecting to "+base.Redacted())
+		return nil, nil, false, wrapError(err, "connecting to "+base.Redacted())
 	}
 	if d.credentials.ClientCertificate && !discovery.Has(protocol.CapabilityMTLSIdentity) {
 		transport.CloseIdleConnections()
-		return nil, nil, d.ErrorHelper.Unauthenticated("the server does not offer client certificate sign-in (capability %s): it needs TLS with client CAs and must list the %s grant (it offers %v)",
+		return nil, nil, false, d.ErrorHelper.Unauthenticated("the server does not offer client certificate sign-in (capability %s): it needs TLS with client CAs and must list the %s grant (it offers %v)",
 			protocol.CapabilityMTLSIdentity, protocol.GrantClientCertificate, discovery.Auth.GrantTypes)
 	}
 	if d.browserSignIn {
 		signedIn, err := runBrowserSignIn(ctx, client, discovery, openBrowser(d.browserCommand), d.browserTimeout)
 		if err != nil {
 			transport.CloseIdleConnections()
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		client.UseAccessTokenUntil(signedIn.AccessToken, signedIn.ExpiresIn)
 	} else {
 		if grant := d.grantType(); grant != "" && !discovery.SupportsGrant(grant) {
 			transport.CloseIdleConnections()
-			return nil, nil, d.ErrorHelper.Unauthenticated("the server does not accept the %s grant (it offers %v)", grant, discovery.Auth.GrantTypes)
+			return nil, nil, false, d.ErrorHelper.Unauthenticated("the server does not accept the %s grant (it offers %v)", grant, discovery.Auth.GrantTypes)
 		}
 		// A stopped server starts when someone signs in: sign in at the
 		// first request that does work instead (Open).
 		if !discovery.Stopped() {
 			if err := client.Authenticate(ctx); err != nil {
 				transport.CloseIdleConnections()
-				return nil, nil, wrapError(err, "signing in")
+				return nil, nil, false, wrapError(err, "signing in")
 			}
 		}
 	}
@@ -384,7 +398,7 @@ func (d *databaseImpl) connect(ctx context.Context) (*protocol.Client, *protocol
 		adbc.InfoVendorVersion: discovery.Server.Version,
 	})
 	d.client, d.transport, d.discovery = client, transport, discovery
-	return client, discovery, nil
+	return client, discovery, true, nil
 }
 
 // parseResumeTimeout reads OptionResumeTimeout: seconds, 0 or more.

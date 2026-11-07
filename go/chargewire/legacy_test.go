@@ -241,7 +241,7 @@ func legacyDatabase(t *testing.T, uri string) adbc.DatabaseWithContext {
 }
 
 // At the default base path, a server that answers only the old spelling is
-// spoken to in it: discovery once per database, every request under /warp
+// spoken to in it: the current root tried once per database, every request under /warp
 // with Warp-* headers, and Warp-* response headers read as the current ones.
 func TestLegacyServerFallback(t *testing.T) {
 	f := newFakeChargewire(t)
@@ -283,9 +283,11 @@ func TestLegacyServerFallback(t *testing.T) {
 			}
 		}
 	}
-	// Three databases, two connections each: one discovery per database.
-	if discoveries["/chargewire"] != 3 || discoveries["/warp"] != 3 {
-		t.Errorf("discovery requests %v, want 3 at each root", discoveries)
+	// Three databases, two connections each: the current root is tried once
+	// per database, and the old one is read at each Open (the second Open
+	// reads it again for the server's state, at the root it settled on).
+	if discoveries["/chargewire"] != 3 || discoveries["/warp"] != 6 {
+		t.Errorf("discovery requests %v, want 3 at /chargewire and 6 at /warp", discoveries)
 	}
 	// The query tag went out as Warp-Query-Tag and the statement id came back
 	// in Warp-Statement-Id (the driver deleted q9).

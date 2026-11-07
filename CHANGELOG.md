@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.5] - 2026-11-07
+
+### Fixed
+
+- **A pool that kept one database still started a stopped server at its refills.** 2.2.4
+  decided whether to connect lazily from the database's first discovery, so a Go app that keeps
+  one database and pools its connections (`database/sql` style) went on signing in and opening
+  sessions at every refill after the server stopped, starting it again. Every Open after the
+  database's first connection now reads the discovery document again (one small `GET`, which
+  never wakes a server) and connects lazily when it says `"state": "stopped"`, or at once when
+  the server is serving again. A Python `connect()` makes its own database each time, so it was
+  not affected.
+
 ## [2.2.4] - 2026-11-07
 
 ### Added

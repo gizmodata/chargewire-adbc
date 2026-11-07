@@ -119,4 +119,6 @@ argument and as a `db_kwargs` option), and a stopped server (discovery `"state":
 connecting, a pool's checks and closing send nothing but discovery, in Go and through
 Python's `connect()`; the first statement signs in, opens the session with the options set
 before it and runs through a `server_resuming` wait; a wrong password fails that statement,
-not the connect; without `state` connecting signs in at once).
+not the connect; without `state` connecting signs in at once; one database whose server stops
+between Opens reads discovery again and opens lazily, and one whose server started signs in at
+Open).

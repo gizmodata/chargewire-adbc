@@ -350,9 +350,11 @@ Route by something both clients send, or connect both to the instance's own addr
   current catalog or schema, `catalog=`/`db_schema=` in Python's `connect()`, autocommit) are
   sent with the request that opens the session, so an unknown catalog fails that first request.
   A wrong password, too, fails the first request that does work, with the error a connect would
-  have given (`StatusUnauthenticated`), not the connect. Once a request has run, a connection
-  of the same database opens as usual. Without `state` (a server that is serving), connecting
-  signs in and opens the session as before. Browser sign-in (`oauth_browser`) and attaching to
+  have given (`StatusUnauthenticated`), not the connect. Each connection decides when it opens:
+  after a database's first connection, every Open reads discovery again (one small GET, which
+  never wakes a server), so a pool that keeps one database opens lazily once the server has
+  stopped, and at once again when it serves. Without `state` (a server that is serving),
+  connecting signs in and opens the session as before. Browser sign-in (`oauth_browser`) and attaching to
   a session still happen when the connection opens.
 - **Tokens** are renewed before they expire and, once, when the server refuses one
   (`invalid_token` without a reason, with `token_expired`, or with a reason the driver
