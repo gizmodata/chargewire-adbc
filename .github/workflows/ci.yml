@@ -1,8 +1,9 @@
 name: chargewire-adbc-ci
 
-# Unit tests, the C shared library on every platform, the Python bindings, and the
-# live-server suites (Go and Python) against hardcharger-server. Also the release gate:
-# release.yml calls it on the tagged commit.
+# Unit tests, the C shared library on every platform and its exports (only Adbc*,
+# go/internal/checkexports), the Python bindings, the live-server suites (Go and Python) and the
+# ADBC validation (conformance) suite (validation/) against hardcharger-server. Also the release
+# gate: release.yml calls it on the tagged commit.
 #
 # The live suites' server comes from the image ghcr.io/gizmodata/hardcharger, pulled with this
 # workflow's GITHUB_TOKEN. While the image is private that works only once the package grants
@@ -74,12 +75,24 @@ jobs:
 
       - name: Build the shared library
         env:
-          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          MACOSX_DEPLOYMENT_TARGET: "13.0"  # Go 1.27 requires macOS 13 (go.dev/doc/go1.27)
         run: scripts/build_lib.sh
+
+      - name: The library exports only the ADBC entrypoints (Adbc*)
+        working-directory: go
+        run: |
+          case "$RUNNER_OS" in macOS) ext=dylib ;; *) ext=so ;; esac
+          go run ./internal/checkexports "build/libadbc_driver_chargewire.$ext"
 
       - name: Check the glibc ceiling (2.17)
         if: runner.os == 'Linux'
         run: scripts/check_glibc.sh go/build/libadbc_driver_chargewire.so
+
+      - name: The library's minimum macOS is 13.0
+        if: runner.os == 'macOS'
+        run: |
+          minos=$(vtool -show-build go/build/libadbc_driver_chargewire.dylib | awk '/minos/ {print $2}')
+          [ "$minos" = "13.0" ] || { echo "::error::the library's minos is ${minos:-unknown}, not 13.0"; exit 1; }
 
       - uses: actions/setup-python@v7
         with:
@@ -95,7 +108,7 @@ jobs:
 
       - name: Build the wheel
         env:
-          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
         run: |
           cp go/build/libadbc_driver_chargewire.* python/src/adbc_driver_chargewire/
           rm python/src/adbc_driver_chargewire/libadbc_driver_chargewire.h
@@ -124,6 +137,13 @@ jobs:
       - name: Build the shared library
         shell: bash
         run: scripts/build_lib.sh
+
+      - name: The library exports only the ADBC entrypoints (Adbc*)
+        shell: bash
+        working-directory: go
+        run: |
+          case "$RUNNER_OS" in Windows) ext=dll ;; *) ext=so ;; esac
+          go run ./internal/checkexports "build/libadbc_driver_chargewire.$ext"
 
       - name: Check the glibc ceiling (2.17)
         if: runner.os == 'Linux'
@@ -183,3 +203,100 @@ jobs:
         run: |
           pip install -e ".[test]"
           python -m pytest -v tests
+
+  # The ADBC validation (conformance) suite (validation/; pinned in validation/requirements.txt,
+  # a test dependency only), against a server whose catalog is `validation`, through the library
+  # built as for a release. It fails, never skips, without its server; the first run proves that
+  # on every build. The server runs with TZ=UTC: the suite expects TIMESTAMPTZ as
+  # timestamp[tz=UTC].
+  validation:
+    name: ADBC validation suite (linux, against hardcharger-server)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read  # the server image
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: hardcharger-server from the image
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          if ! docker pull -q "$HARDCHARGER_IMAGE"; then
+            echo "::error::can't pull $HARDCHARGER_IMAGE with this workflow's GITHUB_TOKEN"
+            exit 1
+          fi
+          id=$(docker create "$HARDCHARGER_IMAGE")
+          docker cp "$id:/opt/hardcharger" "$RUNNER_TEMP/hardcharger"
+          docker rm "$id" >/dev/null
+          binary="$RUNNER_TEMP/hardcharger/bin/hardcharger-server"
+          "$binary" --version
+          echo "SERVER_BINARY=$binary" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Build the shared library
+        run: scripts/build_lib.sh
+      - name: The library exports only the ADBC entrypoints (Adbc*)
+        working-directory: go
+        run: go run ./internal/checkexports build/libadbc_driver_chargewire.so
+
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Install the suite (Python 3.14)
+        working-directory: validation
+        run: |
+          uv venv .venv --python 3.14
+          uv pip install --python .venv/bin/python -r requirements.txt
+
+      - name: The suite fails when its server is unreachable
+        working-directory: validation
+        env:
+          CHARGEWIRE_ADBC_TEST_VALIDATION_URI: chargewire://127.0.0.1:9?tls=false
+          CHARGEWIRE_ADBC_TEST_VALIDATION_USERNAME: nobody
+          CHARGEWIRE_ADBC_TEST_VALIDATION_PASSWORD: nothing
+        run: |
+          # The step's shell is bash -e: the expected failure is tested in a condition.
+          if .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_connection.py > unreachable.log 2>&1; then
+            cat unreachable.log
+            echo "::error::the suite passed without a server"
+            exit 1
+          fi
+          tail -3 unreachable.log
+          if ! grep -q "can't reach the server at chargewire://127.0.0.1:9" unreachable.log; then
+            cat unreachable.log
+            echo "::error::the suite failed for another reason"
+            exit 1
+          fi
+
+      - name: Start a server for the suite
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 12):p@ss"
+          echo "::add-mask::$password"
+          mkdir -p "$RUNNER_TEMP/validation"
+          # The server runs until the job ends (the runner stops what it started).
+          (cd "$RUNNER_TEMP/validation" && { env -i PATH="$PATH" HOME="$RUNNER_TEMP/validation" \
+            TZ=UTC HARDCHARGER_ADMIN_PASSWORD="$password" "$SERVER_BINARY" \
+            --host 127.0.0.1 --port 31470 --health-port 0 --admin-username cw_adbc_validation \
+            --database "$RUNNER_TEMP/validation/validation.duckdb" --print-queries false \
+            > server.log 2>&1 & })
+          for _ in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:31470/chargewire && break; sleep 1; done
+          curl -sf -o /dev/null http://127.0.0.1:31470/chargewire
+          {
+            echo "CHARGEWIRE_ADBC_TEST_VALIDATION_URI=chargewire://127.0.0.1:31470?tls=false"
+            echo "CHARGEWIRE_ADBC_TEST_VALIDATION_USERNAME=cw_adbc_validation"
+            echo "CHARGEWIRE_ADBC_TEST_VALIDATION_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+      - name: Run the suite
+        working-directory: validation
+        run: .venv/bin/python -m pytest -p no:cacheprovider -rfEsxX --junit-xml=validation-report.xml
+      - name: Server log
+        if: failure()
+        run: |
+          if [ -f "$RUNNER_TEMP/validation/server.log" ]; then tail -100 "$RUNNER_TEMP/validation/server.log"; else echo "no server was started"; fi

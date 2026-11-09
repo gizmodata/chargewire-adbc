@@ -6,6 +6,66 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.2.9] - 2026-11-09
+
+Brings in the fixes hardcharger-adbc (the Hardcharger driver built on this one) made in its 2.4.6
+and 2.4.7, so every Chargewire driver gets them. The driver now passes the ADBC validation
+(conformance) suite.
+
+### Fixed
+
+- **The shared library exports only the ADBC entrypoints**, as the
+  [ADBC shared-library requirements](https://adbc-drivers.org/building-drivers/shared-library-requirements.html)
+  ask: `AdbcDriverInit`, `AdbcDriverChargewireInit` and the other `Adbc*` functions, 57 in all.
+  2.0.0 through 2.2.8 also exported every Go `//export` function and the cgo glue
+  (`ChargewireDatabaseNew`, `ChargewireArrayStreamGetNext`, `_cgo_*`, `crosscall2`, ...): 71 to
+  255 extra names depending on the platform, which could clash with another library's in the
+  same process. The export lists are `go/pkg/chargewire/exports_linux.map`, `exports_darwin.txt`
+  and `exports_windows.def`, passed by `scripts/build_lib.sh` and `make -C go lib`. Nothing that
+  loads the driver changes: the entrypoints the driver manager and the manifest use
+  (`AdbcDriverChargewireInit`, `AdbcDriverInit`) are still there.
+- **The macOS wheels said they run on macOS 11**: they are tagged `macosx_13_0` and the library's
+  minimum macOS is 13.0, because the Go 1.27 runtime it is built with requires macOS 13 Ventura.
+  2.0.0 through 2.2.8 were tagged `macosx_11_0`, so pip would install them on macOS 11 and 12,
+  where the Go runtime isn't supported. The release now checks that the library's minimum macOS
+  matches the wheel's tag, and `scripts/build_lib.sh` passes the target in the cgo flags, so Go's
+  build cache (which ignores `MACOSX_DEPLOYMENT_TARGET`) can't reuse a build for another target.
+- **Setting an option the driver doesn't know on a database that has opened a connection** is
+  `NOT_IMPLEMENTED`, as before the first connection; it was `INVALID_STATE` ("must be set before
+  the first connection is opened"), which said the option exists. A known option is still
+  `INVALID_STATE` then.
+- **Making a catalog or schema that doesn't exist current** (`adbc.connection.catalog`,
+  `adbc.connection.db_schema`) is `NOT_FOUND`, the ADBC status for it; it was `INVALID_ARGUMENT`.
+  The driver asks the metadata endpoints whether the name exists (exactly, not as a pattern), only
+  after the server refused it.
+- **Appending (or `create_append`) data with a column the existing table doesn't have** is
+  `ALREADY_EXISTS`, ADBC's status for a table that exists with another schema; it was
+  `INVALID_ARGUMENT`. The driver compares the data's columns with the table's (case insensitively,
+  as DuckDB binds them), only after the server refused the append, for an ingest in one stream and
+  one in parts alike. A value that doesn't convert is still the data's error (`INVALID_ARGUMENT`).
+- **The library's `GetInfo` driver version** in builds from a checkout (`make -C go lib`,
+  `scripts/build_lib.sh`) could say `go/vX.Y.Z`, the Go module's tag on the same commit, or, in a
+  clone without tags (CI), a bare commit hash, neither a version; it now comes from the release
+  tag (`vX.Y.Z-N-gHASH`), or is `v0.0.0-HASH` without one. Released libraries were not affected.
+
+### Added
+
+- **`go/internal/checkexports`**: checks a built library (ELF, Mach-O or PE) for `AdbcDriverInit`,
+  the entrypoint its file name implies, and no export without the `Adbc` prefix. CI and the
+  release run it on every library they build, on every platform, Windows arm64 included.
+- **`validation/`**: the [ADBC validation suite](https://github.com/adbc-drivers/validation)
+  (pinned, a test dependency only) configured for this driver against a Hardcharger server, with
+  DuckDB's versions of its type cases, and a CI job that runs it on every push and before every
+  release (it fails, never skips, without its server). Each skip and expected failure says why in
+  `validation/README.md`.
+
+### Changed
+
+- **Dependencies**: apache arrow-adbc Go 1.13.0, driverbase-go of 2026-11-09 (the generated cgo
+  exports are unchanged), grpc 1.85.0 and the golang.org/x modules; Go toolchain 1.27.3 (the
+  module still needs Go 1.27.2). Python: `adbc-driver-manager>=1.13.0`, `pyarrow>=26.0.1`; test
+  and dev extras `pytest>=9.2.0`, `ruff>=0.17.4`.
+
 ## [2.2.8] - 2026-11-07
 
 ### Fixed

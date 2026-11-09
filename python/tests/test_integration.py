@@ -806,11 +806,12 @@ class TestConnectCatalog:
             assert conn.adbc_current_db_schema == "main"
 
     def test_unknown_catalog_is_refused(self, chargewire_server):
+        # A catalog that doesn't exist is NOT_FOUND; the server's refusal is still the cause.
         with pytest.raises(adbc_driver_manager.Error) as caught:
             connect(server=chargewire_server, catalog="no_such_catalog")
         assert_error(
             error=caught.value,
-            status=adbc_driver_manager.AdbcStatusCode.INVALID_ARGUMENT,
+            status=adbc_driver_manager.AdbcStatusCode.NOT_FOUND,
             code="invalid_option_value",
         )
 

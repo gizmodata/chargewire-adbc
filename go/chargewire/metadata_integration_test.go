@@ -304,8 +304,9 @@ func TestIntegrationCurrentCatalogAndSchema(t *testing.T) {
 	if got := scalarInt(t, cnxn, "SELECT count(*) FROM order_lines"); got != 0 {
 		t.Errorf("unqualified order_lines in md.s1: %d rows", got)
 	}
+	// A catalog that doesn't exist is NOT_FOUND; the server's refusal is still the cause.
 	err := options.SetOption(context.Background(), adbc.OptionKeyCurrentCatalog, "no_such_catalog")
-	assertStatus(t, err, adbc.StatusInvalidArgument, "invalid_option_value")
+	assertStatus(t, err, adbc.StatusNotFound, "invalid_option_value")
 }
 
 func TestIntegrationUnsupportedConnectionOptions(t *testing.T) {

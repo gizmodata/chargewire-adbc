@@ -40,7 +40,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20261015034256-4c82882827b5
+github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20261109034954-869784ceb17f
 ================================================================================
 
 
@@ -255,7 +255,7 @@ Home page: https://arrow.apache.org/adbc/
 License: http://www.apache.org/licenses/LICENSE-2.0
 
 ================================================================================
-github.com/andybalholm/brotli v1.2.6
+github.com/andybalholm/brotli v1.2.7
 ================================================================================
 
 Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
@@ -279,7 +279,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ================================================================================
-github.com/apache/arrow-adbc/go/adbc v1.12.0
+github.com/apache/arrow-adbc/go/adbc v1.13.0
 ================================================================================
 
 
@@ -1539,7 +1539,7 @@ github.com/go-logr/stdr v1.2.2
    limitations under the License.
 
 ================================================================================
-github.com/goccy/go-json v0.11.2
+github.com/goccy/go-json v0.12.0
 ================================================================================
 
 MIT License
@@ -1804,7 +1804,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-github.com/grpc-ecosystem/grpc-gateway/v2 v2.32.0
+github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0
 ================================================================================
 
 Copyright (c) 2015, Gengo, Inc.
@@ -1836,7 +1836,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-github.com/klauspost/compress v1.20.3
+github.com/klauspost/compress v1.20.4
 ================================================================================
 
 Copyright (c) 2012 The Go Authors. All rights reserved.
@@ -4797,7 +4797,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-golang.org/x/net v0.61.0
+golang.org/x/net v0.62.0
 ================================================================================
 
 Copyright 2009 The Go Authors.
@@ -4829,7 +4829,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-golang.org/x/sync v0.24.0
+golang.org/x/sync v0.25.0
 ================================================================================
 
 Copyright 2009 The Go Authors.
@@ -4861,7 +4861,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-golang.org/x/sys v0.49.0
+golang.org/x/sys v0.50.0
 ================================================================================
 
 Copyright 2009 The Go Authors.
@@ -4893,7 +4893,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-golang.org/x/text v0.43.0
+golang.org/x/text v0.44.0
 ================================================================================
 
 Copyright 2009 The Go Authors.
@@ -4925,7 +4925,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941
+google.golang.org/genproto/googleapis/api v0.0.0-20261026165753-2ffab32bce7e
 ================================================================================
 
 
@@ -5132,7 +5132,7 @@ google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941
    limitations under the License.
 
 ================================================================================
-google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941
+google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e
 ================================================================================
 
 
@@ -5339,7 +5339,7 @@ google.golang.org/genproto/googleapis/rpc v0.0.0-20261012220534-4341edf3f941
    limitations under the License.
 
 ================================================================================
-google.golang.org/grpc v1.84.0
+google.golang.org/grpc v1.85.0
 ================================================================================
 
 

@@ -1,0 +1,52 @@
+// Copyright (c) 2026 ADBC Drivers Contributors
+// Copyright (c) 2026 GizmoData LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//         http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// part: metadata
+
+[tags]
+sql-type-name = "TIME"
+caveats = ["DuckDB stores TIME at microsecond precision, rounding a nanosecond value to the nearest microsecond (23:59:59.999999999 becomes 24:00:00, which Arrow time64 cannot hold); this case binds 23:59:59.999999 for the last row."]
+partial-support = true
+
+// part: bind
+
+{"idx": 0, "res": 0}
+{"idx": 1, "res": null}
+{"idx": 2, "res": 49531123456789}
+{"idx": 3, "res": 45045500000000}
+{"idx": 4, "res": 86399999999000}
+
+// part: expected_schema
+
+{
+    "format": "+s",
+    "children": [
+        {
+            "name": "res",
+            "format": "ttu",
+            "flags": [
+                "nullable"
+            ]
+        }
+    ]
+}
+
+// part: expected
+
+{"res": 0}
+{"res": null}
+{"res": 49531123457}
+{"res": 45045500000}
+{"res": 86399999999}
