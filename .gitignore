@@ -16,3 +16,5 @@ __pycache__/
 *.so
 *.dylib
 *.dll
+validation/*.xml
+validation/*.log

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -849,7 +850,7 @@ func (st *statementImpl) ExecuteUpdate(ctx context.Context) (affected int64, err
 }
 
 // executeIngest uploads the bound rows into the target table (§8).
-func (st *statementImpl) executeIngest(ctx context.Context) (int64, error) {
+func (st *statementImpl) executeIngest(ctx context.Context) (n int64, err error) {
 	if err := st.cnxn.requireCapability(protocol.CapabilityIngest, "bulk ingest"); err != nil {
 		return -1, err
 	}
@@ -861,6 +862,12 @@ func (st *statementImpl) executeIngest(ctx context.Context) (int64, error) {
 		return -1, err
 	}
 	defer rows.Release()
+	data := rows.Schema()
+	defer func() {
+		if err != nil {
+			err = st.ingestError(ctx, err, data)
+		}
+	}()
 	ir := protocol.IngestRequest{
 		Table: st.ingest.table, Catalog: st.ingest.catalog, Schema: st.ingest.schema,
 		Mode: st.ingest.mode, Temporary: st.ingest.temporary, QueryTag: st.opts.queryTag,
@@ -897,11 +904,50 @@ func (st *statementImpl) executeIngest(ctx context.Context) (int64, error) {
 		return -1, wrapError(err, "encoding the rows to ingest")
 	}
 	ir.Body = up.body
-	n, err := st.session().Ingest(ctx, ir)
+	n, err = st.session().Ingest(ctx, ir)
 	if err := up.finish(err); err != nil {
 		return -1, wrapError(err, "bulk ingest into "+st.ingest.table)
 	}
 	return n, nil
+}
+
+// ingestError gives err, a failed append (or create_append), the status
+// ALREADY_EXISTS when the data has a column the existing table doesn't: ADBC's
+// status for a table that exists with another schema. The server refuses such
+// an append as a SQL error (INVALID_ARGUMENT), as it does a value that doesn't
+// convert, which stays the data's error. Whether a column is missing is asked
+// (the table's schema), never read from the server's message, and only after
+// a failure. DuckDB binds the data's columns to the table's by name, case
+// insensitively; a table may have columns the data doesn't (they take their
+// defaults).
+func (st *statementImpl) ingestError(ctx context.Context, err error, data *arrow.Schema) error {
+	if errorStatus(err) != adbc.StatusInvalidArgument || data == nil ||
+		(st.ingest.mode != "append" && st.ingest.mode != "create_append") {
+		return err
+	}
+	var catalog, schema *string
+	if st.ingest.catalog != "" {
+		catalog = &st.ingest.catalog
+	}
+	if st.ingest.schema != "" {
+		schema = &st.ingest.schema
+	}
+	if st.ingest.temporary {
+		// DuckDB keeps temporary tables in the temp catalog's main schema.
+		catalog, schema = new("temp"), new("main")
+	}
+	table, terr := st.cnxn.GetTableSchema(ctx, catalog, schema, st.ingest.table)
+	if terr != nil {
+		return err
+	}
+	for _, field := range data.Fields() {
+		if !slices.ContainsFunc(table.Fields(), func(column arrow.Field) bool {
+			return strings.EqualFold(column.Name, field.Name)
+		}) {
+			return withStatus(err, adbc.StatusAlreadyExists)
+		}
+	}
+	return err
 }
 
 // ExecutePartitions runs the query and returns its partitions without reading

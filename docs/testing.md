@@ -7,6 +7,7 @@
 | Go live | `go/chargewire/*_integration_test.go` (tag `integration`) | yes | 103 |
 | Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py`, `test_dbapi_exceptions_unit.py` | no (the C-ABI test needs the built library) | 33 |
 | Python live | `python/tests/test_integration.py`, `test_cancel_integration.py`, `test_polish_integration.py`, `test_error_classes_integration.py` | yes | 95 |
+| ADBC validation (conformance) | `validation/` ([adbc-drivers/validation](https://github.com/adbc-drivers/validation), pinned; a test dependency only) | yes (a Hardcharger server of its own: `validation/README.md`) | 332 passed, 4 skipped, 2 expected failures |
 
 (Test functions; parametrized cases and subtests count once.)
 

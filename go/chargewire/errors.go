@@ -67,6 +67,31 @@ func wrapError(err error, op string) error {
 	return &driverError{adbcErr: adbcErr, cause: err}
 }
 
+// errorStatus is the ADBC status of an error the driver returned (StatusOK
+// for nil or an error that isn't ADBC's).
+func errorStatus(err error) adbc.Status {
+	if adbcErr, ok := errors.AsType[adbc.Error](err); ok {
+		return adbcErr.Code
+	}
+	return adbc.StatusOK
+}
+
+// withStatus returns err with another ADBC status; its message, SQLSTATE,
+// details and cause stay. An error that isn't the driver's is returned as it
+// is.
+func withStatus(err error, code adbc.Status) error {
+	if de, ok := errors.AsType[*driverError](err); ok {
+		changed := *de
+		changed.adbcErr.Code = code
+		return &changed
+	}
+	if adbcErr, ok := errors.AsType[adbc.Error](err); ok {
+		adbcErr.Code = code
+		return adbcErr
+	}
+	return err
+}
+
 // driverError is an adbc.Error that keeps the error it was made from.
 type driverError struct {
 	adbcErr adbc.Error

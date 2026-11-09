@@ -4,12 +4,14 @@ package chargewire
 
 import (
 	"context"
+	"net/url"
 	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
 	"github.com/apache/arrow-adbc/go/adbc"
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/gizmodata/chargewire-adbc/go/v2/internal/protocol"
 )
 
@@ -135,14 +137,87 @@ func (c *connectionImpl) GetCurrentDbSchema(ctx context.Context) (string, error)
 	return c.sessionOption(ctx, "schema")
 }
 
-// SetCurrentCatalog implements driverbase.CurrentNamespacer.
+// SetCurrentCatalog implements driverbase.CurrentNamespacer. A catalog that
+// doesn't exist is NOT_FOUND.
 func (c *connectionImpl) SetCurrentCatalog(ctx context.Context, catalog string) error {
-	return wrapError(c.session.SetOptions(ctx, map[string]any{"catalog": catalog}), "setting the current catalog")
+	err := wrapError(c.session.SetOptions(ctx, map[string]any{"catalog": catalog}), "setting the current catalog")
+	if errorStatus(err) != adbc.StatusInvalidArgument {
+		return err
+	}
+	return c.notFoundUnless(ctx, err, func() (bool, error) { return c.catalogExists(ctx, catalog) })
 }
 
-// SetCurrentDbSchema implements driverbase.CurrentNamespacer.
+// SetCurrentDbSchema implements driverbase.CurrentNamespacer. A schema that
+// doesn't exist in the current catalog is NOT_FOUND.
 func (c *connectionImpl) SetCurrentDbSchema(ctx context.Context, schema string) error {
-	return wrapError(c.session.SetOptions(ctx, map[string]any{"schema": schema}), "setting the current schema")
+	err := wrapError(c.session.SetOptions(ctx, map[string]any{"schema": schema}), "setting the current schema")
+	if errorStatus(err) != adbc.StatusInvalidArgument {
+		return err
+	}
+	return c.notFoundUnless(ctx, err, func() (bool, error) {
+		catalog, cerr := c.sessionOption(ctx, "catalog")
+		if cerr != nil {
+			return false, cerr
+		}
+		return c.schemaExists(ctx, catalog, schema)
+	})
+}
+
+// notFoundUnless gives err, the server's refusal of a current catalog or
+// schema (an invalid argument), the status NOT_FOUND when the metadata
+// endpoints say the name doesn't exist. Whether it exists is asked, never read
+// from the server's message; when asking fails, err stays as it is.
+func (c *connectionImpl) notFoundUnless(ctx context.Context, err error, exists func() (bool, error)) error {
+	found, cerr := exists()
+	if cerr != nil || found {
+		return err
+	}
+	return withStatus(err, adbc.StatusNotFound)
+}
+
+// catalogExists reports whether the catalogs endpoint lists catalog by
+// exactly that name.
+func (c *connectionImpl) catalogExists(ctx context.Context, catalog string) (bool, error) {
+	found := false
+	err := c.readMetadata(ctx, "catalogs", nil, func(rec arrow.RecordBatch) error {
+		names, err := stringColumn(rec, "catalog_name")
+		if err != nil {
+			return err
+		}
+		for i := range names.Len() {
+			if !names.IsNull(i) && names.Value(i) == catalog {
+				found = true
+			}
+		}
+		return nil
+	})
+	return found, err
+}
+
+// schemaExists reports whether the db-schemas endpoint lists schema in
+// catalog by exactly those names (the endpoint's filter is a pattern, so the
+// name is escaped and the rows compared).
+func (c *connectionImpl) schemaExists(ctx context.Context, catalog, schema string) (bool, error) {
+	found := false
+	query := url.Values{}
+	query.Set("db_schema_filter_pattern", escapeLike(schema))
+	err := c.readMetadata(ctx, "db-schemas", query, func(rec arrow.RecordBatch) error {
+		catalogs, err := stringColumn(rec, "catalog_name")
+		if err != nil {
+			return err
+		}
+		schemas, err := stringColumn(rec, "db_schema_name")
+		if err != nil {
+			return err
+		}
+		for i := range schemas.Len() {
+			if !catalogs.IsNull(i) && catalogs.Value(i) == catalog && !schemas.IsNull(i) && schemas.Value(i) == schema {
+				found = true
+			}
+		}
+		return nil
+	})
+	return found, err
 }
 
 // sessionOption reads one option from the server's session document, which

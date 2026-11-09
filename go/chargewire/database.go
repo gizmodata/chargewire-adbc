@@ -116,6 +116,11 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 		return d.ErrorHelper.InvalidArgument("option %s is read-only", key)
 	}
 	if d.opened() {
+		if !databaseOptionKeys[key] {
+			// An option the driver doesn't know is NOT_IMPLEMENTED at any
+			// time; "too late" would say it exists.
+			return d.DatabaseImplBase.SetOption(ctx, key, value)
+		}
 		return d.ErrorHelper.InvalidState("option %s must be set before the first connection is opened", key)
 	}
 	switch key {
@@ -199,6 +204,18 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 		return d.DatabaseImplBase.SetOption(ctx, key, value)
 	}
 	return nil
+}
+
+// databaseOptionKeys are the options SetOption takes until the first
+// connection opens (its switch below the opened check): once one has, they
+// are INVALID_STATE, and every other key is NOT_IMPLEMENTED.
+var databaseOptionKeys = map[string]bool{
+	adbc.OptionKeyURI: true, adbc.OptionKeyUsername: true, adbc.OptionKeyPassword: true,
+	OptionAuthType: true, OptionOAuthBrowser: true, OptionOAuthTimeoutSeconds: true,
+	OptionAccessToken: true, OptionSubjectToken: true,
+	OptionTLSSkipVerify: true, OptionTLSRootCerts: true, OptionTLSClientCert: true, OptionTLSClientKey: true,
+	OptionTLSServerName: true, OptionRetryMaxAttempts: true, OptionResumeTimeout: true,
+	OptionSessionReconnect: true, OptionSessionID: true, OptionSessionCloseOnRelease: true,
 }
 
 func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error) {

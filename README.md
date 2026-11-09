@@ -49,7 +49,7 @@ pip install adbc-driver-chargewire
 ```
 
 The wheel carries the driver's shared library for Linux (amd64, arm64; glibc 2.17 or newer),
-macOS (arm64, amd64) and Windows (amd64). Go applications `go get
+macOS 13 or newer (arm64, amd64) and Windows (amd64). Go applications `go get
 github.com/gizmodata/chargewire-adbc/go/v2` (the module is versioned by `go/vX.Y.Z` tags, one per
 release, on the release's commit). Every other ADBC language loads the library from a
 [GitHub Release](https://github.com/gizmodata/chargewire-adbc/releases) through a driver manifest
@@ -469,7 +469,9 @@ pytest python/tests                 # everything, Python
 ```
 
 Without the variable they fail; they never skip, and a run in which no integration test
-ran fails too. See [docs/testing.md](docs/testing.md) for what is tested and what was not
+ran fails too. The ADBC validation (conformance) suite runs from `validation/` against a server
+of its own; [validation/README.md](validation/README.md) says how. The shared library exports only
+the ADBC entrypoints (`Adbc*`); `make -C go lib` checks that with `go/internal/checkexports`. See [docs/testing.md](docs/testing.md) for what is tested and what was not
 ported from gizmosql-adbc.
 
 ## 🚢 Releasing
