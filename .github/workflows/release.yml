@@ -191,7 +191,14 @@ jobs:
         if: matrix.platform == 'linux_amd64'
         run: |
           docker run --rm -v "$PWD/python/dist:/dist:ro" -v "$PWD/python/tests:/tests:ro" oraclelinux:8 bash -euc '
-            dnf -y -q install python3.12 python3.12-pip >/dev/null
+            # A mirror can serve a broken repomd.xml, which dnf (even with --setopt=retries)
+            # fetches once and gives up on: retry the install with fresh metadata.
+            for i in 1 2 3 4 5; do
+              if dnf -y -q install python3.12 python3.12-pip >/dev/null; then break; fi
+              if [ "$i" -eq 5 ]; then echo "::error::dnf install failed 5 times"; exit 1; fi
+              dnf clean metadata || true
+              sleep $((i * 15))
+            done
             python3.12 -m venv /venv
             /venv/bin/pip install -q /dist/*.whl pytest
             cd / && /venv/bin/python -m pytest -q -p no:cacheprovider /tests/test_c_abi_unit.py'
