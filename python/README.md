@@ -1,5 +1,7 @@
 # adbc-driver-chargewire
 
+[![ADBC conformance](https://img.shields.io/badge/ADBC-conformance%20suite%20passing-2ea44f.svg)](https://github.com/gizmodata/chargewire-adbc/blob/main/validation/README.md)
+
 A Python [ADBC](https://arrow.apache.org/adbc/) driver for the
 [Chargewire protocol](https://github.com/gizmodata/chargewire): SQL over plain HTTP, with
 results, parameters and bulk uploads as Arrow IPC streams. It is generic: it talks to any
