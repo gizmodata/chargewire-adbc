@@ -53,12 +53,14 @@ test:
 integration-test:
 	go test -race -tags integration -count=1 ./...
 
-# Regenerate the cgo exports (needs goimports and clang-format on PATH).
+# Regenerate the cgo exports (needs goimports and clang-format on PATH), then re-apply the one
+# change this repository makes to them (scripts/patch_generated_exports.py).
 regenerate:
 	mkdir -p chargewire/pkg
 	cd "$$(go mod download -json $(FFITEMPLATE) | sed -n 's/.*"Dir": "\(.*\)",/\1/p')" && \
 		GOFLAGS=-mod=mod go run . -prefix Chargewire -driver $(CURDIR)/chargewire -in ./_tmpl
 	for f in driver.go utils.c utils.h; do install -m 644 chargewire/pkg/$$f pkg/chargewire/$$f; done
+	python3 ../scripts/patch_generated_exports.py
 	rm -rf chargewire/pkg
 
 clean:

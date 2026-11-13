@@ -6,9 +6,60 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-13
+
 ### Changed
 
 - **CI**: a change that touches only documentation (`*.md`, `docs/`, `LICENSE`, `NOTICE`) skips the build and test jobs, and one job, `CI result`, reports on every run and is the only required check. The glibc-2.28 install check retries `dnf install` with fresh metadata, so a mirror serving a broken `repomd.xml` can't fail a build.
+- **Python 3.10, pyarrow 16 and adbc-driver-manager 1.8 are supported**: the Python package
+  requires Python 3.10 or newer (was 3.11), `pyarrow>=16.0.0` (was 26.0.1) and
+  `adbc-driver-manager>=1.8.0` (was 1.13.0). These are the floors of
+  [dlt](https://github.com/dlt-hub/dlt), which supports Python 3.10 to 3.14, so the driver installs
+  wherever dlt does and doesn't force its locked versions up. The wheels were always `py3-none`;
+  only the declared floors kept the package off Python 3.10. Two things in the DB-API layer
+  needed adbc-driver-manager 1.9.0 and 1.10.0 and now work with 1.8.0 too: creating a cursor, and
+  `conn.close()` closing the cursors the connection still has open. Connection profiles
+  (`connect(profile=...)`, `profile://`) are the driver manager's own feature from 1.11.0: with an
+  older one the option reaches the driver, which now says so (`connection profiles are resolved
+  by the ADBC driver manager, from its version 1.11.0 …`) instead of `Unknown database option
+  'profile'`. Python 3.13 needs pyarrow 18, 3.14 needs pyarrow 22, and 3.15 needs pyarrow 26.0.1
+  and adbc-driver-manager 1.13.0 (their first wheels for it); pip picks those by itself.
+- **CI** runs the whole Python suite, unit and live, at both ends: Python 3.10 with exactly the
+  lowest versions `pyproject.toml` allows (the job fails if what got installed is not the floors),
+  and Python 3.15 with the latest. Both are part of the release gate.
+
+### Fixed
+
+- **A catalog and a schema given together when connecting name that catalog's schema**: Python
+  `connect(catalog="lake", db_schema="reports")`, and any ADBC client that sets
+  `adbc.connection.catalog` and `adbc.connection.db_schema` before `AdbcConnectionInit`. The
+  library applied the options set before a connection opens in the order of a Go map, which is
+  random, so most connects set the schema first (33 of 40 in a run against 2.2.10). The schema was
+  then looked up in the server's default catalog: one that only the requested catalog has failed
+  the connect (`NOT_FOUND … No catalog + schema named "memory.reports" found`), and one that the
+  default catalog has too was set there and lost again when the catalog was set, so the connection
+  opened in the requested catalog's `main` without an error. Every release since 1.0.0 did this;
+  either option alone was not affected. The options are now applied in a fixed order: the catalog,
+  the schema, then the others by name (`chargewire.InitOptionOrder`, for drivers built on this one
+  to call from their own generated entry points). `make -C go regenerate` keeps the change
+  (`scripts/patch_generated_exports.py`), and a unit test fails when the generated file loses it.
+  The server was never at fault: it applies one options document that carries both in the right
+  order, whichever key comes first.
+- **`db_schema="lake.reports"` says what to do instead**. The current schema is one schema name
+  in the current catalog and is never split at a dot, because a dot can be part of a schema's name
+  (`CREATE SCHEMA "sales.emea"`), so this names a schema called `lake.reports`. When there is none
+  but `lake` is a catalog, the `NOT_FOUND` error now adds: set the current catalog to `lake` and
+  the current schema to `reports`.
+- **A session that replaces a lost one opens where the lost one was** after the current schema
+  and then the current catalog were set on a connection (`conn.adbc_current_db_schema = "raw"`,
+  then `conn.adbc_current_catalog = "lake"`). Setting the catalog moves the session to that
+  catalog's default schema, as SQL `USE` does, but the driver still remembered the schema and
+  replayed both: the replacement opened in `lake.raw` when `lake` has a schema of that name, so
+  later statements ran in another schema than before the loss, without an error; when it has
+  none, every request from then on failed (`No catalog + schema named "lake.raw" found`) and the
+  connection was unusable. The driver now forgets the schema when the catalog is set without one,
+  on an open session and on one that isn't open yet (a stopped server's lazy connection), so both
+  keep the order of what was set on them.
 
 ## [2.2.10] - 2026-11-09
 

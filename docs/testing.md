@@ -2,14 +2,23 @@
 
 | Suite | Where | Needs a server | Tests |
 |---|---|---|---|
-| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake; a TLS one for the certificate_required alert) | 65 |
-| Go driver unit | `go/chargewire/*_test.go` without the `integration` tag (`unit_test.go`, `errors_unit_test.go`, `fakeserver_test.go`, `attach_unit_test.go`, `hook_unit_test.go`, `resume_unit_test.go`, `browser_unit_test.go`, `mtls_unit_test.go`, `token_unit_test.go`, …) | no (in-process fakes; a TLS one for certificate sign-in) | 75 |
-| Go live | `go/chargewire/*_integration_test.go` (tag `integration`) | yes | 103 |
-| Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py`, `test_dbapi_exceptions_unit.py` | no (the C-ABI test needs the built library) | 33 |
-| Python live | `python/tests/test_integration.py`, `test_cancel_integration.py`, `test_polish_integration.py`, `test_error_classes_integration.py` | yes | 95 |
+| Go protocol unit | `go/internal/protocol/*_test.go` | no (httptest fake; a TLS one for the certificate_required alert) | 78 |
+| Go driver unit | `go/chargewire/*_test.go` without the `integration` tag (`unit_test.go`, `errors_unit_test.go`, `fakeserver_test.go`, `attach_unit_test.go`, `hook_unit_test.go`, `resume_unit_test.go`, `browser_unit_test.go`, `mtls_unit_test.go`, `token_unit_test.go`, …) | no (in-process fakes; a TLS one for certificate sign-in) | 96 |
+| Go live | `go/chargewire/*_integration_test.go` (tag `integration`) | yes | 124 |
+| Python unit | `python/tests/test_connect_unit.py`, `test_c_abi_unit.py`, `test_dbapi_exceptions_unit.py`, `test_lazy_connect_unit.py`, `test_resume_unit.py` | no (the C-ABI test needs the built library) | 39 |
+| Python live | `python/tests/test_integration.py`, `test_cancel_integration.py`, `test_polish_integration.py`, `test_error_classes_integration.py`, `test_browser_integration.py`, `test_legacy_integration.py` | yes | 113 |
 | ADBC validation (conformance) | `validation/` ([adbc-drivers/validation](https://github.com/adbc-drivers/validation), pinned; a test dependency only) | yes (a Hardcharger server of its own: `validation/README.md`) | 332 passed, 4 skipped, 2 expected failures |
 
 (Test functions; parametrized cases and subtests count once.)
+
+CI runs the Python suites three times: on Python 3.14 beside the Go suites, and in the `python`
+job on Python 3.10 with exactly the lowest dependency versions `python/pyproject.toml` allows
+(`uv pip install --resolution lowest-direct` into a new environment; an existing one keeps the
+newer versions it has) and on Python 3.15 with the latest. The lowest entry first checks that
+what is installed is the floors. With an adbc-driver-manager before 1.11.0 the connection-profile
+tests (`TestConnectionProfiles`) are skipped, since that driver manager has no profiles, and
+`TestConnectionProfilesNeedDriverManager111` runs in their place: the driver's refusal names the
+version that resolves them. With a newer one it is the other way round.
 
 The live suites start the binary named by `CHARGEWIRE_ADBC_TEST_SERVER_BINARY` on free ports,
 with a fresh password containing `:` and `@`: one shared plain-HTTP server, plus servers of

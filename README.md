@@ -49,6 +49,9 @@ implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and Ja
 pip install adbc-driver-chargewire
 ```
 
+The Python package needs Python 3.10 or newer, with pyarrow 16.0.0+ and adbc-driver-manager
+1.8.0+ (pip installs both; connection profiles need adbc-driver-manager 1.11.0+). CI runs its
+suite on Python 3.10 with exactly those versions and on Python 3.15 with the latest.
 The wheel carries the driver's shared library for Linux (amd64, arm64; glibc 2.17 or newer),
 macOS 13 or newer (arm64, amd64) and Windows (amd64). Go applications `go get
 github.com/gizmodata/chargewire-adbc/go/v2` (the module is versioned by `go/vX.Y.Z` tags, one per
@@ -243,6 +246,17 @@ Read-only on a connection: `adbc.chargewire.session.id`, `adbc.chargewire.sessio
 `none`, `open`, `aborted`, or `unknown`),
 `adbc.chargewire.statement.id` (the statement's last execution). Bulk ingest uses the standard
 `adbc.ingest.*` options; the transaction options are the standard ones.
+
+The current catalog and schema are the standard `adbc.connection.catalog` and
+`adbc.connection.db_schema` options (Python: `catalog=` and `db_schema=` in `connect()`, and
+`conn.adbc_current_catalog` / `conn.adbc_current_db_schema`). The schema is one schema name,
+looked up in the current catalog. It is never split at a dot, because a dot can be part of a
+schema's name (`CREATE SCHEMA "sales.emea"`): `lake.reports` names a schema called `lake.reports`,
+and the schema `reports` of the catalog `lake` is the catalog `lake` plus the schema `reports`.
+Given together before the connection opens (in `connect()`, or with `AdbcConnectionSetOption`
+before `AdbcConnectionInit`), the catalog is applied first, whatever order they were given in. On
+an open connection each takes effect when it is set, and setting the catalog moves to that
+catalog's default schema, as SQL `USE` does: set the catalog, then the schema.
 
 ### Reading the access token
 
@@ -448,7 +462,7 @@ Route by something both clients send, or connect both to the instance's own addr
 
 ## 🛠️ Building and testing
 
-Go 1.27, a C toolchain for cgo, and Python 3.11+ for the bindings.
+Go 1.27, a C toolchain for cgo, and Python 3.10+ for the bindings.
 
 ```bash
 make -C go lib                      # go/build/libadbc_driver_chargewire.{so,dylib,dll}

@@ -10,6 +10,9 @@ Chargewire server.
 The driver itself is a native Go library (`libadbc_driver_chargewire`) bundled in the
 platform wheel; this package adds a DB-API 2.0 `connect()`.
 
+It needs Python 3.10 or newer, with pyarrow 16.0.0+ and adbc-driver-manager 1.8.0+, which pip
+installs with it.
+
 ## Usage
 
 ```python
@@ -42,9 +45,9 @@ with dbapi.connect(
 | `tls_root_certs` | CA certificates to trust (PEM text or file path). |
 | `tls_client_cert`, `tls_client_key` | Client certificate for mutual TLS (PEM text or path). |
 | `tls_skip_verify` | Skip certificate verification (development only; off unless set). |
-| `catalog`, `db_schema` | Make these current for the session. |
+| `catalog`, `db_schema` | Make these current for the session. `db_schema` is one schema name in `catalog` (in the server's default catalog without it) and is never split at a dot: for the schema `reports` of the catalog `lake`, pass `catalog="lake", db_schema="reports"`. |
 | `autocommit` | `True` by default; `False` starts a transaction (`conn.commit()`, `conn.rollback()`). |
-| `profile` | An ADBC connection profile. |
+| `profile` | An ADBC connection profile (needs adbc-driver-manager 1.11.0 or newer, which resolves it). |
 | `db_kwargs`, `conn_kwargs` | Any other driver option, e.g. `adbc.chargewire.statement.async`. |
 
 Driver options are in `adbc_driver_chargewire.DatabaseOptions`, `ConnectionOptions` and

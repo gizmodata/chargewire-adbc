@@ -1,9 +1,10 @@
 name: chargewire-adbc-ci
 
 # Unit tests, the C shared library on every platform and its exports (only Adbc*,
-# go/internal/checkexports), the Python bindings, the live-server suites (Go and Python) and the
-# ADBC validation (conformance) suite (validation/) against hardcharger-server. Also the release
-# gate: release.yml calls it on the tagged commit.
+# go/internal/checkexports), the Python bindings, the live-server suites (Go and Python), the
+# Python suite at both ends of what the package supports (Python 3.10 with the lowest dependency
+# versions, Python 3.15 with the latest) and the ADBC validation (conformance) suite (validation/)
+# against hardcharger-server. Also the release gate: release.yml calls it on the tagged commit.
 #
 # The live suites' server comes from the image ghcr.io/gizmodata/hardcharger, pulled with this
 # workflow's GITHUB_TOKEN. While the image is private that works only once the package grants
@@ -277,6 +278,96 @@ jobs:
           pip install -e ".[test]"
           python -m pytest -v tests
 
+  # The Python suite (unit and live) at both ends of what python/pyproject.toml declares:
+  # Python 3.10 with exactly the lowest versions it allows (uv's lowest-direct resolution: the
+  # floors are dlt's, see the comments next to them), and Python 3.15 with the latest. The lowest
+  # entry fails when what got installed is not the floors, so the floors can't drift from what is
+  # tested. On an Arm runner (the server image has both architectures).
+  python:
+    name: python ${{ matrix.python }}, ${{ matrix.versions }} versions (live, against hardcharger-server)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.10"
+            versions: lowest
+            resolution: lowest-direct
+          - python: "3.15"
+            versions: latest
+            resolution: highest
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: read  # the server image
+    env:
+      CHARGEWIRE_ADBC_TEST_SERVER_PASSWORD_ENV: HARDCHARGER_ADMIN_PASSWORD
+      CHARGEWIRE_ADBC_TEST_SERVER_MTLS_FLAG: --mtls-ca-cert
+      CHARGEWIRE_ADBC_TEST_SERVER_USERNAME_FLAG: --admin-username
+      CHARGEWIRE_ADBC_TEST_SERVER_NAME: Hardcharger
+      CHARGEWIRE_ADBC_TEST_SERVER_IDLE_IN_TRANSACTION_FLAG: --idle-in-transaction-session-timeout
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: hardcharger-server from the image
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          if ! docker pull -q "$HARDCHARGER_IMAGE"; then
+            echo "::error::can't pull $HARDCHARGER_IMAGE with this workflow's GITHUB_TOKEN"
+            exit 1
+          fi
+          id=$(docker create "$HARDCHARGER_IMAGE")
+          docker cp "$id:/opt/hardcharger" "$RUNNER_TEMP/hardcharger"
+          docker rm "$id" >/dev/null
+          binary="$RUNNER_TEMP/hardcharger/bin/hardcharger-server"
+          "$binary" --version
+          echo "CHARGEWIRE_ADBC_TEST_SERVER_BINARY=$binary" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Build the shared library
+        run: scripts/build_lib.sh
+
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Install (Python ${{ matrix.python }}, ${{ matrix.versions }} versions)
+        working-directory: python
+        run: |
+          uv venv .venv --python "${{ matrix.python }}"
+          uv pip install --python .venv/bin/python --resolution "${{ matrix.resolution }}" -e ".[test]"
+          uv pip list --python .venv/bin/python
+      - name: What is installed is exactly the floors in pyproject.toml
+        if: matrix.versions == 'lowest'
+        working-directory: python
+        run: |
+          set -euo pipefail
+          for package in adbc-driver-manager pyarrow; do
+            floor=$(sed -n "s/^ *\"$package>=\([0-9.]*\)\".*/\1/p" pyproject.toml)
+            have=$(uv pip show --python .venv/bin/python "$package" | sed -n 's/^Version: //p')
+            echo "$package: floor ${floor:-none found}, installed ${have:-nothing}"
+            if [ -z "$floor" ] || [ "$floor" != "$have" ]; then
+              echo "::error::$package: pyproject.toml's floor is '${floor}', but '${have}' is installed"
+              exit 1
+            fi
+          done
+          have=$(.venv/bin/python -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+          floor=$(sed -n 's/^requires-python = ">=\([0-9.]*\)".*/\1/p' pyproject.toml)
+          echo "python: floor ${floor:-none found}, running $have"
+          if [ -z "$floor" ] || [ "$floor" != "$have" ]; then
+            echo "::error::requires-python's floor is '${floor}', but this job runs Python $have"
+            exit 1
+          fi
+      - name: Python suite (unit and live)
+        working-directory: python
+        run: .venv/bin/python -m pytest -v -rs tests
+
   # The ADBC validation (conformance) suite (validation/; pinned in validation/requirements.txt,
   # a test dependency only), against a server whose catalog is `validation`, through the library
   # built as for a release. It fails, never skips, without its server; the first run proves that
@@ -382,7 +473,7 @@ jobs:
   ci-result:
     name: CI result
     if: always()
-    needs: [changes, go, lib, live, validation]
+    needs: [changes, go, lib, live, python, validation]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed, or was skipped for a documentation-only change

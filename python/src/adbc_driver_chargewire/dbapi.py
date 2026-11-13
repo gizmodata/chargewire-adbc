@@ -24,6 +24,8 @@ With mutual TLS, the client certificate can be the credential itself::
 from __future__ import annotations
 
 import os
+import warnings
+import weakref
 from typing import Any, Optional, Union
 
 import adbc_driver_manager
@@ -60,6 +62,13 @@ from ._driver import _driver_path
 from ._options import DatabaseOptions
 
 PemSource = Union[str, bytes, "os.PathLike[str]"]
+
+# (major, minor) of the installed adbc-driver-manager. 1.8.0, this package's floor, differs from
+# later ones in two ways that matter here: its Cursor has no ``dbapi_backend`` argument (1.9.0
+# added it; before, a cursor reads the backend from its connection), and its Connection doesn't
+# keep its cursors and close them in close() (1.10.0 does; before, closing a connection with an
+# open cursor raised).
+_DRIVER_MANAGER = tuple(int(part) for part in adbc_driver_manager.__version__.split(".")[:2])
 
 
 class Cursor(_BaseCursor):
@@ -124,9 +133,28 @@ class Connection(_BaseConnection):
 
     def cursor(self, *, adbc_stmt_kwargs: Optional[dict[str, Any]] = None) -> Cursor:
         """Create a new :class:`Cursor`."""
-        cursor = Cursor(conn=self, adbc_stmt_kwargs=adbc_stmt_kwargs, dbapi_backend=self._backend)
+        backend = {"dbapi_backend": self._backend} if _DRIVER_MANAGER >= (1, 9) else {}
+        cursor = Cursor(conn=self, adbc_stmt_kwargs=adbc_stmt_kwargs, **backend)
+        if _DRIVER_MANAGER < (1, 10) and not hasattr(self, "_cursors"):
+            self._cursors = weakref.WeakSet()
         self._cursors.add(cursor)
         return cursor
+
+    def close(self) -> None:
+        """Close the connection, after the cursors it still has open."""
+        if _DRIVER_MANAGER < (1, 10) and not self._closed:
+            # What adbc-driver-manager does itself from 1.10.0, the same way: a cursor that
+            # fails to close is a warning, and the connection still closes.
+            for cursor in list(getattr(self, "_cursors", ())):
+                try:
+                    cursor.close()
+                except Exception as error:  # noqa: BLE001
+                    warnings.warn(
+                        message=f"Failed to close cursor: {error}",
+                        category=ResourceWarning,
+                        stacklevel=2,
+                    )
+        super().close()
 
 
 def _pem(value: PemSource) -> str:
@@ -197,7 +225,9 @@ def connect(
         tls_client_key: The client certificate's private key (PEM text or
             path).
         catalog: Catalog to make current for the session.
-        db_schema: Schema to make current for the session.
+        db_schema: Schema to make current for the session: one schema name in
+            ``catalog`` (in the server's default catalog without it), never a
+            ``catalog.schema`` path (a dot can be part of a schema's name).
         db_kwargs: Extra ADBC database options (``adbc.chargewire.*``, telemetry).
         conn_kwargs: Extra ADBC connection options.
         autocommit: Enable autocommit (default True).

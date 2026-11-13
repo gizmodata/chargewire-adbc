@@ -249,6 +249,68 @@ func TestIntegrationLostSessionIsReplaced(t *testing.T) {
 	}
 }
 
+// The replacement opens where the lost session was. Setting the catalog moves
+// to its default schema, so a schema set before the catalog is not replayed:
+// it used to put the replacement in a schema of that name in the new catalog,
+// or, when the new catalog has none, fail every request from then on. A
+// refused catalog leaves the session, and what is replayed, where it was.
+func TestIntegrationLostSessionIsReplacedWhereItWas(t *testing.T) {
+	ctx := context.Background()
+	setup := openConn(t)
+	execUpdate(t, setup, "ATTACH IF NOT EXISTS ':memory:' AS replay_where; "+
+		"CREATE SCHEMA IF NOT EXISTS replay_both; CREATE SCHEMA IF NOT EXISTS replay_where.replay_both; "+
+		"CREATE SCHEMA IF NOT EXISTS replay_only_default")
+	where := func(t *testing.T, cnxn adbc.ConnectionWithContext) string {
+		t.Helper()
+		catalog, err := cnxn.(optionConn).GetOption(ctx, adbc.OptionKeyCurrentCatalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		schema, err := cnxn.(optionConn).GetOption(ctx, adbc.OptionKeyCurrentDbSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return catalog + "." + schema
+	}
+	for _, tc := range []struct {
+		name            string
+		schema, catalog string
+		refused         bool
+		want            string
+	}{
+		{"a schema both catalogs have", "replay_both", "replay_where", false, "replay_where.main"},
+		{"a schema only the catalog before has", "replay_only_default", "replay_where", false, "replay_where.main"},
+		{"a catalog the server refuses", "replay_both", "replay_no_such_catalog", true, "memory.replay_both"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cnxn := openConn(t)
+			options := cnxn.(optionConn)
+			if err := options.SetOption(ctx, adbc.OptionKeyCurrentDbSchema, tc.schema); err != nil {
+				t.Fatal(err)
+			}
+			err := options.SetOption(ctx, adbc.OptionKeyCurrentCatalog, tc.catalog)
+			if tc.refused {
+				assertStatus(t, err, adbc.StatusNotFound, "invalid_option_value")
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if got := where(t, cnxn); got != tc.want {
+				t.Fatalf("before the loss the session is in %s, want %s", got, tc.want)
+			}
+			killSession(t, cnxn)
+			if got := scalarInt(t, cnxn, "SELECT 5"); got != 5 {
+				t.Fatalf("got %d", got)
+			}
+			if got := replacements(t, cnxn); got != "1" {
+				t.Fatalf("replacements = %s, want 1", got)
+			}
+			if got := where(t, cnxn); got != tc.want {
+				t.Fatalf("the replacement session is in %s, the lost one was in %s", got, tc.want)
+			}
+		})
+	}
+}
+
 // What did not survive is said, not hidden: a temporary table is gone, and
 // the error says the session was replaced.
 func TestIntegrationLostSessionTemporaryStateIsReported(t *testing.T) {

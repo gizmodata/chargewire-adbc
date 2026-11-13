@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -177,6 +178,48 @@ func TestLostSessionIsReplacedWithItsOptions(t *testing.T) {
 	replayed := f.created[len(f.created)-1]
 	if replayed["catalog"] != "lake" || replayed["schema"] != "raw" {
 		t.Fatalf("the replacement got options %v", replayed)
+	}
+}
+
+// Setting the catalog without the schema moves the session to that catalog's
+// default schema, so a schema set before it is not replayed: the replacement
+// opens where the lost session was. A schema set with the catalog, or after
+// it, is replayed.
+func TestLostSessionIsReplacedWhereItWas(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		sets []map[string]any
+		want map[string]any
+	}{
+		{"the schema, then the catalog", []map[string]any{{"schema": "raw"}, {"catalog": "pond"}},
+			map[string]any{"catalog": "pond"}},
+		{"the catalog, then the schema", []map[string]any{{"catalog": "pond"}, {"schema": "raw"}},
+			map[string]any{"catalog": "pond", "schema": "raw"}},
+		{"both at once", []map[string]any{{"schema": "old"}, {"catalog": "pond", "schema": "raw"}},
+			map[string]any{"catalog": "pond", "schema": "raw"}},
+		{"the schema, then another option", []map[string]any{{"schema": "raw"}, {"time_zone": "UTC"}},
+			map[string]any{"catalog": "lake", "schema": "raw", "time_zone": "UTC"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFake(t).withSessions()
+			session := openTestSession(t, f, true)
+			for _, options := range tc.sets {
+				if err := session.SetOptions(ctx, options); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.evict()
+			if err := submitUpdate(t, session); err != nil {
+				t.Fatalf("Submit after eviction: %v", err)
+			}
+			if session.Replacements() != 1 {
+				t.Fatalf("%d replacements, want 1", session.Replacements())
+			}
+			if replayed := f.created[len(f.created)-1]; !maps.Equal(replayed, tc.want) {
+				t.Fatalf("the replacement got options %v, want %v", replayed, tc.want)
+			}
+		})
 	}
 }
 
