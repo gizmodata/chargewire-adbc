@@ -32,6 +32,16 @@ All notable changes to this project are documented here. The format follows
   (`CREATE SCHEMA "sales.emea"`), so this names a schema called `lake.reports`. When there is none
   but `lake` is a catalog, the `NOT_FOUND` error now adds: set the current catalog to `lake` and
   the current schema to `reports`.
+- **A session that replaces a lost one opens where the lost one was** after the current schema
+  and then the current catalog were set on a connection (`conn.adbc_current_db_schema = "raw"`,
+  then `conn.adbc_current_catalog = "lake"`). Setting the catalog moves the session to that
+  catalog's default schema, as SQL `USE` does, but the driver still remembered the schema and
+  replayed both: the replacement opened in `lake.raw` when `lake` has a schema of that name, so
+  later statements ran in another schema than before the loss, without an error; when it has
+  none, every request from then on failed (`No catalog + schema named "lake.raw" found`) and the
+  connection was unusable. The driver now forgets the schema when the catalog is set without one,
+  on an open session and on one that isn't open yet (a stopped server's lazy connection), so both
+  keep the order of what was set on them.
 
 ## [2.2.10] - 2026-11-09
 

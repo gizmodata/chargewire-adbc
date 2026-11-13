@@ -830,10 +830,17 @@ func (e *OptionError) Unwrap() error { return e.Problem }
 // took, to replay them on a replacement session. On a pending session
 // (NewLazySession) they are kept and sent with the request that opens it,
 // which fails if the server refuses one.
+//
+// Setting the catalog without the schema moves the session to that catalog's
+// default schema, as SQL USE does, so a schema remembered from before is
+// forgotten: replayed, it would open a replacement session in a schema of
+// that name in the new catalog instead of where the lost session was, or
+// fail every replacement when the new catalog has no such schema.
 func (s *Session) SetOptions(ctx context.Context, options map[string]any) error {
 	s.mu.Lock()
 	if s.pending && !s.closed {
 		maps.Copy(s.options, options)
+		forgetSchemaOfTheCatalogBefore(s.options, options, nil)
 		s.mu.Unlock()
 		return nil
 	}
@@ -863,6 +870,7 @@ func (s *Session) SetOptions(ctx context.Context, options map[string]any) error 
 			}
 		}
 	}
+	forgetSchemaOfTheCatalogBefore(s.options, options, result.Errors)
 	s.mu.Unlock()
 	if len(result.Errors) == 0 {
 		return nil
@@ -877,6 +885,21 @@ func (s *Session) SetOptions(ctx context.Context, options map[string]any) error 
 		problem.Status = http.StatusBadRequest
 	}
 	return &OptionError{Key: keys[0], Problem: &problem}
+}
+
+// forgetSchemaOfTheCatalogBefore drops the schema from remembered, the options
+// a replacement session is opened with, when set changed the catalog (the
+// server took it) without setting a schema with it that the server took too:
+// the session is then in the new catalog's default schema (SetOptions).
+func forgetSchemaOfTheCatalogBefore(remembered, set map[string]any, refused map[string]Problem) {
+	took := func(key string) bool {
+		_, given := set[key]
+		_, no := refused[key]
+		return given && !no
+	}
+	if took("catalog") && !took("schema") {
+		delete(remembered, "schema")
+	}
 }
 
 // errSessionClosed is a request on a session the driver already closed.

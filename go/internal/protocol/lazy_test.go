@@ -5,6 +5,7 @@ package protocol
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/url"
 	"slices"
 	"sync"
@@ -55,6 +56,42 @@ func TestLazySessionSendsNothingUntilWork(t *testing.T) {
 	}
 	if sent := f.sent(); !slices.Equal(sent, []string{"GET /chargewire"}) {
 		t.Fatalf("requests %v, want the discovery request only", sent)
+	}
+}
+
+// A session that isn't open yet keeps the order of what was set on it, like
+// an open one: the catalog set after the schema moves to that catalog's
+// default schema, so the schema is not sent with the request that opens the
+// session; set after the catalog, it is.
+func TestLazySessionCatalogAfterSchemaForgetsTheSchema(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sets []map[string]any
+		want map[string]any
+	}{
+		{"the schema, then the catalog", []map[string]any{{"schema": "raw"}, {"catalog": "pond"}},
+			map[string]any{"catalog": "pond"}},
+		{"the catalog, then the schema", []map[string]any{{"catalog": "pond"}, {"schema": "raw"}},
+			map[string]any{"catalog": "pond", "schema": "raw"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFake(t).withSessions().withCloses()
+			f.state = ServerStateStopped
+			base, _ := url.Parse(f.server.URL + "/chargewire")
+			client := NewClient(Config{BaseURL: base, Credentials: password, MaxAttempts: 1})
+			session := lazyConnect(t, f, client)
+			for _, options := range tc.sets {
+				if err := session.SetOptions(context.Background(), options); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := submitUpdate(t, session); err != nil {
+				t.Fatalf("first statement: %v", err)
+			}
+			if got := f.created[0]; !maps.Equal(got, tc.want) {
+				t.Fatalf("session opened with options %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
