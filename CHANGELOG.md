@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-11-13
+
+### Fixed
+
+- **The Go driver builds without cgo.** A program that imports
+  `github.com/gizmodata/chargewire-adbc/go/v2/chargewire` and is built with `CGO_ENABLED=0`, as
+  cross-compiled and statically linked Go programs are (a Grafana backend plugin, a `scratch`
+  container image), failed to compile: `chargewire/recycle.go: undefined: mallocator.Mallocator`.
+  The recycler for result bodies wraps arrow-go's C allocator, which exists only with cgo, and the
+  file was compiled either way. It is now the cgo build's, and a build without cgo allocates
+  bodies from the allocator it is given (a Go allocator reuses memory already). Nothing changes
+  for a cgo build, the C shared library or the Python package. Every release so far needed cgo.
+- **CI** builds the Go packages for Linux, macOS and Windows with `CGO_ENABLED=0` and runs their
+  unit tests that way, so this stays true.
+
 ## [2.3.0] - 2026-11-13
 
 ### Changed
