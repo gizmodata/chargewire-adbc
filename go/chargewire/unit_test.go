@@ -407,3 +407,20 @@ func TestNewDriverWithNameReportsTheName(t *testing.T) {
 		_ = db.Close(context.Background())
 	}
 }
+
+// A connection profile is resolved by the ADBC driver manager, which then
+// doesn't pass the option on. When "profile" reaches the driver, the driver
+// manager is older than 1.11.0 (or the program uses none), and the refusal
+// says so instead of "Unknown database option".
+func TestProfileOptionNamesTheDriverManager(t *testing.T) {
+	_, err := NewDriver(memory.DefaultAllocator).NewDatabaseWithContext(context.Background(),
+		map[string]string{adbc.OptionKeyURI: "chargewire://127.0.0.1:1", "profile": "my_profile"})
+	if errorStatus(err) != adbc.StatusNotImplemented {
+		t.Fatalf("status %v, want NOT_IMPLEMENTED: %v", errorStatus(err), err)
+	}
+	for _, want := range []string{`option "profile"`, "ADBC driver manager", "1.11.0", "adbc-driver-manager>=1.11.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error doesn't say %q: %v", want, err)
+		}
+	}
+}

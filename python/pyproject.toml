@@ -14,7 +14,11 @@ version = "2.2.10"
 description = "Python ADBC driver for the Chargewire protocol (SQL over HTTP with Arrow), backed by a native Go driver"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11"  # pyarrow 26 needs 3.11
+# Floors below the latest releases, on purpose: dlt (dlt-hub/dlt) supports Python 3.10 to 3.14
+# with pyarrow>=16.0.0 and adbc-driver-manager>=1.8.0, and a driver that cannot install across
+# dlt's range, or forces its locked versions up, cannot be a dependency of one of its destinations.
+# CI's "lowest versions" job runs the whole Python suite on Python 3.10 with exactly these floors.
+requires-python = ">=3.10"
 authors = [
     { name = "GizmoData", email = "support@gizmodata.com" },
 ]
@@ -22,11 +26,21 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Database",
 ]
 dependencies = [
-    "adbc-driver-manager>=1.13.0",
-    "pyarrow>=26.0.1",
+    # dlt's floor (its `adbc` dependency group; its lock file has 1.9.0). Connection profiles
+    # (connect(profile=...)) are the driver manager's own feature from 1.11.0: with an older one
+    # the driver refuses the option and says so. Python 3.15 needs 1.13.0, the first with wheels.
+    "adbc-driver-manager>=1.8.0",
+    # dlt's floor. Python 3.13 needs 18.0.0, 3.14 needs 22.0.0 and 3.15 needs 26.0.1 (wheels).
+    "pyarrow>=16.0.0",
 ]
 
 [project.urls]
@@ -45,7 +59,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

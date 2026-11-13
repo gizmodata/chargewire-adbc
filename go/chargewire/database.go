@@ -109,6 +109,11 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 	if handled, err := d.defaults.set(key, value); handled {
 		return err
 	}
+	if key == optionProfile {
+		return d.ErrorHelper.NotImplemented("option %q is not a driver option: connection profiles are resolved by "+
+			"the ADBC driver manager, from its version 1.11.0 (Python: adbc-driver-manager>=1.11.0), which then "+
+			"never passes the option on. Upgrade the driver manager, or give the URI and credentials directly", key)
+	}
 	if key == OptionAccessToken && d.opened() {
 		return d.replaceAccessToken(value)
 	}
@@ -205,6 +210,12 @@ func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
 	}
 	return nil
 }
+
+// optionProfile names an ADBC connection profile. The driver manager resolves
+// it (from 1.11.0) into the profile's options and doesn't pass it on, so the
+// driver sees it only from an older driver manager, or from a program that
+// sets it on the driver directly.
+const optionProfile = "profile"
 
 // databaseOptionKeys are the options SetOption takes until the first
 // connection opens (its switch below the opened check): once one has, they

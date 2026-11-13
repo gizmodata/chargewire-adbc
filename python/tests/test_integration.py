@@ -15,6 +15,7 @@ import pyarrow as pa
 import pytest
 from conftest import (
     CLIENT_EMAIL,
+    DRIVER_MANAGER_HAS_PROFILES,
     USERNAME,
     make_certificates,
     raw_request,
@@ -485,6 +486,11 @@ class TestConnectionContextManager:
                 assert cur.fetch_arrow_table().column("answer")[0].as_py() == 42
 
 
+@pytest.mark.skipif(
+    not DRIVER_MANAGER_HAS_PROFILES,
+    reason="connection profiles are adbc-driver-manager's from 1.11.0 "
+    "(TestConnectionProfilesNeedDriverManager111 runs with an older one)",
+)
 class TestConnectionProfiles:
     """ADBC connection profiles (driver manager >= 1.11): TOML files the driver manager
     resolves at database init."""
@@ -584,6 +590,34 @@ class TestConnectionProfiles:
     def test_missing_profile_raises(self, profile_dir):
         with pytest.raises(Exception, match="(?i)profile"):
             dbapi.connect(profile="does_not_exist_profile")
+
+
+@pytest.mark.skipif(
+    DRIVER_MANAGER_HAS_PROFILES,
+    reason="this adbc-driver-manager resolves connection profiles (TestConnectionProfiles runs)",
+)
+class TestConnectionProfilesNeedDriverManager111:
+    """An adbc-driver-manager before 1.11.0 knows no profiles and passes the option to the
+    driver, which says what is needed instead of "Unknown database option"."""
+
+    @pytest.mark.parametrize(
+        "how",
+        [
+            {"profile": "chargewire_test"},
+            {"uri": "profile://chargewire_test"},
+            {"uri": "chargewire://127.0.0.1:9?tls=false", "db_kwargs": {"profile": "x"}},
+        ],
+        ids=["profile=", "profile:// URI", "db_kwargs"],
+    )
+    def test_a_profile_is_refused_with_the_version_that_resolves_it(self, how):
+        with pytest.raises(adbc_driver_manager.NotSupportedError) as caught:
+            dbapi.connect(**how)
+        assert_error(
+            error=caught.value,
+            status=adbc_driver_manager.AdbcStatusCode.NOT_IMPLEMENTED,
+            code=None,
+        )
+        assert "adbc-driver-manager>=1.11.0" in str(caught.value)
 
 
 class TestUriSpellings:

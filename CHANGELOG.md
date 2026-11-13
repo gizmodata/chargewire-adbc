@@ -9,6 +9,22 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - **CI**: a change that touches only documentation (`*.md`, `docs/`, `LICENSE`, `NOTICE`) skips the build and test jobs, and one job, `CI result`, reports on every run and is the only required check. The glibc-2.28 install check retries `dnf install` with fresh metadata, so a mirror serving a broken `repomd.xml` can't fail a build.
+- **Python 3.10, pyarrow 16 and adbc-driver-manager 1.8 are supported**: the Python package
+  requires Python 3.10 or newer (was 3.11), `pyarrow>=16.0.0` (was 26.0.1) and
+  `adbc-driver-manager>=1.8.0` (was 1.13.0). These are the floors of
+  [dlt](https://github.com/dlt-hub/dlt), which supports Python 3.10 to 3.14, so the driver installs
+  wherever dlt does and doesn't force its locked versions up. The wheels were always `py3-none`;
+  only the declared floors kept the package off Python 3.10. Two things in the DB-API layer
+  needed adbc-driver-manager 1.9.0 and 1.10.0 and now work with 1.8.0 too: creating a cursor, and
+  `conn.close()` closing the cursors the connection still has open. Connection profiles
+  (`connect(profile=...)`, `profile://`) are the driver manager's own feature from 1.11.0: with an
+  older one the option reaches the driver, which now says so (`connection profiles are resolved
+  by the ADBC driver manager, from its version 1.11.0 …`) instead of `Unknown database option
+  'profile'`. Python 3.13 needs pyarrow 18, 3.14 needs pyarrow 22, and 3.15 needs pyarrow 26.0.1
+  and adbc-driver-manager 1.13.0 (their first wheels for it); pip picks those by itself.
+- **CI** runs the whole Python suite, unit and live, at both ends: Python 3.10 with exactly the
+  lowest versions `pyproject.toml` allows (the job fails if what got installed is not the floors),
+  and Python 3.15 with the latest. Both are part of the release gate.
 
 ### Fixed
 

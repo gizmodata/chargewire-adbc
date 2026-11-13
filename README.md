@@ -49,6 +49,9 @@ implementation serves every ADBC language: Python, Go, R, C/C++, C#, Rust and Ja
 pip install adbc-driver-chargewire
 ```
 
+The Python package needs Python 3.10 or newer, with pyarrow 16.0.0+ and adbc-driver-manager
+1.8.0+ (pip installs both; connection profiles need adbc-driver-manager 1.11.0+). CI runs its
+suite on Python 3.10 with exactly those versions and on Python 3.15 with the latest.
 The wheel carries the driver's shared library for Linux (amd64, arm64; glibc 2.17 or newer),
 macOS 13 or newer (arm64, amd64) and Windows (amd64). Go applications `go get
 github.com/gizmodata/chargewire-adbc/go/v2` (the module is versioned by `go/vX.Y.Z` tags, one per
@@ -459,7 +462,7 @@ Route by something both clients send, or connect both to the instance's own addr
 
 ## 🛠️ Building and testing
 
-Go 1.27, a C toolchain for cgo, and Python 3.11+ for the bindings.
+Go 1.27, a C toolchain for cgo, and Python 3.10+ for the bindings.
 
 ```bash
 make -C go lib                      # go/build/libadbc_driver_chargewire.{so,dylib,dll}
