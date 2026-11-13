@@ -10,6 +10,29 @@ All notable changes to this project are documented here. The format follows
 
 - **CI**: a change that touches only documentation (`*.md`, `docs/`, `LICENSE`, `NOTICE`) skips the build and test jobs, and one job, `CI result`, reports on every run and is the only required check. The glibc-2.28 install check retries `dnf install` with fresh metadata, so a mirror serving a broken `repomd.xml` can't fail a build.
 
+### Fixed
+
+- **A catalog and a schema given together when connecting name that catalog's schema**: Python
+  `connect(catalog="lake", db_schema="reports")`, and any ADBC client that sets
+  `adbc.connection.catalog` and `adbc.connection.db_schema` before `AdbcConnectionInit`. The
+  library applied the options set before a connection opens in the order of a Go map, which is
+  random, so most connects set the schema first (33 of 40 in a run against 2.2.10). The schema was
+  then looked up in the server's default catalog: one that only the requested catalog has failed
+  the connect (`NOT_FOUND … No catalog + schema named "memory.reports" found`), and one that the
+  default catalog has too was set there and lost again when the catalog was set, so the connection
+  opened in the requested catalog's `main` without an error. Every release since 1.0.0 did this;
+  either option alone was not affected. The options are now applied in a fixed order: the catalog,
+  the schema, then the others by name (`chargewire.InitOptionOrder`, for drivers built on this one
+  to call from their own generated entry points). `make -C go regenerate` keeps the change
+  (`scripts/patch_generated_exports.py`), and a unit test fails when the generated file loses it.
+  The server was never at fault: it applies one options document that carries both in the right
+  order, whichever key comes first.
+- **`db_schema="lake.reports"` says what to do instead**. The current schema is one schema name
+  in the current catalog and is never split at a dot, because a dot can be part of a schema's name
+  (`CREATE SCHEMA "sales.emea"`), so this names a schema called `lake.reports`. When there is none
+  but `lake` is a catalog, the `NOT_FOUND` error now adds: set the current catalog to `lake` and
+  the current schema to `reports`.
+
 ## [2.2.10] - 2026-11-09
 
 ### Changed

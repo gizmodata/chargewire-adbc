@@ -4,8 +4,10 @@ package chargewire
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -149,18 +151,40 @@ func (c *connectionImpl) SetCurrentCatalog(ctx context.Context, catalog string) 
 
 // SetCurrentDbSchema implements driverbase.CurrentNamespacer. A schema that
 // doesn't exist in the current catalog is NOT_FOUND.
+//
+// schema is one schema name, looked up in the current catalog; it is never
+// split into a catalog and a schema at a dot, because a dot can be part of a
+// schema's name (CREATE SCHEMA "sales.emea"). So "lake.reports" names a schema
+// called lake.reports, and when there is none but lake is a catalog, the
+// error says how to name that catalog's schema: the current catalog first,
+// then the schema.
 func (c *connectionImpl) SetCurrentDbSchema(ctx context.Context, schema string) error {
 	err := wrapError(c.session.SetOptions(ctx, map[string]any{"schema": schema}), "setting the current schema")
 	if errorStatus(err) != adbc.StatusInvalidArgument {
 		return err
 	}
-	return c.notFoundUnless(ctx, err, func() (bool, error) {
+	var current string
+	err = c.notFoundUnless(ctx, err, func() (bool, error) {
 		catalog, cerr := c.sessionOption(ctx, "catalog")
 		if cerr != nil {
 			return false, cerr
 		}
+		current = catalog
 		return c.schemaExists(ctx, catalog, schema)
 	})
+	if errorStatus(err) != adbc.StatusNotFound {
+		return err
+	}
+	catalog, rest, dotted := strings.Cut(schema, ".")
+	if !dotted || catalog == "" || rest == "" {
+		return err
+	}
+	if found, cerr := c.catalogExists(ctx, catalog); cerr != nil || !found {
+		return err
+	}
+	return withHint(err, fmt.Sprintf("the current schema is one schema name in the current catalog (%q), never a "+
+		"catalog.schema path: for the schema %q of the catalog %q, set the current catalog to %q and the "+
+		"current schema to %q", current, rest, catalog, catalog, rest))
 }
 
 // notFoundUnless gives err, the server's refusal of a current catalog or

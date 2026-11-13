@@ -794,6 +794,28 @@ class TestOpenTelemetryTracing:
         assert "Statement.ExecuteQuery" in contents
 
 
+@pytest.fixture(scope="module")
+def two_catalogs(chargewire_server):
+    """A second catalog, ``both_kwargs``, with a schema only it has (``reports``) and one
+    the server's default catalog has too (``shared_name``), each with a table ``origin``
+    that says where it lives."""
+    with connect(server=chargewire_server) as setup_conn, setup_conn.cursor() as cur:
+        for statement in (
+            "ATTACH IF NOT EXISTS ':memory:' AS both_kwargs",
+            "CREATE SCHEMA IF NOT EXISTS both_kwargs.reports",
+            "CREATE SCHEMA IF NOT EXISTS both_kwargs.shared_name",
+            "CREATE SCHEMA IF NOT EXISTS shared_name",
+            "CREATE OR REPLACE TABLE both_kwargs.reports.origin AS "
+            "SELECT 'both_kwargs.reports' AS origin",
+            "CREATE OR REPLACE TABLE both_kwargs.shared_name.origin AS "
+            "SELECT 'both_kwargs.shared_name' AS origin",
+            "CREATE OR REPLACE TABLE shared_name.origin AS "
+            "SELECT 'default catalog, shared_name' AS origin",
+        ):
+            cur.execute(operation=statement)
+    return chargewire_server
+
+
 class TestConnectCatalog:
     def test_catalog_kwarg_sets_current_catalog(self, chargewire_server):
         with connect(server=chargewire_server) as setup_conn:
@@ -814,6 +836,113 @@ class TestConnectCatalog:
             status=adbc_driver_manager.AdbcStatusCode.NOT_FOUND,
             code="invalid_option_value",
         )
+
+    # Options given to connect() are set before the connection opens, and the library used to
+    # apply them in Go's map order: the schema before the catalog about six times in seven.
+    # Thirty connections each, so the old order cannot pass by luck.
+    CONNECTS = 30
+
+    def test_catalog_and_schema_kwargs_name_a_schema_of_that_catalog(self, two_catalogs):
+        # `reports` exists only in the requested catalog: applied before the catalog, the schema
+        # was looked up in the default catalog and the connect failed (NOT_FOUND).
+        for _ in range(self.CONNECTS):
+            with connect(server=two_catalogs, catalog="both_kwargs", db_schema="reports") as conn:
+                assert conn.adbc_current_catalog == "both_kwargs"
+                assert conn.adbc_current_db_schema == "reports"
+                with conn.cursor() as cur:
+                    cur.execute(operation="SELECT origin FROM origin")
+                    assert cur.fetchone() == ("both_kwargs.reports",)
+
+    def test_catalog_and_schema_kwargs_with_a_schema_name_the_default_catalog_also_has(
+        self, two_catalogs
+    ):
+        # `shared_name` exists in both catalogs: applied before the catalog, the schema was set
+        # in the default catalog and the catalog then reset it, so the connection opened in
+        # both_kwargs.main without an error.
+        for _ in range(self.CONNECTS):
+            with connect(
+                server=two_catalogs, catalog="both_kwargs", db_schema="shared_name"
+            ) as conn:
+                assert conn.adbc_current_catalog == "both_kwargs"
+                assert conn.adbc_current_db_schema == "shared_name"
+                with conn.cursor() as cur:
+                    cur.execute(operation="SELECT origin FROM origin")
+                    assert cur.fetchone() == ("both_kwargs.shared_name",)
+
+    def test_connection_options_are_a_set_whatever_order_they_were_given_in(self, two_catalogs):
+        # The same through conn_kwargs with the schema named first: options set before the
+        # connection opens have no order of their own, so the catalog is still applied first.
+        options = adbc_driver_manager.ConnectionOptions
+        for _ in range(self.CONNECTS):
+            with connect(
+                server=two_catalogs,
+                conn_kwargs={
+                    options.CURRENT_DB_SCHEMA.value: "reports",
+                    options.CURRENT_CATALOG.value: "both_kwargs",
+                },
+                autocommit=False,
+            ) as conn:
+                assert conn.adbc_current_catalog == "both_kwargs"
+                assert conn.adbc_current_db_schema == "reports"
+
+    def test_schema_kwarg_alone_names_a_schema_of_the_default_catalog(self, two_catalogs):
+        with connect(server=two_catalogs, db_schema="shared_name") as conn:
+            assert conn.adbc_current_catalog == "memory"
+            with conn.cursor() as cur:
+                cur.execute(operation="SELECT origin FROM origin")
+                assert cur.fetchone() == ("default catalog, shared_name",)
+
+    def test_a_schema_the_catalog_does_not_have_is_refused(self, two_catalogs):
+        # The positive twin is test_catalog_and_schema_kwargs_name_a_schema_of_that_catalog.
+        with pytest.raises(adbc_driver_manager.Error) as caught:
+            connect(server=two_catalogs, catalog="both_kwargs", db_schema="no_such_schema")
+        assert_error(
+            error=caught.value,
+            status=adbc_driver_manager.AdbcStatusCode.NOT_FOUND,
+            code="invalid_option_value",
+        )
+        assert '"both_kwargs.no_such_schema"' in str(caught.value)
+
+    def test_db_schema_is_one_name_never_a_catalog_and_schema_path(self, two_catalogs):
+        # db_schema="both_kwargs.reports" is not split at the dot: it names a schema called
+        # `both_kwargs.reports` in the current catalog, which doesn't exist. The error says how
+        # to name the schema `reports` of the catalog `both_kwargs`.
+        with pytest.raises(adbc_driver_manager.Error) as caught:
+            connect(server=two_catalogs, db_schema="both_kwargs.reports")
+        assert_error(
+            error=caught.value,
+            status=adbc_driver_manager.AdbcStatusCode.NOT_FOUND,
+            code="invalid_option_value",
+        )
+        message = str(caught.value)
+        assert 'the current schema is one schema name in the current catalog ("memory")' in message
+        assert 'set the current catalog to "both_kwargs" and the current schema to "reports"' in (
+            message
+        )
+
+    def test_no_hint_when_the_part_before_the_dot_is_not_a_catalog(self, two_catalogs):
+        with pytest.raises(adbc_driver_manager.Error) as caught:
+            connect(server=two_catalogs, db_schema="no_such_catalog.reports")
+        assert_error(
+            error=caught.value,
+            status=adbc_driver_manager.AdbcStatusCode.NOT_FOUND,
+            code="invalid_option_value",
+        )
+        assert "set the current catalog" not in str(caught.value)
+
+    def test_a_schema_whose_name_has_a_dot_is_named_as_it_is(self, two_catalogs):
+        # Why db_schema is never split: a dot can be part of a schema's name.
+        with connect(server=two_catalogs) as setup_conn, setup_conn.cursor() as cur:
+            cur.execute(operation='CREATE SCHEMA IF NOT EXISTS both_kwargs."dotted.name"')
+            cur.execute(
+                operation='CREATE OR REPLACE TABLE both_kwargs."dotted.name".origin AS '
+                "SELECT 'both_kwargs, dotted.name' AS origin"
+            )
+        with connect(server=two_catalogs, catalog="both_kwargs", db_schema="dotted.name") as conn:
+            assert conn.adbc_current_db_schema == "dotted.name"
+            with conn.cursor() as cur:
+                cur.execute(operation="SELECT origin FROM origin")
+                assert cur.fetchone() == ("both_kwargs, dotted.name",)
 
 
 class TestMetadata:

@@ -197,7 +197,9 @@ def connect(
         tls_client_key: The client certificate's private key (PEM text or
             path).
         catalog: Catalog to make current for the session.
-        db_schema: Schema to make current for the session.
+        db_schema: Schema to make current for the session: one schema name in
+            ``catalog`` (in the server's default catalog without it), never a
+            ``catalog.schema`` path (a dot can be part of a schema's name).
         db_kwargs: Extra ADBC database options (``adbc.chargewire.*``, telemetry).
         conn_kwargs: Extra ADBC connection options.
         autocommit: Enable autocommit (default True).

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/adbc-drivers/driverbase-go/driverbase"
@@ -307,6 +308,75 @@ func TestIntegrationCurrentCatalogAndSchema(t *testing.T) {
 	// A catalog that doesn't exist is NOT_FOUND; the server's refusal is still the cause.
 	err := options.SetOption(context.Background(), adbc.OptionKeyCurrentCatalog, "no_such_catalog")
 	assertStatus(t, err, adbc.StatusNotFound, "invalid_option_value")
+}
+
+// The current schema option is one schema name in the current catalog: the
+// catalog is set first, and a catalog.schema path is not split (a dot can be
+// part of a schema's name). Setting the catalog afterwards moves to that
+// catalog's default schema, as SQL USE does.
+func TestIntegrationCurrentSchemaIsOneNameInTheCurrentCatalog(t *testing.T) {
+	cnxn := metaConn(t)
+	options := cnxn.(optionConn)
+	ctx := context.Background()
+	execUpdate(t, cnxn, `CREATE SCHEMA IF NOT EXISTS md."s1.dotted"; CREATE TABLE IF NOT EXISTS md."s1.dotted".only_here (x INTEGER)`)
+	current := func() string {
+		t.Helper()
+		catalog, err := options.GetOption(ctx, adbc.OptionKeyCurrentCatalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		schema, err := options.GetOption(ctx, adbc.OptionKeyCurrentDbSchema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return catalog + "/" + schema
+	}
+
+	// md.s1 as a path, from the default catalog: there is no schema called "md.s1" in it.
+	err := options.SetOption(ctx, adbc.OptionKeyCurrentDbSchema, "md.s1")
+	assertStatus(t, err, adbc.StatusNotFound, "invalid_option_value")
+	for _, want := range []string{
+		`one schema name in the current catalog ("memory")`,
+		`set the current catalog to "md" and the current schema to "s1"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q doesn't say %q", err, want)
+		}
+	}
+	if got := current(); got != "memory/main" {
+		t.Errorf("after the refusal the session is in %s", got)
+	}
+	// No such advice when the part before the dot isn't a catalog.
+	err = options.SetOption(ctx, adbc.OptionKeyCurrentDbSchema, "no_such_catalog.s1")
+	assertStatus(t, err, adbc.StatusNotFound, "invalid_option_value")
+	if strings.Contains(err.Error(), "set the current catalog") {
+		t.Errorf("error %q advises a catalog that doesn't exist", err)
+	}
+
+	// The catalog, then the schema.
+	if err := options.SetOption(ctx, adbc.OptionKeyCurrentCatalog, "md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := options.SetOption(ctx, adbc.OptionKeyCurrentDbSchema, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := current(); got != "md/s1" {
+		t.Errorf("catalog md, then schema s1: %s", got)
+	}
+	// A schema whose name has a dot is named as it is.
+	if err := options.SetOption(ctx, adbc.OptionKeyCurrentDbSchema, "s1.dotted"); err != nil {
+		t.Fatal(err)
+	}
+	if got := scalarInt(t, cnxn, "SELECT count(*) FROM only_here"); got != 0 {
+		t.Errorf(`unqualified only_here in md."s1.dotted": %d rows`, got)
+	}
+	// Setting the catalog moves to its default schema, whatever the schema was.
+	if err := options.SetOption(ctx, adbc.OptionKeyCurrentCatalog, "memory"); err != nil {
+		t.Fatal(err)
+	}
+	if got := current(); got != "memory/main" {
+		t.Errorf("after setting the catalog again: %s", got)
+	}
 }
 
 func TestIntegrationUnsupportedConnectionOptions(t *testing.T) {

@@ -1007,8 +1007,8 @@ func ChargewireConnectionInit(cnxn *C.struct_AdbcConnection, db *C.struct_AdbcDa
 	if len(conn.initArgs) > 0 {
 		// C allow SetOption before Init, Go doesn't allow options to Open so set them now
 		ctx := conn.NewContext()
-		for k, v := range conn.initArgs {
-			rawCode := errToAdbcErr(err, conn.cnxn.SetOption(ctx, k, v))
+		for _, k := range chargewire.InitOptionOrder(conn.initArgs) {
+			rawCode := errToAdbcErr(err, conn.cnxn.SetOption(ctx, k, conn.initArgs[k]))
 			if rawCode != adbc.StatusOK {
 				return C.AdbcStatusCode(rawCode)
 			}

@@ -244,6 +244,17 @@ Read-only on a connection: `adbc.chargewire.session.id`, `adbc.chargewire.sessio
 `adbc.chargewire.statement.id` (the statement's last execution). Bulk ingest uses the standard
 `adbc.ingest.*` options; the transaction options are the standard ones.
 
+The current catalog and schema are the standard `adbc.connection.catalog` and
+`adbc.connection.db_schema` options (Python: `catalog=` and `db_schema=` in `connect()`, and
+`conn.adbc_current_catalog` / `conn.adbc_current_db_schema`). The schema is one schema name,
+looked up in the current catalog. It is never split at a dot, because a dot can be part of a
+schema's name (`CREATE SCHEMA "sales.emea"`): `lake.reports` names a schema called `lake.reports`,
+and the schema `reports` of the catalog `lake` is the catalog `lake` plus the schema `reports`.
+Given together before the connection opens (in `connect()`, or with `AdbcConnectionSetOption`
+before `AdbcConnectionInit`), the catalog is applied first, whatever order they were given in. On
+an open connection each takes effect when it is set, and setting the catalog moves to that
+catalog's default schema, as SQL `USE` does: set the catalog, then the schema.
+
 ### Reading the access token
 
 `GetOption("adbc.chargewire.auth.access_token")`, on the database or a connection, returns the

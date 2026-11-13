@@ -92,6 +92,18 @@ func withStatus(err error, code adbc.Status) error {
 	return err
 }
 
+// withHint returns err with hint, what the caller can do about it, added to
+// its message; its status, SQLSTATE, details and cause stay. An error that
+// isn't the driver's is returned as it is.
+func withHint(err error, hint string) error {
+	if de, ok := errors.AsType[*driverError](err); ok {
+		changed := *de
+		changed.adbcErr.Msg += ". " + hint
+		return &changed
+	}
+	return err
+}
+
 // driverError is an adbc.Error that keeps the error it was made from.
 type driverError struct {
 	adbcErr adbc.Error
