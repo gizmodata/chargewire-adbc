@@ -10,21 +10,32 @@ versioning requires.
 
 ## Order
 
-1. On `main`, green CI: the version in `python/pyproject.toml` and `_version.py`, and
-   `CHANGELOG.md`'s `## [X.Y.Z] - YYYY-MM-DD` section with today's date.
-2. Tag the release, then the Go module, on that commit, and push the release tag first:
+1. Merge the release pull request through branch protection with green required checks:
+   the version in `python/pyproject.toml` and `_version.py`, and `CHANGELOG.md`'s
+   `## [X.Y.Z] - YYYY-MM-DD` section with today's date. Fetch `origin/main` and verify
+   it is the exact landed commit and has the tested tree.
+2. Tag that landed commit and push only the release tag first:
 
    ```bash
-   sha=$(git rev-parse main)
+   git fetch origin main
+   sha=$(git rev-parse origin/main)
    git tag -a vX.Y.Z -m "chargewire-adbc X.Y.Z" "$sha"
-   git tag -a go/vX.Y.Z -m "github.com/gizmodata/chargewire-adbc/go/v2 vX.Y.Z" "$sha"
    git push origin vX.Y.Z
+   ```
+
+   Wait for `release.yml` to pass and verify the published release before creating the
+   Go tag on the same commit. Go tags can be recorded permanently by the checksum database;
+   never move either tag.
+
+   ```bash
+   sha=$(git rev-parse 'vX.Y.Z^{commit}')
+   git tag -a go/vX.Y.Z -m "github.com/gizmodata/chargewire-adbc/go/v2 vX.Y.Z" "$sha"
    git push origin go/vX.Y.Z
    ```
 
    `release.yml` runs on `vX.Y.Z` (its `v*` trigger does not match `go/v*`); `go-module.yml` runs on
    `go/vX.Y.Z` and refuses a commit that `vX.Y.Z` is not on.
-3. Wait for both workflows, then check what was published:
+3. Wait for `go-module.yml`, then check what was published:
 
    ```bash
    curl -sS https://pypi.org/pypi/adbc-driver-chargewire/json | python3 -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])'
