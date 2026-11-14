@@ -1,6 +1,6 @@
 """Re-apply this repository's changes to the generated cgo entry points (`make -C go regenerate`).
 
-go/pkg/chargewire/driver.go comes from driverbase-go's template, with two changes of ours.
+go/pkg/chargewire/driver.go comes from driverbase-go's template, with changes of ours.
 Each must match the template's text exactly once: when the template changes, this script
 stops, and the change has to be looked at again.
 
@@ -12,17 +12,41 @@ stops, and the change has to be looked at again.
 2. AdbcStatementCancel. The template cancels the blocked call's context before asking the
    server to stop the statement; the server has to be asked first (the comment in the
    replacement says why).
+
+3. Read-only is one-way before initialization too, and must be carried into Database.Open
+   so the session is created read-only, before hooks or other connection options are applied.
 """
 
 from pathlib import Path
 
 CHANGES = [
     (
+        "one-way read-only before connection initialization",
+        "\t\tconn.initArgs[k] = v\n",
+        """		if e := chargewire.SetInitOption(conn.initArgs, k, v); e != nil {
+			return C.AdbcStatusCode(errToAdbcErr(err, e))
+		}
+""",
+    ),
+    (
+        "read-only in the creation request",
+        "\tc, e := cdb.db.Open(context.Background())\n",
+        """	openCtx, e := chargewire.ConnectionInitContext(context.Background(), conn.initArgs)
+	if e != nil {
+		return C.AdbcStatusCode(errToAdbcErr(err, e))
+	}
+	c, e := cdb.db.Open(openCtx)
+""",
+    ),
+    (
         "the options set before AdbcConnectionInit (chargewire.InitOptionOrder)",
         """		for k, v := range conn.initArgs {
 			rawCode := errToAdbcErr(err, conn.cnxn.SetOption(ctx, k, v))
 """,
         """		for _, k := range chargewire.InitOptionOrder(conn.initArgs) {
+			if k == adbc.OptionKeyReadOnly {
+				continue // already carried in the session's creation request
+			}
 			rawCode := errToAdbcErr(err, conn.cnxn.SetOption(ctx, k, conn.initArgs[k]))
 """,
     ),

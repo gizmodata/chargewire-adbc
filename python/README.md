@@ -68,3 +68,37 @@ See the [repository](https://github.com/gizmodata/chargewire-adbc): build the li
 `make -C go lib`, then `pip install -e "python[test]"`. Unit tests need no server; the
 integration tests start the server named by `CHARGEWIRE_ADBC_TEST_SERVER_BINARY` and fail
 without it.
+
+### Read-only sessions
+
+Request server-enforced read-only mode when opening the connection:
+
+```python
+from adbc_driver_chargewire import dbapi
+
+with dbapi.connect(
+    uri=uri,
+    username=username,
+    password=password,
+    conn_kwargs={"adbc.connection.readonly": "true"},
+) as conn:
+    with conn.cursor() as cur:
+        cur.execute(operation="SELECT 42 AS answer")
+        print(cur.fetchone())  # (42,)
+```
+
+Here `uri`, `username`, and `password` are your server connection details. The option
+is sent in the session-creation request, before session setup. The driver requires
+`options.read_only: true` in the server's response. An older server that rejects or
+ignores the option causes an error; the driver never falls back to writable mode.
+Connections that omit the option continue to work with older servers.
+
+A lazy connection to a stopped server confirms the mode at its first operation;
+reading the option also opens and confirms it. Read-only is one-way, even before a
+lazy session opens, and is requested and confirmed again on replacement sessions.
+Open a separate connection to write. Setting the option to `"true"` on an existing
+connection requests the same restriction; the server may refuse until you end an
+active transaction. Attaching with the option restricts that shared session too.
+
+Read-only limits SQL writes as defined by the server's Chargewire implementation.
+It does not grant additional read permissions or sandbox installed extension code.

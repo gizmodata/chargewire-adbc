@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Scope says what a request may do when the server no longer has its session
@@ -51,6 +52,7 @@ type Session struct {
 	hook NewSessionHook
 
 	mu           sync.Mutex
+	optionMu     sync.Mutex // serialize option changes, including the one-way read-only transition
 	id           string
 	options      map[string]any // the options set through this Session, replayed on a replacement
 	replacements int
@@ -222,11 +224,11 @@ func (c *Client) NewLazySession(options map[string]any, reconnect bool, hook New
 func (s *Session) Open(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.pending {
-		return nil
-	}
 	if s.closed {
 		return errSessionClosed
+	}
+	if !s.pending {
+		return nil
 	}
 	// A new connection signs in, even when the client holds a token from
 	// before it opened: a person who stopped the server ended those tokens,
@@ -333,7 +335,34 @@ func (s *Session) create(ctx context.Context) (*SessionDocument, error) {
 	if doc.SessionID == "" {
 		return nil, errors.New("the server created a session without an id")
 	}
+	if s.options["read_only"] == true && doc.Options["read_only"] != true {
+		// No setup hook or application request may use an unconfirmed session.
+		s.endUnconfirmed(ctx, doc.SessionID)
+		return nil, errors.New("the server did not confirm read_only=true; the new session was rejected")
+	}
+	if doc.Options["read_only"] == true {
+		// A server may impose read-only itself. Preserve it on replacements too.
+		s.options["read_only"] = true
+	}
 	return doc, nil
+}
+
+func (s *Session) endUnconfirmed(ctx context.Context, id string) {
+	endCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, _ = s.client.doJSON(endCtx, &Request{Method: http.MethodDelete, Path: sessionPath(id),
+		Idempotent: true, MaxAttempts: 1, NoRenew: true}, nil)
+}
+
+// ReadOnly reports confirmed mode. Opening a pending session first avoids
+// reporting success solely from a lazy connection's local intent.
+func (s *Session) ReadOnly(ctx context.Context) (bool, error) {
+	if err := s.Open(ctx); err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.options["read_only"] == true, nil
 }
 
 // ID is the current session id, "" while the session is pending (Open).
@@ -474,6 +503,9 @@ func (s *Session) observe(id string, doc *SessionDocument) {
 	defer s.mu.Unlock()
 	if s.id == id && s.tx != txOpen {
 		s.tx = txFromDocument(doc, false)
+	}
+	if s.id == id && doc.Options["read_only"] == true {
+		s.options["read_only"] = true
 	}
 }
 
@@ -837,7 +869,14 @@ func (e *OptionError) Unwrap() error { return e.Problem }
 // that name in the new catalog instead of where the lost session was, or
 // fail every replacement when the new catalog has no such schema.
 func (s *Session) SetOptions(ctx context.Context, options map[string]any) error {
+	s.optionMu.Lock()
+	defer s.optionMu.Unlock()
 	s.mu.Lock()
+	if options["read_only"] == false && s.options["read_only"] == true {
+		s.mu.Unlock()
+		return &Problem{Status: http.StatusForbidden, Code: CodeReadOnly,
+			Detail: "read-only is one-way; open another connection to write"}
+	}
 	if s.pending && !s.closed {
 		maps.Copy(s.options, options)
 		forgetSchemaOfTheCatalogBefore(s.options, options, nil)
@@ -859,9 +898,29 @@ func (s *Session) SetOptions(ctx context.Context, options map[string]any) error 
 	if err := decodeJSON(resp, result); err != nil {
 		return err
 	}
+	if options["read_only"] == true && result.Options["read_only"] != true {
+		if _, refused := result.Errors["read_only"]; !refused {
+			// A successful HTTP status without confirmation must never be
+			// treated as a read-only connection. Stop using this session.
+			s.mu.Lock()
+			s.closed = true
+			id, attached := s.id, s.attached
+			s.mu.Unlock()
+			if !attached {
+				s.endUnconfirmed(ctx, id)
+			}
+			return errors.New("the server did not confirm read_only=true; the connection is closed")
+		}
+	}
 	s.mu.Lock()
+	if result.Options["read_only"] == true {
+		s.options["read_only"] = true
+	}
 	for key, value := range options {
 		if _, refused := result.Errors[key]; !refused {
+			if key == "read_only" && s.options[key] == true {
+				continue // never forget a server-imposed read-only restriction
+			}
 			s.options[key] = value
 			if key == "autocommit" && s.tx == txNone {
 				// Turning autocommit on commits what was open; off opens a

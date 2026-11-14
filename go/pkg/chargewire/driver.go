@@ -918,7 +918,9 @@ func ChargewireConnectionSetOption(cnxn *C.struct_AdbcConnection, key, val *C.cc
 		if conn.initArgs == nil {
 			conn.initArgs = map[string]string{}
 		}
-		conn.initArgs[k] = v
+		if e := chargewire.SetInitOption(conn.initArgs, k, v); e != nil {
+			return C.AdbcStatusCode(errToAdbcErr(err, e))
+		}
 		return C.ADBC_STATUS_OK
 	}
 
@@ -998,7 +1000,11 @@ func ChargewireConnectionInit(cnxn *C.struct_AdbcConnection, db *C.struct_AdbcDa
 	if cdb == nil {
 		return C.ADBC_STATUS_INVALID_STATE
 	}
-	c, e := cdb.db.Open(context.Background())
+	openCtx, e := chargewire.ConnectionInitContext(context.Background(), conn.initArgs)
+	if e != nil {
+		return C.AdbcStatusCode(errToAdbcErr(err, e))
+	}
+	c, e := cdb.db.Open(openCtx)
 	if e != nil {
 		return C.AdbcStatusCode(errToAdbcErr(err, e))
 	}
@@ -1008,6 +1014,9 @@ func ChargewireConnectionInit(cnxn *C.struct_AdbcConnection, db *C.struct_AdbcDa
 		// C allow SetOption before Init, Go doesn't allow options to Open so set them now
 		ctx := conn.NewContext()
 		for _, k := range chargewire.InitOptionOrder(conn.initArgs) {
+			if k == adbc.OptionKeyReadOnly {
+				continue // already carried in the session's creation request
+			}
 			rawCode := errToAdbcErr(err, conn.cnxn.SetOption(ctx, k, conn.initArgs[k]))
 			if rawCode != adbc.StatusOK {
 				return C.AdbcStatusCode(rawCode)

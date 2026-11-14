@@ -65,6 +65,9 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 		return value, nil
 	}
 	switch key {
+	case adbc.OptionKeyReadOnly:
+		value, err := c.session.ReadOnly(ctx)
+		return strconv.FormatBool(value), wrapError(err, "reading read-only mode")
 	case OptionSessionID:
 		// The session's id names a session on the server: open a lazy one.
 		if err := c.session.Open(ctx); err != nil {
@@ -114,7 +117,13 @@ func (c *connectionImpl) SetOption(ctx context.Context, key, value string) error
 		}
 		c.closeOnRelease.Store(b)
 		return nil
-	case adbc.OptionKeyReadOnly, adbc.OptionKeyIsolationLevel:
+	case adbc.OptionKeyReadOnly:
+		enabled, err := parseBool(key, value)
+		if err != nil {
+			return err
+		}
+		return wrapError(c.session.SetOptions(ctx, map[string]any{"read_only": enabled}), "setting read-only mode")
+	case adbc.OptionKeyIsolationLevel:
 		return c.ErrorHelper.NotImplemented("option %s is not supported by Chargewire", key)
 	}
 	return c.ConnectionImplBase.SetOption(ctx, key, value)
