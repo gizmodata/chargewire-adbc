@@ -189,3 +189,38 @@ func TestReadOnlyPatchConfirmationAndRefusal(t *testing.T) {
 		})
 	}
 }
+
+func TestReadOnlyConfirmationCannotBelongToAnOldSession(t *testing.T) {
+	f := newFake(t).withSessions()
+	arrived, release := make(chan struct{}), make(chan struct{})
+	f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			close(arrived)
+			<-release
+			writeJSON(w, http.StatusOK, map[string]any{"options": map[string]any{"read_only": true}})
+			return
+		}
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		f.serve(w, r)
+	})
+	session := openTestSession(t, f, true)
+	done := make(chan error, 1)
+	go func() { done <- session.SetOptions(context.Background(), map[string]any{"read_only": true}) }()
+	<-arrived
+	f.evict()
+	replacementErr := submitSQL(t, session, "SELECT 1")
+	close(release)
+	patchErr := <-done
+	if replacementErr != nil {
+		t.Fatal(replacementErr)
+	}
+	if patchErr == nil {
+		t.Fatal("old confirmation accepted for replacement")
+	}
+	if err := submitSQL(t, session, "SELECT 1"); err == nil {
+		t.Fatal("unconfirmed replacement still usable")
+	}
+}

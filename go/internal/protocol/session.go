@@ -888,7 +888,9 @@ func (s *Session) SetOptions(ctx context.Context, options map[string]any) error 
 	if err != nil {
 		return err
 	}
+	var patchedID string
 	resp, err := s.do(ctx, ScopeSession, "", func(id string) (*Request, error) {
+		patchedID = id
 		return &Request{Method: http.MethodPatch, Path: sessionPath(id), Body: body, Idempotent: true}, nil
 	})
 	if err != nil {
@@ -913,6 +915,17 @@ func (s *Session) SetOptions(ctx context.Context, options map[string]any) error 
 		}
 	}
 	s.mu.Lock()
+	if options["read_only"] == true && patchedID != s.id {
+		// Another request replaced the session while PATCH was in flight. Its
+		// confirmation belongs to the old session, never to this replacement.
+		s.closed = true
+		id, attached := s.id, s.attached
+		s.mu.Unlock()
+		if !attached {
+			s.endUnconfirmed(ctx, id)
+		}
+		return errors.New("the session changed while confirming read_only=true; the connection is closed")
+	}
 	if result.Options["read_only"] == true {
 		s.options["read_only"] = true
 	}
