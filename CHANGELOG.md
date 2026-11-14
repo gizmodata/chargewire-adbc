@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-14
+
 ### Added
 
 - Enforced read-only connections through `adbc.connection.readonly=true` (Python:
