@@ -381,7 +381,7 @@ func TestIntegrationCurrentSchemaIsOneNameInTheCurrentCatalog(t *testing.T) {
 
 func TestIntegrationUnsupportedConnectionOptions(t *testing.T) {
 	cnxn := openConn(t).(optionConn)
-	assertStatus(t, cnxn.SetOption(context.Background(), adbc.OptionKeyReadOnly, "true"), adbc.StatusNotImplemented, "")
+	assertStatus(t, cnxn.SetOption(context.Background(), adbc.OptionKeyIsolationLevel, "serializable"), adbc.StatusNotImplemented, "")
 	assertStatus(t, cnxn.SetOption(context.Background(), OptionSessionID, "s_x"), adbc.StatusInvalidArgument, "")
 }
 

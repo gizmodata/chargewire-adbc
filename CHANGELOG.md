@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-14
+
+### Added
+
+- Enforced read-only connections through `adbc.connection.readonly=true` (Python:
+  `conn_kwargs={"adbc.connection.readonly": "true"}`; Go: `WithReadOnly(ctx)` for
+  `Database.Open`). The server must confirm the mode before the connection can be
+  used; lazy connections confirm when first used. The mode is one-way and is
+  requested again when replacing a lost session. Requires a server supporting
+  Chargewire read-only sessions.
+
 ## [2.3.1] - 2026-11-13
 
 ### Fixed

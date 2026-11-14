@@ -258,6 +258,44 @@ before `AdbcConnectionInit`), the catalog is applied first, whatever order they 
 an open connection each takes effect when it is set, and setting the catalog moves to that
 catalog's default schema, as SQL `USE` does: set the catalog, then the schema.
 
+### Read-only sessions
+
+Request server-enforced read-only mode when opening the connection:
+
+```python
+from adbc_driver_chargewire import dbapi
+
+with dbapi.connect(
+    uri=uri,
+    username=username,
+    password=password,
+    conn_kwargs={"adbc.connection.readonly": "true"},
+) as conn:
+    with conn.cursor() as cur:
+        cur.execute(operation="SELECT 42 AS answer")
+        print(cur.fetchone())  # (42,)
+```
+
+Here `uri`, `username`, and `password` are your server connection details. The option
+is sent in the session-creation request, before session setup. The driver requires
+`options.read_only: true` in the server's response. An older server that rejects or
+ignores the option causes an error; the driver never falls back to writable mode.
+Connections that omit the option continue to work with older servers.
+
+A lazy connection to a stopped server confirms the mode at its first operation;
+reading the option also opens and confirms it. Read-only is one-way, even before a
+lazy session opens, and is requested and confirmed again on replacement sessions.
+Open a separate connection to write. Setting the option to `"true"` on an existing
+connection requests the same restriction; the server may refuse until you end an
+active transaction. Attaching with the option restricts that shared session too.
+
+Read-only limits SQL writes as defined by the server's Chargewire implementation.
+It does not grant additional read permissions or sandbox installed extension code.
+
+For Go, open with `db.Open(chargewire.WithReadOnly(ctx))`. Through the C API, set
+`adbc.connection.readonly` before `AdbcConnectionInit`. On an open connection,
+use the standard ADBC `GetOption` and `SetOption` methods.
+
 ### Reading the access token
 
 `GetOption("adbc.chargewire.auth.access_token")`, on the database or a connection, returns the

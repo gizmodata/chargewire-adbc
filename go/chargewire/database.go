@@ -294,6 +294,11 @@ func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error
 func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContext, err error) {
 	ctx, span := d.StartSpan(ctx, "Database.Open")
 	defer driverbase.EndSpanWithError(span, &err)
+	readOnly, _ := ctx.Value(readOnlyKey{}).(bool)
+	var sessionOptions map[string]any
+	if readOnly {
+		sessionOptions = map[string]any{"read_only": true}
+	}
 
 	client, discovery, fresh, err := d.connect(ctx)
 	if err != nil {
@@ -308,6 +313,12 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 					"another user, or it lives on another server instance)"
 			}
 			return nil, wrapError(err, op)
+		}
+		if readOnly {
+			if err := session.SetOptions(ctx, sessionOptions); err != nil {
+				session.Detach()
+				return nil, wrapError(err, "making the attached session read-only")
+			}
 		}
 		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(false)), nil
 	}
@@ -327,10 +338,10 @@ func (d *databaseImpl) Open(ctx context.Context) (cnxn adbc.ConnectionWithContex
 			// first request finds the token from before a stop revoked.
 			reauth = d.signInThroughTheBrowserAgain
 		}
-		session := client.NewLazySession(nil, d.reconnect, newSessionHook(ctx), reauth)
+		session := client.NewLazySession(sessionOptions, d.reconnect, newSessionHook(ctx), reauth)
 		return newConnection(d, client, discovery, session, d.closeOnReleaseOr(true)), nil
 	}
-	session, err := client.OpenSessionWithHook(ctx, nil, d.reconnect, newSessionHook(ctx))
+	session, err := client.OpenSessionWithHook(ctx, sessionOptions, d.reconnect, newSessionHook(ctx))
 	if err != nil {
 		return nil, wrapError(err, "opening a session")
 	}
