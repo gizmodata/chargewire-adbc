@@ -4,9 +4,10 @@ name: chargewire-adbc-release
 # builds, plus the live-server suites below), then the shared library for six platforms and a
 # wheel for five of them (not Windows arm64), a GitHub Release, and PyPI. PyPI's trusted publisher for
 # adbc-driver-chargewire names this repository, this file (release.yml) and the `pypi`
-# environment, which requires an approval and accepts only v* tags.
+# environment, which accepts only v* tags (no approval: a green gate publishes).
 #
-# workflow_dispatch runs the tests and the builds only: the release and publish jobs need a tag.
+# workflow_dispatch runs the tests, the builds and the release files' checks (release-files:
+# each library archive's layout, SHA256SUMS): the release and publish jobs need a tag.
 #
 # Each release also carries a go/vX.Y.Z tag on the same commit, for the Go module in go/
 # (go-module.yml; RELEASING.md has the order). `v*` does not match it.
@@ -206,12 +207,7 @@ jobs:
       - name: Package the library
         shell: bash
         run: |
-          ref="${GITHUB_REF_NAME//\//-}"  # a branch name may hold slashes
-          PKG="libadbc_driver_chargewire-${ref}-${{ matrix.platform }}"
-          mkdir -p "dist/$PKG"
-          cp go/build/libadbc_driver_chargewire.${{ matrix.ext }} packaging/chargewire.toml.in LICENSE \
-            python/src/adbc_driver_chargewire/THIRD_PARTY_NOTICES "dist/$PKG/"
-          tar -C dist -czf "dist/$PKG.tar.gz" "$PKG"
+          scripts/package_lib.sh "${{ matrix.platform }}" "$GITHUB_REF_NAME"
           if [ "${{ matrix.library-only }}" != true ]; then cp python/dist/*.whl dist/; fi
 
       - uses: actions/upload-artifact@v7
@@ -222,12 +218,13 @@ jobs:
             dist/*.tar.gz
             dist/*.whl
 
-  github-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+  # The release's files, checked and summed on every run (a dispatch too, so a change here is
+  # tested before a tag): six library archives that each unpack to <archive name>/<library> for
+  # their platform (what the ADBC driver installer, github.com/gizmodata/adbc-install, unpacks),
+  # five wheels, and SHA256SUMS over all eleven, which the installer checks before it installs.
+  release-files:
     needs: [build]
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -235,6 +232,29 @@ jobs:
           pattern: dist-*
           path: dist
           merge-multiple: true
+      - name: Six library archives, five wheels, SHA256SUMS
+        run: scripts/release_files.sh dist "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-files
+          if-no-files-found: error
+          path: |
+            dist/*.tar.gz
+            dist/*.whl
+            dist/SHA256SUMS
+
+  github-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release-files]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-files
+          path: dist
       - name: Release notes from CHANGELOG.md
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -244,20 +264,21 @@ jobs:
             found { print }
           ' CHANGELOG.md > release-notes.md
           [ -s release-notes.md ] || { echo "::error::no CHANGELOG.md section for $version"; exit 1; }
-      - name: Six library tarballs and five wheels
+      - name: The files are the ones release-files checked
         run: |
-          test "$(find dist -name 'libadbc_driver_chargewire-*.tar.gz' | wc -l)" -eq 6
-          test "$(find dist -name '*.whl' | wc -l)" -eq 5
+          cd dist && sha256sum -c SHA256SUMS
+          test "$(find . -type f | wc -l)" -eq 12
       - uses: softprops/action-gh-release@v3
         with:
           body_path: release-notes.md
           files: |
             dist/*.tar.gz
             dist/*.whl
+            dist/SHA256SUMS
 
   pypi:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build]
+    needs: [release-files]  # nothing publishes unless the release's files checked out
     runs-on: ubuntu-24.04
     environment:
       name: pypi
