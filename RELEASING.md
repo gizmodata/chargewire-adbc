@@ -12,8 +12,11 @@ versioning requires.
 
 1. Merge the release pull request through branch protection with green required checks:
    the version in `python/pyproject.toml` and `_version.py`, and `CHANGELOG.md`'s
-   `## [X.Y.Z] - YYYY-MM-DD` section with today's date. Fetch `origin/main` and verify
-   it is the exact landed commit and has the tested tree.
+   `## [X.Y.Z] - YYYY-MM-DD` section with today's date. Before merging, run `release.yml` on the
+   release branch (`gh workflow run release.yml --ref <branch>`) and wait for every job to pass:
+   a dispatch runs everything a tag runs except the GitHub Release and PyPI, so a failure costs
+   no tag. Fetch `origin/main` and verify it is the exact landed commit and has the tested tree
+   (`git rev-parse origin/main^{tree}` equals the dispatched commit's).
 2. Tag that landed commit and push only the release tag first:
 
    ```bash
@@ -43,9 +46,18 @@ versioning requires.
    GOFLAGS=-mod=mod GOPROXY=https://proxy.golang.org go list -m github.com/gizmodata/chargewire-adbc/go/v2@vX.Y.Z
    ```
 
-   The last line is what downstream Go modules depend on: `hardcharger-adbc` moves its `go/go.mod`
-   from a pseudo-version to `github.com/gizmodata/chargewire-adbc/go/v2 vX.Y.Z` only once it prints
-   the version (see that repository's `RELEASING.md`).
+   The release has 12 assets: six library archives, five wheels and `SHA256SUMS` (the
+   installer at [gizmodata/adbc-install](https://github.com/gizmodata/adbc-install) checks an
+   archive against it before installing). Download them all and verify the sums:
+
+   ```bash
+   d=$(mktemp -d); gh release download vX.Y.Z -R gizmodata/chargewire-adbc -D "$d"
+   (cd "$d" && sha256sum -c SHA256SUMS && test "$(wc -l < SHA256SUMS)" -eq 11)
+   ```
+
+   The `go list` line is what downstream Go modules depend on: `hardcharger-adbc` moves its
+   `go/go.mod` from a pseudo-version to `github.com/gizmodata/chargewire-adbc/go/v2 vX.Y.Z` only
+   once it prints the version (see that repository's `RELEASING.md`).
 
 ## While the repository is internal
 

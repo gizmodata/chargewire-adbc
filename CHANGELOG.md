@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-11-18
+
+### Added
+
+- **`SHA256SUMS` in every release**: the SHA-256 of each library archive and wheel, for the ADBC
+  driver installer ([gizmodata/adbc-install](https://github.com/gizmodata/adbc-install), one
+  installer for every GizmoData driver; [#16](https://github.com/gizmodata/chargewire-adbc/issues/16)),
+  which refuses an archive whose checksum differs. Verify a download with `sha256sum -c SHA256SUMS`.
+- **The release checks its files before publishing** (`scripts/release_files.sh`, also on a
+  dispatched run): six library archives, each unpacking to one folder of its own name with that
+  platform's library in it (`libadbc_driver_chargewire-vX.Y.Z-<platform>/libadbc_driver_chargewire.<so|dylib|dll>`,
+  the layout the installer unpacks; `file` must report the platform's format and architecture),
+  five wheels, and the sums. Neither the GitHub Release nor PyPI publishes unless it passes.
+
+### Fixed
+
+- The manifest template's (`packaging/chargewire.toml.in`) Windows paths had a doubled backslash:
+  `'@PREFIX@\\libadbc_driver_chargewire.dll'` is a literal TOML string, so both backslashes stay.
+  It also says the library's path must be absolute (a driver manager takes it as is).
+
 ## [2.4.0] - 2026-11-14
 
 ### Added
