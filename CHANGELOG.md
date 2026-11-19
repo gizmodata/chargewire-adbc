@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **README: install the driver for any ADBC language in one line**
+  ([#16](https://github.com/gizmodata/chargewire-adbc/issues/16)):
+  `curl https://install.adbc.gizmodata.com/chargewire | sh` (Linux, macOS) and
+  `irm https://install.adbc.gizmodata.com/chargewire.ps1 | iex` (Windows) install the library and
+  its driver manifest, checked against the release's `SHA256SUMS`, so `driver = "chargewire"`
+  loads it from C/C++, R, Rust or Go. The installer and its options live in
+  [gizmodata/adbc-install](https://github.com/gizmodata/adbc-install).
+
 ## [2.4.1] - 2026-11-18
 
 ### Added

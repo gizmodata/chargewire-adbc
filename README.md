@@ -55,9 +55,25 @@ suite on Python 3.10 with exactly those versions and on Python 3.15 with the lat
 The wheel carries the driver's shared library for Linux (amd64, arm64; glibc 2.17 or newer),
 macOS 13 or newer (arm64, amd64) and Windows (amd64). Go applications `go get
 github.com/gizmodata/chargewire-adbc/go/v2` (the module is versioned by `go/vX.Y.Z` tags, one per
-release, on the release's commit). Every other ADBC language loads the library from a
-[GitHub Release](https://github.com/gizmodata/chargewire-adbc/releases) through a driver manifest
-(`packaging/chargewire.toml.in`).
+release, on the release's commit).
+
+Every other ADBC language (C/C++, R, Rust, Go through the driver manager) loads the driver by
+name, `driver = "chargewire"`, once the library and its driver manifest are installed. One line
+does both, for the latest release:
+
+```bash
+# Linux, macOS
+curl https://install.adbc.gizmodata.com/chargewire | sh
+```
+
+```powershell
+# Windows (PowerShell 5.1 or 7)
+irm https://install.adbc.gizmodata.com/chargewire.ps1 | iex
+```
+
+It checks the library against the release's `SHA256SUMS` before installing it, into the per-user
+directory the driver managers search. A version, the system-wide directory, uninstalling and the
+other options: [gizmodata/adbc-install](https://github.com/gizmodata/adbc-install).
 
 ## 📂 Layout
 
@@ -202,9 +218,11 @@ See [python/README.md](python/README.md) for `connect()`'s arguments.
 
 ### Any language, through a driver manifest
 
-Build the library (`make -C go lib`), fill in [packaging/chargewire.toml.in](packaging/chargewire.toml.in)
-and install it as `chargewire.toml` in an ADBC driver search path; then every driver manager
-loads it as `driver = "chargewire"`. Its entry point is `AdbcDriverChargewireInit`.
+Install it with the one-line installer ([Install](#-install)); then every driver manager loads
+it as `driver = "chargewire"`. A library you built (`make -C go lib`) is installed by hand: fill in
+[packaging/chargewire.toml.in](packaging/chargewire.toml.in) with the library's absolute path and
+save it as `chargewire.toml` in an ADBC driver search path. Its entry point is
+`AdbcDriverChargewireInit`.
 
 ## ⚙️ Options
 
