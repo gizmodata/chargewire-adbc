@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-11-19
+
 ### Changed
 
 - **README: install the driver for any ADBC language in one line**
