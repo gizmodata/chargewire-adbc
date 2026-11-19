@@ -16,6 +16,19 @@ All notable changes to this project are documented here. The format follows
   loads it from C/C++, R, Rust or Go. The installer and its options live in
   [gizmodata/adbc-install](https://github.com/gizmodata/adbc-install).
 
+### Fixed
+
+- **About 0.6 ms less per statement through the C library** (every language but Go): the
+  generated C entry points forced two full Go garbage collections per statement, one in
+  `AdbcArrayStreamRelease` and one in `AdbcStatementRelease` (driverbase-go's template does this
+  for ASAN). Through Python's DB-API, `SELECT 1` against a local Hardcharger 2.13.1 took about 1 ms,
+  0.6 ms of it in `cursor.close()`, and the process used about 2 ms of CPU per statement on the GC
+  workers; it now takes about 0.35 ms (0.3 ms of CPU), faster than Hardcharger's own CLI. Go
+  collects by itself, Arrow data crossing the C ABI is still released by its own callbacks, and
+  `AdbcConnectionRelease` and `AdbcDatabaseRelease` still collect. The change is number 4 in
+  `scripts/patch_generated_exports.py`, so it survives `make -C go regenerate`. Go programs that use
+  the `chargewire` package directly never paid this.
+
 ## [2.4.1] - 2026-11-18
 
 ### Added

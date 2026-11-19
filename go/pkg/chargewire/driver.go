@@ -452,7 +452,7 @@ func ChargewireArrayStreamRelease(stream *C.struct_ArrowArrayStream) {
 		C.ChargewireerrRelease(cStream.adbcErr)
 		C.free(unsafe.Pointer(cStream.adbcErr))
 	}
-	runtime.GC()
+	// No runtime.GC() here: see AdbcStatementRelease.
 }
 
 //export ChargewireErrorFromArrayStream
@@ -1515,13 +1515,15 @@ func ChargewireStatementRelease(stmt *C.struct_AdbcStatement, err *C.struct_Adbc
 		st.CancelContext()
 		st.executionContext.CancelContext()
 		st.stmt = nil
-		// manually trigger GC for two reasons:
-		//  1. ASAN expects the release callback to be called before
-		//     the process ends, but GC is not deterministic. So by manually
-		//     triggering the GC we ensure the release callback gets called.
-		//  2. Creates deterministic GC behavior by all Release functions
-		//     triggering a garbage collection
-		runtime.GC()
+		// The template forces a full garbage collection here and in
+		// AdbcArrayStreamRelease, so that release callbacks run before the
+		// process ends (for ASAN). That is two collections per statement,
+		// together about half a millisecond, which a loop of small queries
+		// pays on every statement. The Go runtime collects by itself, Arrow data
+		// handed across the C ABI is released by its own callbacks, and
+		// AdbcConnectionRelease and AdbcDatabaseRelease still collect, so
+		// everything is released before a process that closes its
+		// connection ends.
 	}()
 	if st.stmt == nil {
 		return C.ADBC_STATUS_OK
