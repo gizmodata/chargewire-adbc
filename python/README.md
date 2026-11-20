@@ -71,6 +71,7 @@ with dbapi.connect(
 | `tls_client_cert`, `tls_client_key` | Client certificate for mutual TLS (PEM text or path). |
 | `tls_skip_verify` | Skip certificate verification (development only; off unless set). |
 | `catalog`, `db_schema` | Make these current for the session. `db_schema` is one schema name in `catalog` (in the server's default catalog without it) and is never split at a dot: for the schema `reports` of the catalog `lake`, pass `catalog="lake", db_schema="reports"`. |
+| `read_only` | `True`: ask the server to enforce read-only on the connection before anything runs on it (the server must confirm it); one-way, and a refusal is an error. It sets the ADBC standard option `adbc.connection.readonly` (see "Read-only sessions" below) |
 | `autocommit` | `True` by default; `False` starts a transaction (`conn.commit()`, `conn.rollback()`). |
 | `profile` | An ADBC connection profile (needs adbc-driver-manager 1.11.0 or newer, which resolves it). |
 | `db_kwargs`, `conn_kwargs` | Any other driver option, e.g. `chargewire.query.async`. |

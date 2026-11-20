@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-11-20
+
+### Changed
+
+- **The PyPI page lists `read_only`** in its table of `connect()` arguments (added in the previous release,
+  where only the read-only example showed it).
+
 ## [2.5.1] - 2026-11-20
 
 ### Added
