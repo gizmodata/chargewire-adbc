@@ -264,3 +264,22 @@ func TestHostBrowserSignInReadsHostSpelling(t *testing.T) {
 		t.Errorf("a bad root certificate under the host's spelling was not read: %v", err)
 	}
 }
+
+// A uri that doesn't parse may hold a password: no part of it reaches the error.
+func TestUnparseableURIIsNotEchoed(t *testing.T) {
+	for _, uri := range []string{"chargewire://u:Pa%ssword@h:1", "chargewire://h:1/%zzsecret", "chargewire://h:notaport", "chargewire://u:se\x7fcret@h"} {
+		_, err := NewDriver(memory.DefaultAllocator).NewDatabaseWithContext(context.Background(), map[string]string{adbc.OptionKeyURI: uri})
+		if err == nil {
+			t.Errorf("%q accepted", uri)
+			continue
+		}
+		for _, secret := range []string{"Pa%ss", "%ss", "ssword", "%zz", "secret", "cret", "notaport"} {
+			if strings.Contains(uri, secret) && strings.Contains(err.Error(), secret) {
+				t.Errorf("the error for %q quotes %q: %v", uri, secret, err)
+			}
+		}
+		if !strings.Contains(err.Error(), "invalid uri") {
+			t.Errorf("error %v", err)
+		}
+	}
+}

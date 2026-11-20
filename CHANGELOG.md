@@ -33,6 +33,14 @@ All notable changes to this project are documented here. The format follows
   option given under its old name in `db_kwargs` win over its keyword argument. An unknown key
   keeps the spelling it was given, so the error names what the caller wrote.
 
+### Fixed
+
+- **A uri that doesn't parse is no longer quoted in the error**: `invalid uri "chargewire://u:Pa%ssword@h"`
+  (with Go's own message repeating it) could put a password into logs, since a raw `%` in it is
+  enough to fail parsing. The error now describes the problem only (`invalid uri: a % that
+  doesn't start a two-digit hex escape (write a literal % as %25)`); `chargewire.URIParseProblem`
+  gives drivers built on this one the same wording.
+
 ### Added
 
 - **`chargewire.NewDriverForHost` and `chargewire.Host`**, for drivers built on this one under
