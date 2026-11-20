@@ -98,12 +98,16 @@ with dbapi.connect(
     uri=uri,
     username=username,
     password=password,
-    conn_kwargs={"adbc.connection.readonly": "true"},
+    read_only=True,
 ) as conn:
     with conn.cursor() as cur:
         cur.execute(operation="SELECT 42 AS answer")
         print(cur.fetchone())  # (42,)
 ```
+
+`read_only=True` sets the ADBC specification's standard option `adbc.connection.readonly`
+(standard options keep the `adbc.` prefix; this driver's own are `chargewire.*`), which is how
+other languages ask for it and what `conn_kwargs` can still carry.
 
 Here `uri`, `username`, and `password` are your server connection details. The option
 is sent in the session-creation request, before session setup. The driver requires

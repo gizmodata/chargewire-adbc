@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-11-20
+
+### Added
+
+- **`connect(read_only=True)`** in Python: asks the server to enforce read-only on the connection
+  before anything runs on it, through the ADBC specification's standard option
+  `adbc.connection.readonly`, which `conn_kwargs` can still carry (they must agree when both are
+  given). Standard options keep the `adbc.` prefix the style guide reserves for them; this
+  driver's own options are `chargewire.*`. The read-only examples use it, and the PyPI page says
+  which `adbc.` key is the standard one.
+
 ## [2.5.0] - 2026-11-20
 
 ### Changed
