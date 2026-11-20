@@ -28,7 +28,8 @@ All notable changes to this project are documented here. The format follows
   `connect()` arguments don't change. **The old names still work**, `adbc.chargewire.*` and the
   older `adbc.warp.*`, for setting and reading options, and the first time a process uses each,
   the driver prints `[chargewire] option "<old>" is deprecated; use "<new>"` to stderr (keys only,
-  never values). With both names given, the new one wins. Python's `connect()` still lets an
+  never values). With both names given, the new one wins, on a database and on a connection's
+  options set before `AdbcConnectionInit` alike (`InitOptionOrder` applies the winning name last). Python's `connect()` still lets an
   option given under its old name in `db_kwargs` win over its keyword argument. An unknown key
   keeps the spelling it was given, so the error names what the caller wrote.
 
@@ -39,9 +40,18 @@ All notable changes to this project are documented here. The format follows
   `<prefix>X` on databases, connections and statements, the host's spelling wins when several
   name one option, and deprecation warnings speak in the host's terms
   (`[hardcharger] option "adbc.chargewire.statement.timeout_seconds" is deprecated; use "hardcharger.query.timeout_seconds"`).
-  `Host.CurrentOptionKey` and `Host.CurrentOptions` give the names the driver reads;
-  `chargewire.RenamedOption` maps a name from before the style guide, and
-  `chargewire.WarnDeprecatedOption` warns about a host's own old names the same way.
+  `Host.Own` names the host's own options under its prefix (Hardcharger's `auth.type` and
+  `oauth.*`, which take other values): those are never taken as this driver's, and a warning for
+  this driver's option of that name suggests `chargewire.X`. `Host.CurrentOptionKey` and
+  `Host.CurrentOptions` give the names the driver reads, and `Host.BrowserSignIn` reads the
+  host's spellings; `chargewire.RenamedOption` maps a name from before the style guide,
+  `chargewire.WarnDeprecatedOption` warns about a host's own old names the same way, and
+  `chargewire.SetDeprecationOutput` sends the warnings elsewhere (tests).
+- **Go programs that compare option keys with this package's constants**: the constants keep
+  their names and now hold the new keys (`OptionSessionID` is `chargewire.session.id`), while
+  the driver still accepts the old spellings from callers. Normalize a caller's keys with
+  `(*Host).CurrentOptions` (a nil `*Host` is this driver) before comparing them. Hardcharger's
+  driver does from 2.7.0; use hardcharger-adbc 2.7.0 or later with this release.
 - **The PyPI page has the repository's branding**: banner, the badge row (now with CI, PyPI
   version, Python versions and downloads), the tagline and the GizmoData footer; the read-only
   section moved up to its own heading. The README and the PyPI page carry a badge for the style

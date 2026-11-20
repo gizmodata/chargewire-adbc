@@ -161,7 +161,14 @@ type Host struct {
 	Name string
 	// OptionPrefix is its option-key prefix ("hardcharger.").
 	OptionPrefix string
+	// Own reports whether a key under OptionPrefix is one of the host's own
+	// options (nil: none are). Such a key is never taken as this driver's
+	// option of the same name, and a deprecation warning for that option of
+	// this driver suggests chargewire.X, not the host's spelling.
+	Own func(key string) bool
 }
+
+func (h *Host) owns(key string) bool { return h != nil && h.Own != nil && h.Own(key) }
 
 func (h *Host) name() string {
 	if h == nil {
@@ -176,7 +183,11 @@ func (h *Host) spelling(current string) string {
 	if h == nil {
 		return current
 	}
-	return h.OptionPrefix + strings.TrimPrefix(current, optionPrefix)
+	spelled := h.OptionPrefix + strings.TrimPrefix(current, optionPrefix)
+	if h.owns(spelled) {
+		return current
+	}
+	return spelled
 }
 
 // CurrentOptionKey returns the name this driver reads for key: chargewire.X
@@ -199,7 +210,7 @@ func (h *Host) currentOptionKey(key string) (string, int) {
 		return current, 2
 	}
 	if h != nil {
-		if rest, ok := strings.CutPrefix(key, h.OptionPrefix); ok && knownOptions[optionPrefix+rest] {
+		if rest, ok := strings.CutPrefix(key, h.OptionPrefix); ok && knownOptions[optionPrefix+rest] && !h.owns(key) {
 			return optionPrefix + rest, 0
 		}
 	}

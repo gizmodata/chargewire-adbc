@@ -218,3 +218,49 @@ func TestHostOptionNames(t *testing.T) {
 		t.Error("the Chargewire driver accepted hardcharger.query.timeout_seconds")
 	}
 }
+
+// A host's own options under its prefix are never this driver's, and a
+// warning for this driver's option of the same name doesn't send the caller
+// to the host's.
+func TestHostOwnOptions(t *testing.T) {
+	out := captureDeprecations(t)
+	host := &Host{Name: "acme", OptionPrefix: "acme.", Own: func(key string) bool {
+		return key == "acme.auth.type" || strings.HasPrefix(key, "acme.oauth.")
+	}}
+	for key, want := range map[string]string{
+		"acme.auth.type":                  "acme.auth.type",
+		"acme.oauth.browser":              "acme.oauth.browser",
+		"acme.tls.root_certs":             OptionTLSRootCerts,
+		"adbc.chargewire.auth.type":       OptionAuthType,
+		"adbc.chargewire.tls.server_name": OptionTLSServerName,
+	} {
+		if got := host.CurrentOptionKey(key); got != want {
+			t.Errorf("CurrentOptionKey(%q) = %q, want %q", key, got, want)
+		}
+	}
+	for _, line := range []string{
+		`[acme] option "adbc.chargewire.auth.type" is deprecated; use "chargewire.auth.type"`,
+		`[acme] option "adbc.chargewire.tls.server_name" is deprecated; use "acme.tls.server_name"`,
+	} {
+		if !strings.Contains(out.String(), line+"\n") {
+			t.Errorf("no warning %q in %q", line, out.String())
+		}
+	}
+}
+
+// The host's spelling of the TLS options reaches a browser sign-in: an
+// unreachable server is refused with the host's server name in effect, not
+// ignored. (Checked by the options it reads, without a server.)
+func TestHostBrowserSignInReadsHostSpelling(t *testing.T) {
+	host := &Host{Name: "acme", OptionPrefix: "acme."}
+	got := host.CurrentOptions(map[string]string{"acme.tls.root_certs": "PEM", "acme.retry.resume_timeout_seconds": "0"})
+	if got[OptionTLSRootCerts] != "PEM" || got[OptionResumeTimeout] != "0" {
+		t.Fatalf("CurrentOptions = %v", got)
+	}
+	_, err := host.BrowserSignIn(context.Background(), map[string]string{
+		adbc.OptionKeyURI: "chargewire://127.0.0.1:1", "acme.tls.root_certs": "not a PEM",
+	}, nil, 0)
+	if err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Errorf("a bad root certificate under the host's spelling was not read: %v", err)
+	}
+}
