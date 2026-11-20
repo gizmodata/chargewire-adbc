@@ -32,6 +32,7 @@ const driverDisplayName = "ADBC Chargewire Driver - Go"
 
 type driverImpl struct {
 	driverbase.DriverImplBase
+	host *Host
 }
 
 // NewDriver returns the Chargewire ADBC driver.
@@ -43,19 +44,30 @@ func NewDriver(alloc memory.Allocator) driverbase.Driver {
 // its driver name in GetInfo, for a driver built on this one (for example
 // "ADBC Hardcharger Driver - Go"). Nothing else changes.
 func NewDriverWithName(alloc memory.Allocator, displayName string) driverbase.Driver {
+	return newDriver(alloc, displayName, nil)
+}
+
+// NewDriverForHost returns the Chargewire ADBC driver for a driver built on it
+// under its own name (see Host), reporting displayName as GetInfo's driver
+// name.
+func NewDriverForHost(alloc memory.Allocator, displayName string, host Host) driverbase.Driver {
+	return newDriver(alloc, displayName, &host)
+}
+
+func newDriver(alloc memory.Allocator, displayName string, host *Host) driverbase.Driver {
 	info := driverbase.DefaultDriverInfo(driverName)
 	info.MustRegister(map[adbc.InfoCode]any{
 		adbc.InfoDriverName:      displayName,
 		adbc.InfoVendorSql:       true,
 		adbc.InfoVendorSubstrait: false,
 	})
-	return driverbase.NewDriver(&driverImpl{DriverImplBase: driverbase.NewDriverImplBase(info, alloc)})
+	return driverbase.NewDriver(&driverImpl{DriverImplBase: driverbase.NewDriverImplBase(info, alloc), host: host})
 }
 
 // NewDatabaseWithContext validates opts; nothing is sent to the server until
 // the first connection opens.
 func (d *driverImpl) NewDatabaseWithContext(ctx context.Context, opts map[string]string) (adbc.DatabaseWithContext, error) {
-	db, err := newDatabase(ctx, &d.DriverImplBase, opts)
+	db, err := newDatabase(ctx, &d.DriverImplBase, d.host, opts)
 	if err != nil {
 		return nil, err
 	}

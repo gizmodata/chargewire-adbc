@@ -1,6 +1,31 @@
-# adbc-driver-chargewire
+<p align="center">
+  <a href="https://github.com/gizmodata/chargewire">
+    <img src="https://raw.githubusercontent.com/gizmodata/chargewire-adbc/main/docs/assets/chargewire-adbc-banner.svg" alt="Chargewire ADBC: one native driver for every ADBC language. By GizmoData." width="100%">
+  </a>
+</p>
 
-[![ADBC conformance](https://img.shields.io/badge/ADBC-conformance%20suite%20passing-2ea44f.svg)](https://github.com/gizmodata/chargewire-adbc/blob/main/validation/README.md)
+<p align="center">
+  <a href="https://github.com/gizmodata/chargewire-adbc/actions/workflows/ci.yml"><img src="https://github.com/gizmodata/chargewire-adbc/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/adbc-driver-chargewire/"><img src="https://img.shields.io/pypi/v/adbc-driver-chargewire?logo=pypi" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/adbc-driver-chargewire/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10 or later"></a>
+  <a href="https://pypi.org/project/adbc-driver-chargewire/"><img src="https://img.shields.io/pepy/dt/adbc-driver-chargewire.svg" alt="PyPI downloads"></a>
+  <a href="https://arrow.apache.org/adbc/"><img src="https://img.shields.io/badge/ADBC-1.12-f15a24.svg" alt="ADBC 1.12"></a>
+  <a href="https://github.com/gizmodata/chargewire-adbc/blob/main/validation/README.md"><img src="https://img.shields.io/badge/ADBC-conformance%20suite%20passing-2ea44f.svg" alt="ADBC conformance suite passing"></a>
+  <a href="https://adbc-drivers.org/building-drivers/style-guide.html"><img src="https://img.shields.io/badge/ADBC%20style%20guide-conforms-2ea44f.svg" alt="Follows the ADBC driver style guide"></a>
+  <a href="https://github.com/gizmodata/chargewire"><img src="https://img.shields.io/badge/protocol-Chargewire-31a8db.svg" alt="Chargewire protocol"></a>
+  <img src="https://img.shields.io/badge/core-Go-00ADD8.svg?logo=go&logoColor=white" alt="Go core">
+  <img src="https://img.shields.io/badge/bindings-Python-3776AB.svg?logo=python&logoColor=white" alt="Python bindings">
+  <img src="https://img.shields.io/badge/gRPC-not%20needed-lightgrey.svg" alt="No gRPC">
+  <a href="https://github.com/gizmodata/hardcharger"><img src="https://img.shields.io/badge/tested%20with-Hardcharger-f15a24.svg" alt="Tested with Hardcharger"></a>
+  <a href="https://github.com/gizmodata/chargewire-adbc/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-brightgreen.svg" alt="Apache 2.0 license"></a>
+  <a href="https://gizmodata.com"><img src="https://img.shields.io/badge/by-GizmoData-f15a24.svg" alt="GizmoData"></a>
+</p>
+
+<h3 align="center">Query any Chargewire server from Python, with Arrow results.</h3>
+
+---
+
+## 🔌 What is it?
 
 A Python [ADBC](https://arrow.apache.org/adbc/) driver for the
 [Chargewire protocol](https://github.com/gizmodata/chargewire): SQL over plain HTTP, with
@@ -13,7 +38,7 @@ platform wheel; this package adds a DB-API 2.0 `connect()`.
 It needs Python 3.10 or newer, with pyarrow 16.0.0+ and adbc-driver-manager 1.8.0+, which pip
 installs with it.
 
-## Usage
+## 🚀 Usage
 
 ```python
 from adbc_driver_chargewire import dbapi
@@ -48,7 +73,7 @@ with dbapi.connect(
 | `catalog`, `db_schema` | Make these current for the session. `db_schema` is one schema name in `catalog` (in the server's default catalog without it) and is never split at a dot: for the schema `reports` of the catalog `lake`, pass `catalog="lake", db_schema="reports"`. |
 | `autocommit` | `True` by default; `False` starts a transaction (`conn.commit()`, `conn.rollback()`). |
 | `profile` | An ADBC connection profile (needs adbc-driver-manager 1.11.0 or newer, which resolves it). |
-| `db_kwargs`, `conn_kwargs` | Any other driver option, e.g. `adbc.chargewire.statement.async`. |
+| `db_kwargs`, `conn_kwargs` | Any other driver option, e.g. `chargewire.query.async`. |
 
 Driver options are in `adbc_driver_chargewire.DatabaseOptions`, `ConnectionOptions` and
 `StatementOptions`; the repository README lists them all.
@@ -62,14 +87,7 @@ rows land in no defined order.
 Errors are `adbc_driver_manager` exceptions whose `details` carry the server's error code
 (`b"chargewire.code"`, e.g. `b"sql_error"`) and request id (`b"chargewire.request_id"`).
 
-## Development
-
-See the [repository](https://github.com/gizmodata/chargewire-adbc): build the library with
-`make -C go lib`, then `pip install -e "python[test]"`. Unit tests need no server; the
-integration tests start the server named by `CHARGEWIRE_ADBC_TEST_SERVER_BINARY` and fail
-without it.
-
-### Read-only sessions
+## 🔒 Read-only sessions
 
 Request server-enforced read-only mode when opening the connection:
 
@@ -102,3 +120,19 @@ active transaction. Attaching with the option restricts that shared session too.
 
 Read-only limits SQL writes as defined by the server's Chargewire implementation.
 It does not grant additional read permissions or sandbox installed extension code.
+
+## 🛠️ Development
+
+See the [repository](https://github.com/gizmodata/chargewire-adbc): build the library with
+`make -C go lib`, then `pip install -e "python[test]"`. Unit tests need no server; the
+integration tests start the server named by `CHARGEWIRE_ADBC_TEST_SERVER_BINARY` and fail
+without it.
+
+---
+
+<p align="center">
+  <a href="https://gizmodata.com"><img src="https://raw.githubusercontent.com/gizmodata/chargewire-adbc/main/docs/assets/gizmodata-logo.png" alt="GizmoData" width="56"></a><br>
+  <sub>Built by <a href="https://gizmodata.com">GizmoData</a></sub>
+</p>
+
+<p align="center"><sub>Hardcharger™ and GizmoData™ are trademarks of GizmoData LLC.</sub></p>

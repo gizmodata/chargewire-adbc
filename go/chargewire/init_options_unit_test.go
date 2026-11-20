@@ -25,10 +25,10 @@ func TestInitOptionOrder(t *testing.T) {
 	want := []string{
 		adbc.OptionKeyCurrentCatalog,
 		adbc.OptionKeyCurrentDbSchema,
-		OptionIPCCompression,
-		OptionSessionCloseOnRelease,
-		OptionStatementTimeout,
 		adbc.OptionKeyAutoCommit,
+		OptionIPCCompression,
+		OptionStatementTimeout,
+		OptionSessionCloseOnRelease,
 	}
 	if !slices.IsSorted(want[2:]) {
 		t.Fatalf("the test's own expectation isn't sorted after the catalog and schema: %v", want)

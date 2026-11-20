@@ -90,7 +90,7 @@ type BrowserSignInResult struct {
 }
 
 // BrowserSignIn runs a browser sign-in against the server the options name:
-// the uri, the adbc.chargewire.tls.* options and OptionResumeTimeout, as for
+// the uri, the chargewire.tls.* options and OptionResumeTimeout, as for
 // a database. It fails with
 // StatusUnauthenticated when the server doesn't offer browser sign-in, the
 // person or the identity provider refused, or the server refused who signed

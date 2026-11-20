@@ -157,7 +157,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         if: runner.os == 'Linux'
         with:
-          version: 0.17.0
+          version: 0.17.1
 
       - name: Build the shared library
         env:
@@ -220,7 +220,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         if: runner.os == 'Linux'
         with:
-          version: 0.17.0
+          version: 0.17.1
 
       - name: Build the shared library
         shell: bash
@@ -276,7 +276,7 @@ jobs:
           cache-dependency-path: go/go.sum
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.17.0
+          version: 0.17.1
 
       # The race detector and a checked Arrow allocator; fails when no integration test ran.
       - name: Go live suite
@@ -348,7 +348,7 @@ jobs:
           cache-dependency-path: go/go.sum
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.17.0
+          version: 0.17.1
       - name: Build the shared library
         run: scripts/build_lib.sh
 
@@ -422,7 +422,7 @@ jobs:
           cache-dependency-path: go/go.sum
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.17.0
+          version: 0.17.1
       - name: Build the shared library
         run: scripts/build_lib.sh
       - name: The library exports only the ADBC entrypoints (Adbc*)

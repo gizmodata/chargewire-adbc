@@ -17,17 +17,17 @@ import (
 const (
 	// OptionTLSSkipVerify ("true"/"false") turns off verification of the
 	// server's certificate. For development only; it is off unless set.
-	OptionTLSSkipVerify = "adbc.chargewire.tls.skip_verify"
+	OptionTLSSkipVerify = "chargewire.tls.skip_verify"
 	// OptionTLSRootCerts is PEM-encoded CA certificates to trust instead of
 	// the system's.
-	OptionTLSRootCerts = "adbc.chargewire.tls.root_certs"
+	OptionTLSRootCerts = "chargewire.tls.root_certs"
 	// OptionTLSClientCert and OptionTLSClientKey are a PEM certificate chain
 	// and private key presented to servers that require mutual TLS.
-	OptionTLSClientCert = "adbc.chargewire.tls.client_cert"
-	OptionTLSClientKey  = "adbc.chargewire.tls.client_key"
+	OptionTLSClientCert = "chargewire.tls.client_cert"
+	OptionTLSClientKey  = "chargewire.tls.client_key"
 	// OptionTLSServerName overrides the host name the certificate is checked
 	// against.
-	OptionTLSServerName = "adbc.chargewire.tls.server_name"
+	OptionTLSServerName = "chargewire.tls.server_name"
 
 	// OptionAuthType is how the driver signs in: AuthTypePassword (the
 	// default: the username and password options, or a subject or access
@@ -39,15 +39,15 @@ const (
 	// presents it. AuthTypeOAuthBrowser signs in through a browser with the
 	// server's identity provider (spec §4.3) when the first connection opens:
 	// see BrowserSignIn.
-	OptionAuthType = "adbc.chargewire.auth.type"
+	OptionAuthType = "chargewire.auth.type"
 
 	// OptionOAuthBrowser is the command that opens the browser sign-in page,
 	// given its URL as the last argument. Default: the system's (open,
 	// xdg-open, rundll32). BrowserNone only prints the URL to stderr.
-	OptionOAuthBrowser = "adbc.chargewire.oauth.browser"
+	OptionOAuthBrowser = "chargewire.oauth.browser"
 	// OptionOAuthTimeoutSeconds is how long the person has to sign in
 	// (default 300).
-	OptionOAuthTimeoutSeconds = "adbc.chargewire.oauth.timeout_seconds"
+	OptionOAuthTimeoutSeconds = "chargewire.oauth.timeout_seconds"
 
 	// OptionAccessToken is a Chargewire access token obtained elsewhere, used
 	// instead of a username and password. The driver cannot renew it, but it
@@ -60,19 +60,19 @@ const (
 	// the first connection signs in with a password. It is a bearer secret:
 	// anyone holding it acts as the user until it expires. Store it encrypted
 	// and never log it.
-	OptionAccessToken = "adbc.chargewire.auth.access_token"
+	OptionAccessToken = "chargewire.auth.access_token"
 	// OptionAccessTokenExpiresAt (read-only) is when that token expires, in
 	// RFC 3339 UTC: from the token response's expires_in, or the token's own
 	// exp claim when it is a JWT. "" when unknown.
-	OptionAccessTokenExpiresAt = "adbc.chargewire.auth.access_token_expires_at"
+	OptionAccessTokenExpiresAt = "chargewire.auth.access_token_expires_at"
 	// OptionSubjectToken is an identity provider's token (for example an
 	// OpenID Connect ID token) exchanged for an access token with the
 	// token_exchange grant.
-	OptionSubjectToken = "adbc.chargewire.auth.subject_token"
+	OptionSubjectToken = "chargewire.auth.subject_token"
 
 	// OptionRetryMaxAttempts bounds how often a request that is safe to
 	// repeat is sent, first try included (default 4; 1 turns retries off).
-	OptionRetryMaxAttempts = "adbc.chargewire.retry.max_attempts"
+	OptionRetryMaxAttempts = "chargewire.retry.max_attempts"
 
 	// OptionResumeTimeout is how long, in seconds (fractions allowed), a
 	// request is sent again while the server answers it with server_resuming:
@@ -86,7 +86,7 @@ const (
 	// that, the server_resuming error is returned (StatusIO), with the
 	// server's message. Repeats for a resuming server don't count against
 	// OptionRetryMaxAttempts.
-	OptionResumeTimeout = "adbc.chargewire.resume_timeout"
+	OptionResumeTimeout = "chargewire.retry.resume_timeout_seconds"
 
 	// OptionSessionReconnect ("true"/"false", default "true") says whether a
 	// session the server lost (evicted when idle, server restarted, or ended
@@ -99,7 +99,7 @@ const (
 	// off or with SQL BEGIN: after a statement that could have begun or ended
 	// one, the driver reads the session's transaction from the server, and
 	// until it has, assumes one is open.
-	OptionSessionReconnect = "adbc.chargewire.session.reconnect"
+	OptionSessionReconnect = "chargewire.session.reconnect"
 
 	// OptionSessionID, set on the database before its first connection
 	// opens, makes every connection attach to that existing session instead
@@ -124,7 +124,7 @@ const (
 	// then stays (with its transaction) for the next client until it is
 	// closed or idles out. Set on the database, it applies to its new
 	// connections; on a connection, it can be changed at any time.
-	OptionSessionCloseOnRelease = "adbc.chargewire.session.close_on_release"
+	OptionSessionCloseOnRelease = "chargewire.session.close_on_release"
 )
 
 // Values of OptionAuthType.
@@ -144,15 +144,15 @@ const (
 // (attach to a session), and OptionSessionCloseOnRelease a connection option.
 const (
 	// OptionSessionID is the connection's current server session id.
-	OptionSessionID = "adbc.chargewire.session.id"
+	OptionSessionID = "chargewire.session.id"
 	// OptionSessionReplacements is how often the connection's session was
 	// lost and replaced.
-	OptionSessionReplacements = "adbc.chargewire.session.replacements"
+	OptionSessionReplacements = "chargewire.session.replacements"
 	// OptionSessionTransaction is the session's transaction as the server
 	// reports it (§5.2): "none", "open", "aborted", or "unknown" for a value
 	// this driver doesn't know. It sees SQL BEGIN and COMMIT too. Reading it
 	// costs a request.
-	OptionSessionTransaction = "adbc.chargewire.session.transaction"
+	OptionSessionTransaction = "chargewire.session.transaction"
 )
 
 // Statement options. They can also be set on the database or the connection,
@@ -162,26 +162,26 @@ const (
 	// asynchronous path: submit, poll, then download a retained result that
 	// resumes where it stopped if the download breaks. The default streams
 	// the result in the response to one request.
-	OptionAsync = "adbc.chargewire.statement.async"
+	OptionAsync = "chargewire.query.async"
 	// OptionRetainResult ("true"/"false") asks the server to keep results
 	// for re-reading, so an interrupted download resumes (§6.5). Unset, the
 	// server decides (it keeps async results and drops streamed ones).
-	OptionRetainResult = "adbc.chargewire.statement.retain_result"
+	OptionRetainResult = "chargewire.query.retain_result"
 	// OptionStatementTimeout is the seconds (fractions allowed) after which
 	// the server cancels a statement; 0 means none.
-	OptionStatementTimeout = "adbc.chargewire.statement.timeout_seconds"
+	OptionStatementTimeout = "chargewire.query.timeout_seconds"
 	// OptionQueryTag is a JSON object recorded with every statement and
 	// ingest, for observability on the server (Chargewire-Query-Tag, §2.5). It is
 	// sent compact and in ASCII (other characters as \u escapes), and may be
 	// at most 4,096 bytes so; reading the option back gives that form.
-	OptionQueryTag = "adbc.chargewire.statement.query_tag"
+	OptionQueryTag = "chargewire.query.tag"
 	// OptionIPCCompression is the Arrow buffer compression for results and
 	// uploads (§8.2): "auto" (default), "lz4_frame", "zstd" or "none". A codec
 	// the server doesn't offer is not used. "auto" chooses per link, from the
 	// round trip measured when connecting: on a fast, near link the bytes
 	// compression saves cost more CPU than they are worth; on a far one
 	// bandwidth is scarce and zstd's smaller results win.
-	OptionIPCCompression = "adbc.chargewire.ipc_compression"
+	OptionIPCCompression = "chargewire.ipc.compression"
 	// OptionResultPartitions is the most partitions a query's result may be
 	// split into (default 32; 1: never). A server that offers it splits a
 	// large result, and the driver reads the partitions at once, each over
@@ -190,11 +190,11 @@ const (
 	// decides how many by the result's size (Hardcharger: a few batches get a
 	// partition per two batches, a large result all of them), and a server
 	// without the capability is never asked.
-	OptionResultPartitions = "adbc.chargewire.statement.result_partitions"
+	OptionResultPartitions = "chargewire.query.result_partitions"
 	// OptionResultOrder is "preserve" (default) or "any". With "preserve" a
 	// split result comes back in the server's order (round robin over the
 	// partitions); with "any" batches come in whichever order they arrive.
-	OptionResultOrder = "adbc.chargewire.statement.result_order"
+	OptionResultOrder = "chargewire.query.result_order"
 	// OptionIngestParts is the most connections one bulk ingest is sent over
 	// at once: "auto" (default) or 1 to 256 (1: one stream). On a server that
 	// offers it, an upload of more than one slice (uploadSliceRows) is a
@@ -203,7 +203,7 @@ const (
 	// about one per two slices. "auto" is 16 parts on a near link and 32 on a
 	// far one, where each connection carries less. The rows then land in no
 	// defined order; set 1 to keep the upload's order.
-	OptionIngestParts = "adbc.chargewire.ingest.parts"
+	OptionIngestParts = "chargewire.ingest.parts"
 )
 
 // Defaults of the options above.
@@ -217,7 +217,7 @@ const (
 // Statement options, read-only.
 const (
 	// OptionStatementID is the id of the statement's last execution.
-	OptionStatementID = "adbc.chargewire.statement.id"
+	OptionStatementID = "chargewire.query.id"
 )
 
 // maxResultPartitions is the most partitions a client may ask for (§6.10).

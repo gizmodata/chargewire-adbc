@@ -747,7 +747,7 @@ class TestClientCertificate:
         server, certificates = mtls_server
         with dbapi.connect(
             uri=server.uri,
-            db_kwargs={"adbc.chargewire.auth.type": "mtls"},
+            db_kwargs={"chargewire.auth.type": "mtls"},
             tls_root_certs=certificates["ca"],
             tls_client_cert=certificates["client_cert"],
             tls_client_key=certificates["client_key"],

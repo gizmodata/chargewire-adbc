@@ -60,7 +60,7 @@ func newConnection(db *databaseImpl, client *protocol.Client, discovery *protoco
 }
 
 func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, error) {
-	key = currentOptionKey(key)
+	key = c.db.host.CurrentOptionKey(key)
 	if value, ok := c.defaults.get(key); ok {
 		return value, nil
 	}
@@ -92,7 +92,7 @@ func (c *connectionImpl) GetOption(ctx context.Context, key string) (string, err
 }
 
 func (c *connectionImpl) GetOptionInt(ctx context.Context, key string) (int64, error) {
-	key = currentOptionKey(key)
+	key = c.db.host.CurrentOptionKey(key)
 	if key == OptionSessionReplacements {
 		return int64(c.session.Replacements()), nil
 	}
@@ -100,7 +100,7 @@ func (c *connectionImpl) GetOptionInt(ctx context.Context, key string) (int64, e
 }
 
 func (c *connectionImpl) SetOption(ctx context.Context, key, value string) error {
-	key = currentOptionKey(key)
+	key = c.db.host.CurrentOptionKey(key)
 	if handled, err := c.defaults.set(key, value); handled {
 		return err
 	}

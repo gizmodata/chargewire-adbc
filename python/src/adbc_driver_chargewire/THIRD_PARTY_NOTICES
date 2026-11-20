@@ -40,7 +40,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20261109034954-869784ceb17f
+github.com/adbc-drivers/driverbase-go/driverbase v0.0.0-20261115080055-809dff5b62b1
 ================================================================================
 
 
@@ -255,7 +255,7 @@ Home page: https://arrow.apache.org/adbc/
 License: http://www.apache.org/licenses/LICENSE-2.0
 
 ================================================================================
-github.com/andybalholm/brotli v1.2.7
+github.com/andybalholm/brotli v1.3.0
 ================================================================================
 
 Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
@@ -486,7 +486,7 @@ github.com/apache/arrow-adbc/go/adbc v1.13.0
    limitations under the License.
 
 ================================================================================
-github.com/apache/arrow-go/v18 v18.8.0
+github.com/apache/arrow-go/v18 v18.9.0
 ================================================================================
 
 
@@ -1804,7 +1804,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0
+github.com/grpc-ecosystem/grpc-gateway/v2 v2.34.0
 ================================================================================
 
 Copyright (c) 2015, Gengo, Inc.
@@ -1836,7 +1836,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-github.com/klauspost/compress v1.20.4
+github.com/klauspost/compress v1.20.5
 ================================================================================
 
 Copyright (c) 2012 The Go Authors. All rights reserved.
@@ -2145,7 +2145,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-github.com/klauspost/cpuid/v2 v2.4.1
+github.com/klauspost/cpuid/v2 v2.4.2
 ================================================================================
 
 The MIT License (MIT)
@@ -4765,7 +4765,7 @@ go.opentelemetry.io/proto/otlp v1.11.1
    limitations under the License.
 
 ================================================================================
-golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e
+golang.org/x/exp v0.0.0-20261120130654-b6de8d37927a
 ================================================================================
 
 Copyright 2009 The Go Authors.
@@ -4797,7 +4797,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-golang.org/x/net v0.62.0
+golang.org/x/net v0.63.0
 ================================================================================
 
 Copyright 2009 The Go Authors.
@@ -4925,7 +4925,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
-google.golang.org/genproto/googleapis/api v0.0.0-20261026165753-2ffab32bce7e
+google.golang.org/genproto/googleapis/api v0.0.0-20261118221215-c8830f628b3f
 ================================================================================
 
 
@@ -5132,7 +5132,7 @@ google.golang.org/genproto/googleapis/api v0.0.0-20261026165753-2ffab32bce7e
    limitations under the License.
 
 ================================================================================
-google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e
+google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f
 ================================================================================
 
 
