@@ -157,6 +157,12 @@ class Connection(_BaseConnection):
         super().close()
 
 
+# The ADBC specification's standard connection option for server-enforced read-only (the
+# driver manager has no named constant for it). Standard options keep the ``adbc.`` prefix;
+# the ADBC driver style guide reserves it for them.
+_READ_ONLY = "adbc.connection.readonly"
+
+
 def _pem(value: PemSource) -> str:
     """PEM text given directly, or read from a file path."""
     if isinstance(value, bytes):
@@ -185,6 +191,7 @@ def connect(
     tls_client_key: Optional[PemSource] = None,
     catalog: Optional[str] = None,
     db_schema: Optional[str] = None,
+    read_only: bool = False,
     db_kwargs: Optional[dict[str, str]] = None,
     conn_kwargs: Optional[dict[str, str]] = None,
     autocommit: bool = True,
@@ -228,6 +235,11 @@ def connect(
         db_schema: Schema to make current for the session: one schema name in
             ``catalog`` (in the server's default catalog without it), never a
             ``catalog.schema`` path (a dot can be part of a schema's name).
+        read_only: Ask the server to enforce read-only on this connection before anything
+            runs on it (the server must confirm ``options.read_only`` when the session opens); the
+            ADBC specification's standard option
+            ``adbc.connection.readonly``. A server that refuses or ignores it is an error,
+            with no writable fallback, and it is one-way: open another connection to write.
         db_kwargs: Extra ADBC database options (``chargewire.*``, telemetry).
         conn_kwargs: Extra ADBC connection options.
         autocommit: Enable autocommit (default True).
@@ -287,6 +299,14 @@ def connect(
         conn_kwargs.setdefault(conn_options.CURRENT_CATALOG.value, catalog)
     if db_schema is not None:
         conn_kwargs.setdefault(conn_options.CURRENT_DB_SCHEMA.value, db_schema)
+    if not isinstance(read_only, bool):
+        raise TypeError(f"read_only must be a bool, not {type(read_only).__name__}")
+    if read_only:
+        if conn_kwargs.get(_READ_ONLY, "true").lower() != "true":
+            raise ValueError(
+                f"read_only=True and conn_kwargs[{_READ_ONLY!r}] disagree: give one of them"
+            )
+        conn_kwargs[_READ_ONLY] = "true"
 
     db = None
     conn = None
