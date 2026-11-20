@@ -48,7 +48,7 @@ class TestConnect:
             "uri": "chargewire://localhost:31337",
             "username": "myuser",
             "password": "my:p@ss",
-            "adbc.chargewire.tls.skip_verify": "true",
+            "chargewire.tls.skip_verify": "true",
         }
         assert mock_db.call_args[1]["driver"] == FAKE_LIB
 
@@ -56,7 +56,7 @@ class TestConnect:
         from adbc_driver_chargewire.dbapi import connect
 
         connect(uri="chargewire://localhost:31337", username="u", password="p")
-        assert "adbc.chargewire.tls.skip_verify" not in _db_kwargs(mock_db=mock_db)
+        assert "chargewire.tls.skip_verify" not in _db_kwargs(mock_db=mock_db)
 
     def test_access_token(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
         from adbc_driver_chargewire.dbapi import connect
@@ -64,7 +64,7 @@ class TestConnect:
         connect(uri="chargewire://h:1", access_token="tok")
         assert _db_kwargs(mock_db=mock_db) == {
             "uri": "chargewire://h:1",
-            "adbc.chargewire.auth.access_token": "tok",
+            "chargewire.auth.access_token": "tok",
         }
 
     def test_client_certificate_auth(
@@ -76,9 +76,9 @@ class TestConnect:
         connect(uri="chargewire://h:1", auth_type="mtls", tls_client_cert=PEM, tls_client_key=key)
         assert _db_kwargs(mock_db=mock_db) == {
             "uri": "chargewire://h:1",
-            "adbc.chargewire.auth.type": "mtls",
-            "adbc.chargewire.tls.client_cert": PEM,
-            "adbc.chargewire.tls.client_key": key,
+            "chargewire.auth.type": "mtls",
+            "chargewire.tls.client_cert": PEM,
+            "chargewire.tls.client_key": key,
         }
 
     def test_browser_sign_in(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
@@ -87,7 +87,7 @@ class TestConnect:
         connect(uri="chargewire://h:1", auth_type="oauth_browser")
         assert _db_kwargs(mock_db=mock_db) == {
             "uri": "chargewire://h:1",
-            "adbc.chargewire.auth.type": "oauth_browser",
+            "chargewire.auth.type": "oauth_browser",
         }
 
     def test_browser_sign_in_options(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
@@ -101,29 +101,27 @@ class TestConnect:
         )
         assert _db_kwargs(mock_db=mock_db) == {
             "uri": "chargewire://h:1",
-            "adbc.chargewire.auth.type": "oauth_browser",
-            "adbc.chargewire.oauth.browser": "none",
-            "adbc.chargewire.oauth.timeout_seconds": "60",
+            "chargewire.auth.type": "oauth_browser",
+            "chargewire.oauth.browser": "none",
+            "chargewire.oauth.timeout_seconds": "60",
         }
         mock_db.reset_mock()
         connect(
             uri="chargewire://h:1", auth_type="oauth_browser", open_browser="firefox --new-window"
         )
-        assert (
-            _db_kwargs(mock_db=mock_db)["adbc.chargewire.oauth.browser"] == "firefox --new-window"
-        )
+        assert _db_kwargs(mock_db=mock_db)["chargewire.oauth.browser"] == "firefox --new-window"
 
     def test_resume_timeout(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
         from adbc_driver_chargewire.dbapi import connect
 
         connect(uri="chargewire://h:1", username="u", password="p", resume_timeout=90)
-        assert _db_kwargs(mock_db=mock_db)["adbc.chargewire.resume_timeout"] == "90"
+        assert _db_kwargs(mock_db=mock_db)["chargewire.retry.resume_timeout_seconds"] == "90"
         mock_db.reset_mock()
         connect(uri="chargewire://h:1", username="u", password="p", resume_timeout=0)
-        assert _db_kwargs(mock_db=mock_db)["adbc.chargewire.resume_timeout"] == "0"
+        assert _db_kwargs(mock_db=mock_db)["chargewire.retry.resume_timeout_seconds"] == "0"
         mock_db.reset_mock()
         connect(uri="chargewire://h:1", username="u", password="p")
-        assert "adbc.chargewire.resume_timeout" not in _db_kwargs(mock_db=mock_db)
+        assert "chargewire.retry.resume_timeout_seconds" not in _db_kwargs(mock_db=mock_db)
 
     def test_pem_text_and_files(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib, tmp_path):
         from adbc_driver_chargewire.dbapi import connect
@@ -139,9 +137,9 @@ class TestConnect:
             tls_client_key=key_file,
         )
         kwargs = _db_kwargs(mock_db=mock_db)
-        assert kwargs["adbc.chargewire.tls.root_certs"] == PEM
-        assert kwargs["adbc.chargewire.tls.client_cert"] == PEM
-        assert kwargs["adbc.chargewire.tls.client_key"].startswith("-----BEGIN PRIVATE KEY-----")
+        assert kwargs["chargewire.tls.root_certs"] == PEM
+        assert kwargs["chargewire.tls.client_cert"] == PEM
+        assert kwargs["chargewire.tls.client_key"].startswith("-----BEGIN PRIVATE KEY-----")
 
     def test_db_kwargs_passthrough(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
         from adbc_driver_chargewire.dbapi import connect
@@ -150,11 +148,36 @@ class TestConnect:
             uri="chargewire://h:1",
             username="user",
             password="pass",
-            db_kwargs={"adbc.chargewire.statement.async": "true"},
+            db_kwargs={"chargewire.query.async": "true"},
         )
         kwargs = _db_kwargs(mock_db=mock_db)
-        assert kwargs["adbc.chargewire.statement.async"] == "true"
+        assert kwargs["chargewire.query.async"] == "true"
         assert kwargs["username"] == "user"
+
+    @pytest.mark.parametrize(
+        "old_key", ["adbc.chargewire.resume_timeout", "adbc.warp.resume_timeout"]
+    )
+    def test_an_old_option_name_still_wins_over_an_argument(
+        self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib, old_key
+    ):
+        """An option given under its name from before the style guide counts as given: the
+        keyword argument doesn't add the current name beside it (the driver would prefer
+        the current name and so drop the caller's explicit option)."""
+        from adbc_driver_chargewire.dbapi import connect
+
+        connect(
+            uri="chargewire://h:1",
+            username="u",
+            password="p",
+            resume_timeout=90,
+            tls_skip_verify=True,
+            db_kwargs={old_key: "5", "adbc.chargewire.tls.skip_verify": "false"},
+        )
+        kwargs = _db_kwargs(mock_db=mock_db)
+        assert kwargs[old_key] == "5"
+        assert "chargewire.retry.resume_timeout_seconds" not in kwargs
+        assert kwargs["adbc.chargewire.tls.skip_verify"] == "false"
+        assert "chargewire.tls.skip_verify" not in kwargs
 
     def test_explicit_db_kwargs_win(self, mock_db, mock_adbc_conn, mock_conn_cls, mock_lib):
         from adbc_driver_chargewire.dbapi import connect
@@ -280,7 +303,7 @@ class TestConnectProfile:
         from adbc_driver_chargewire.dbapi import connect
 
         connect(profile="my_profile", tls_skip_verify=True)
-        assert _db_kwargs(mock_db=mock_db)["adbc.chargewire.tls.skip_verify"] == "true"
+        assert _db_kwargs(mock_db=mock_db)["chargewire.tls.skip_verify"] == "true"
 
 
 class TestCursorShims:

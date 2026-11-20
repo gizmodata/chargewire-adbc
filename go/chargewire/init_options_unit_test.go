@@ -26,11 +26,11 @@ func TestInitOptionOrder(t *testing.T) {
 		adbc.OptionKeyCurrentCatalog,
 		adbc.OptionKeyCurrentDbSchema,
 		OptionIPCCompression,
-		OptionSessionCloseOnRelease,
 		OptionStatementTimeout,
+		OptionSessionCloseOnRelease,
 		adbc.OptionKeyAutoCommit,
 	}
-	if !slices.IsSorted(want[2:]) {
+	if !slices.IsSorted(want[2:5]) {
 		t.Fatalf("the test's own expectation isn't sorted after the catalog and schema: %v", want)
 	}
 	for range 200 {
@@ -43,6 +43,29 @@ func TestInitOptionOrder(t *testing.T) {
 	}
 	if got := InitOptionOrder(nil); len(got) != 0 {
 		t.Errorf("no options: %v", got)
+	}
+	// One option under several names: the name a database would keep is
+	// applied last, so it wins on a connection too.
+	several := map[string]string{
+		"adbc.chargewire.statement.timeout_seconds": "1",
+		"adbc.warp.statement.timeout_seconds":       "2",
+		OptionStatementTimeout:                      "3",
+		"acme.query.timeout_seconds":                "4",
+	}
+	wantSeveral := []string{"adbc.warp.statement.timeout_seconds", "adbc.chargewire.statement.timeout_seconds",
+		OptionStatementTimeout, "acme.query.timeout_seconds"}
+	for range 50 {
+		if got := InitOptionOrder(several); !slices.Equal(got, wantSeveral) {
+			t.Fatalf("InitOptionOrder = %v, want %v", got, wantSeveral)
+		}
+	}
+	host := &Host{Name: "acme", OptionPrefix: "acme."}
+	if got := host.CurrentOptions(several); got[OptionStatementTimeout] != "4" {
+		t.Errorf("a database keeps %q, want the host's 4 (the name applied last above)", got[OptionStatementTimeout])
+	}
+	if got := currentOptions(map[string]string{"adbc.chargewire.statement.timeout_seconds": "1",
+		"adbc.warp.statement.timeout_seconds": "2"}); got[OptionStatementTimeout] != "1" {
+		t.Errorf("a database keeps %q of two old names, want adbc.chargewire's 1 (applied last above)", got[OptionStatementTimeout])
 	}
 }
 

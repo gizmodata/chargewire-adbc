@@ -6,6 +6,72 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-20
+
+### Changed
+
+- **Option names follow the [ADBC driver style guide](https://adbc-drivers.org/building-drivers/style-guide.html)**:
+  the driver's own options drop the `adbc.` prefix the guide reserves for the ADBC
+  specification's options, and statement behaviour moves under `chargewire.query.*`, as the
+  guide groups it. `adbc.chargewire.tls.*`, `auth.*`, `oauth.*`, `retry.max_attempts`,
+  `session.*` and `ingest.parts` become `chargewire.tls.*` and so on; besides the prefix:
+
+  | Before | Now |
+  |---|---|
+  | `adbc.chargewire.statement.{async, retain_result, timeout_seconds, result_partitions, result_order, id}` | `chargewire.query.*` (same) |
+  | `adbc.chargewire.statement.query_tag` | `chargewire.query.tag` |
+  | `adbc.chargewire.resume_timeout` | `chargewire.retry.resume_timeout_seconds` |
+  | `adbc.chargewire.ipc_compression` | `chargewire.ipc.compression` |
+
+  The Go constants (`chargewire.OptionStatementTimeout`, ...) and the Python enums
+  (`StatementOptions.TIMEOUT_SECONDS`, ...) keep their names and carry the new keys; Python's
+  `connect()` arguments don't change. **The old names still work**, `adbc.chargewire.*` and the
+  older `adbc.warp.*`, for setting and reading options, and the first time a process uses each,
+  the driver prints `[chargewire] option "<old>" is deprecated; use "<new>"` to stderr (keys only,
+  never values). With both names given, the new one wins, on a database and on a connection's
+  options set before `AdbcConnectionInit` alike (`InitOptionOrder` applies the winning name last). Python's `connect()` still lets an
+  option given under its old name in `db_kwargs` win over its keyword argument. An unknown key
+  keeps the spelling it was given, so the error names what the caller wrote.
+
+### Fixed
+
+- **A uri that doesn't parse is no longer quoted in the error**: `invalid uri "chargewire://u:Pa%ssword@h"`
+  (with Go's own message repeating it) could put a password into logs, since a raw `%` in it is
+  enough to fail parsing. The error now describes the problem only (`invalid uri: a % that
+  doesn't start a two-digit hex escape (write a literal % as %25)`); `chargewire.URIParseProblem`
+  gives drivers built on this one the same wording.
+
+### Added
+
+- **`chargewire.NewDriverForHost` and `chargewire.Host`**, for drivers built on this one under
+  their own name (Hardcharger's): every option `chargewire.X` is also accepted as the host's
+  `<prefix>X` on databases, connections and statements, the host's spelling wins when several
+  name one option, and deprecation warnings speak in the host's terms
+  (`[hardcharger] option "adbc.chargewire.statement.timeout_seconds" is deprecated; use "hardcharger.query.timeout_seconds"`).
+  `Host.Own` names the host's own options under its prefix (Hardcharger's `auth.type` and
+  `oauth.*`, which take other values): those are never taken as this driver's, and a warning for
+  this driver's option of that name suggests `chargewire.X`. `Host.CurrentOptionKey` and
+  `Host.CurrentOptions` give the names the driver reads, and `Host.BrowserSignIn` reads the
+  host's spellings; `chargewire.RenamedOption` maps a name from before the style guide,
+  `chargewire.WarnDeprecatedOption` warns about a host's own old names the same way, and
+  `chargewire.SetDeprecationOutput` sends the warnings elsewhere (tests).
+- **Go programs that compare option keys with this package's constants**: the constants keep
+  their names and now hold the new keys (`OptionSessionID` is `chargewire.session.id`), while
+  the driver still accepts the old spellings from callers. Normalize a caller's keys with
+  `(*Host).CurrentOptions` (a nil `*Host` is this driver) before comparing them. Hardcharger's
+  driver does from 2.7.0; use hardcharger-adbc 2.7.0 or later with this release.
+- **The PyPI page has the repository's branding**: banner, the badge row (now with CI, PyPI
+  version, Python versions and downloads), the tagline and the GizmoData footer; the read-only
+  section moved up to its own heading. The README and the PyPI page carry a badge for the style
+  guide, linked to it.
+- **Dependencies**: Go toolchain 1.27.4 (from 1.27.3), arrow-go 18.9.0 (from 18.8.0),
+  klauspost/compress 1.20.5, driverbase-go 2026-11-15 (its own dependency updates), brotli 1.3.0,
+  grpc-gateway 2.34.0, golang.org/x/net 0.63.0, golang.org/x/tools 0.53.0 and the genproto
+  modules; zig 0.17.1 (from 0.17.0) for the cross-compiled libraries; build and dev floors
+  `setuptools>=84.2.1`, `ruff>=0.17.6`; the ADBC Driver Foundry's validation suite at its
+  2026-11-19 commit (dictionary and union type handling). `THIRD_PARTY_NOTICES` regenerated. The
+  Python runtime floors stay at dlt's (`pyarrow>=16.0.0`, `adbc-driver-manager>=1.8.0`).
+
 ## [2.4.2] - 2026-11-19
 
 ### Changed

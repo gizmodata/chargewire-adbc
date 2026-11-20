@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://arrow.apache.org/adbc/"><img src="https://img.shields.io/badge/ADBC-1.12-f15a24.svg" alt="ADBC 1.12"></a>
   <a href="https://github.com/gizmodata/chargewire-adbc/blob/main/validation/README.md"><img src="https://img.shields.io/badge/ADBC-conformance%20suite%20passing-2ea44f.svg" alt="ADBC conformance suite passing"></a>
+  <a href="https://adbc-drivers.org/building-drivers/style-guide.html"><img src="https://img.shields.io/badge/ADBC%20style%20guide-conforms-2ea44f.svg" alt="Follows the ADBC driver style guide"></a>
   <a href="https://github.com/gizmodata/chargewire"><img src="https://img.shields.io/badge/protocol-Chargewire-31a8db.svg" alt="Chargewire protocol"></a>
   <img src="https://img.shields.io/badge/core-Go-00ADD8.svg?logo=go&logoColor=white" alt="Go core">
   <img src="https://img.shields.io/badge/bindings-Python-3776AB.svg?logo=python&logoColor=white" alt="Python bindings">
@@ -96,7 +97,7 @@ docs/                design notes and the test inventory
 | `https://host:port[/prefix]` | Same as `chargewire://` |
 | `http://host:port[/prefix]` | Plain HTTP |
 
-TLS is verified unless `adbc.chargewire.tls.skip_verify` is set explicitly. Credentials never go
+TLS is verified unless `chargewire.tls.skip_verify` is set explicitly. Credentials never go
 in the URI; a URI with user info is refused. A TLS URI pointed at a plain-HTTP server fails
 at once, before anything but the TLS hello is sent, with `The server at HOST:PORT speaks plain
 HTTP, not TLS. Add ?tls=false to the URI to connect without encryption.` (for an `https://`
@@ -160,14 +161,14 @@ session's id, or "" for the first). When the hook fails, the driver ends the new
 than use it without the setup: on the first session `Open` fails with the hook's error; on a
 replacement the request that found the session lost fails (`StatusIO`, the error saying why),
 and the connection's next request opens another session and runs the hook again. A session the
-driver attached to (`adbc.chargewire.session.id`) is not set up.
+driver attached to (`chargewire.session.id`) is not set up.
 
 A database that signs in through the browser (`auth.type` `oauth_browser`) does that by itself:
 a connection opened while the server was stopped whose first request finds the browser sign-in's
 token revoked signs in through the browser again, once (with single sign-on, usually without
 asking), and the request runs with the new token; a second refusal is the error, and connections
 opened before the stop never do it. A database that signs in with a token issued elsewhere
-(`adbc.chargewire.auth.access_token`, a wrapping driver's browser sign-in) can't get a new token
+(`chargewire.auth.access_token`, a wrapping driver's browser sign-in) can't get a new token
 itself. When a connection opened while
 the server was stopped finds that token revoked at its first request (`invalid_token`, reason
 `token_revoked`: a person stopped the server, which ended the tokens issued until then),
@@ -226,43 +227,58 @@ save it as `chargewire.toml` in an ADBC driver search path. Its entry point is
 
 ## ⚙️ Options
 
+Option names follow the [ADBC driver style guide](https://adbc-drivers.org/building-drivers/style-guide.html):
+the driver's own options are `chargewire.*`, with statement behaviour under `chargewire.query.*`.
+The names from before 2.5.0 still work: `adbc.chargewire.*` (and `adbc.warp.*`, from before the
+protocol's rename) set and read the same options, and the first time a process uses each, the
+driver prints which name to use instead to stderr, e.g.
+`[chargewire] option "adbc.chargewire.statement.timeout_seconds" is deprecated; use "chargewire.query.timeout_seconds"`
+(the warning names keys only, never values). Besides the prefix, these names changed:
+
+| Before 2.5.0 | Now |
+|---|---|
+| `adbc.chargewire.statement.{async, retain_result, timeout_seconds, result_partitions, result_order, id}` | `chargewire.query.*` (same) |
+| `adbc.chargewire.statement.query_tag` | `chargewire.query.tag` |
+| `adbc.chargewire.resume_timeout` | `chargewire.retry.resume_timeout_seconds` |
+| `adbc.chargewire.ipc_compression` | `chargewire.ipc.compression` |
+
 Database options (with the standard `uri`, `username`, `password` and `adbc.telemetry.*`):
 
 | Option | Default | Meaning |
 |---|---|---|
-| `adbc.chargewire.tls.skip_verify` | `false` | Do not verify the server's certificate |
-| `adbc.chargewire.tls.root_certs` | system | PEM CA certificates to trust instead of the system's |
-| `adbc.chargewire.tls.client_cert`, `adbc.chargewire.tls.client_key` | | PEM client certificate and key (mutual TLS) |
-| `adbc.chargewire.tls.server_name` | URI host | Host name the certificate is checked against |
-| `adbc.chargewire.auth.type` | `password` | `oauth_browser`: browser sign-in (below). `client_certificate` (or `mtls`): sign in with the TLS client certificate alone, no password (spec §4.4; servers with capability `mtls_identity`). Needs the client certificate and key; refuses a username, password or token beside it. The token is bound to the certificate and renewed like a password sign-in's |
-| `adbc.chargewire.oauth.browser` | system browser | With `auth.type` `oauth_browser` (spec §4.3: sign in through a browser with the server's identity provider, when the first connection opens; servers with capability `oauth_browser`): the command that opens the sign-in page (its URL appended), or `none` to print the URL to stderr. The token it yields can't be renewed: once it expires, open a new database |
-| `adbc.chargewire.oauth.timeout_seconds` | `300` | How long the person has to complete a browser sign-in |
-| `adbc.chargewire.auth.access_token` | | An access token issued elsewhere (used as is, never renewed by the driver; may be set again on an open database that signs in with a token or through the browser). Readable on the database and its connections: the token in use (below) |
-| `adbc.chargewire.auth.access_token_expires_at` | | Read-only: when that token expires, RFC 3339 UTC (`2026-10-20T15:14:13Z`), from the token response's `expires_in` or the token's own `exp`; `""` when unknown |
-| `adbc.chargewire.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
-| `adbc.chargewire.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
-| `adbc.chargewire.resume_timeout` | `600` | Seconds (fractions allowed) to keep sending a request again while the server answers `server_resuming`, a stopped server starting again (see "A resuming server" under How it behaves); `0`: return the error at once |
-| `adbc.chargewire.session.reconnect` | `true` | Replace a session the server lost (see below) |
-| `adbc.chargewire.session.id` | | Attach every connection to this existing session instead of creating one ([below](#attaching-to-an-existing-session)) |
-| `adbc.chargewire.session.close_on_release` | `true` for a created session, `false` for an attached one | Whether closing a connection ends its session on the server; also a connection option, settable any time |
+| `chargewire.tls.skip_verify` | `false` | Do not verify the server's certificate |
+| `chargewire.tls.root_certs` | system | PEM CA certificates to trust instead of the system's |
+| `chargewire.tls.client_cert`, `chargewire.tls.client_key` | | PEM client certificate and key (mutual TLS) |
+| `chargewire.tls.server_name` | URI host | Host name the certificate is checked against |
+| `chargewire.auth.type` | `password` | `oauth_browser`: browser sign-in (below). `client_certificate` (or `mtls`): sign in with the TLS client certificate alone, no password (spec §4.4; servers with capability `mtls_identity`). Needs the client certificate and key; refuses a username, password or token beside it. The token is bound to the certificate and renewed like a password sign-in's |
+| `chargewire.oauth.browser` | system browser | With `auth.type` `oauth_browser` (spec §4.3: sign in through a browser with the server's identity provider, when the first connection opens; servers with capability `oauth_browser`): the command that opens the sign-in page (its URL appended), or `none` to print the URL to stderr. The token it yields can't be renewed: once it expires, open a new database |
+| `chargewire.oauth.timeout_seconds` | `300` | How long the person has to complete a browser sign-in |
+| `chargewire.auth.access_token` | | An access token issued elsewhere (used as is, never renewed by the driver; may be set again on an open database that signs in with a token or through the browser). Readable on the database and its connections: the token in use (below) |
+| `chargewire.auth.access_token_expires_at` | | Read-only: when that token expires, RFC 3339 UTC (`2026-10-20T15:14:13Z`), from the token response's `expires_in` or the token's own `exp`; `""` when unknown |
+| `chargewire.auth.subject_token` | | An identity provider's token for the `token_exchange` grant |
+| `chargewire.retry.max_attempts` | `4` | Sends of a request that is safe to repeat, first included |
+| `chargewire.retry.resume_timeout_seconds` | `600` | Seconds (fractions allowed) to keep sending a request again while the server answers `server_resuming`, a stopped server starting again (see "A resuming server" under How it behaves); `0`: return the error at once |
+| `chargewire.session.reconnect` | `true` | Replace a session the server lost (see below) |
+| `chargewire.session.id` | | Attach every connection to this existing session instead of creating one ([below](#attaching-to-an-existing-session)) |
+| `chargewire.session.close_on_release` | `true` for a created session, `false` for an attached one | Whether closing a connection ends its session on the server; also a connection option, settable any time |
 
 Statement options; set on the database or connection they are defaults for its statements:
 
 | Option | Default | Meaning |
 |---|---|---|
-| `adbc.chargewire.statement.async` | `false` | Submit, poll, then read a retained, resumable result |
-| `adbc.chargewire.statement.retain_result` | server | Ask the server to keep results for re-reading and resuming |
-| `adbc.chargewire.statement.timeout_seconds` | none | The server cancels the statement after this long |
-| `adbc.chargewire.statement.query_tag` | | JSON object recorded with every statement and ingest; sent compact, in ASCII (other characters as `\u` escapes), at most 4,096 bytes so |
-| `adbc.chargewire.ipc_compression` | `auto` | Arrow buffer compression for results and uploads: `lz4_frame`, `zstd`, `none`, or `auto`: `lz4_frame` on a link with a round trip under 10 ms, `zstd` on a slower one (measured when connecting) |
-| `adbc.chargewire.statement.result_partitions` | `32` | Let the server split a large result into up to this many partitions, read at once over separate connections (`1`: one stream) |
-| `adbc.chargewire.statement.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
-| `adbc.chargewire.ingest.parts` | `auto` | Send a bulk ingest over up to this many connections at once, committed as one (`1`: one ordered stream); `auto`: 16 on a near link, 32 on a far one |
+| `chargewire.query.async` | `false` | Submit, poll, then read a retained, resumable result |
+| `chargewire.query.retain_result` | server | Ask the server to keep results for re-reading and resuming |
+| `chargewire.query.timeout_seconds` | none | The server cancels the statement after this long |
+| `chargewire.query.tag` | | JSON object recorded with every statement and ingest; sent compact, in ASCII (other characters as `\u` escapes), at most 4,096 bytes so |
+| `chargewire.ipc.compression` | `auto` | Arrow buffer compression for results and uploads: `lz4_frame`, `zstd`, `none`, or `auto`: `lz4_frame` on a link with a round trip under 10 ms, `zstd` on a slower one (measured when connecting) |
+| `chargewire.query.result_partitions` | `32` | Let the server split a large result into up to this many partitions, read at once over separate connections (`1`: one stream) |
+| `chargewire.query.result_order` | `preserve` | `any`: a split result's batches come in whatever order they arrive |
+| `chargewire.ingest.parts` | `auto` | Send a bulk ingest over up to this many connections at once, committed as one (`1`: one ordered stream); `auto`: 16 on a near link, 32 on a far one |
 
-Read-only on a connection: `adbc.chargewire.session.id`, `adbc.chargewire.session.replacements` and
-`adbc.chargewire.session.transaction` (connection; the server's view, which sees SQL `BEGIN` too:
+Read-only on a connection: `chargewire.session.id`, `chargewire.session.replacements` and
+`chargewire.session.transaction` (connection; the server's view, which sees SQL `BEGIN` too:
 `none`, `open`, `aborted`, or `unknown`),
-`adbc.chargewire.statement.id` (the statement's last execution). Bulk ingest uses the standard
+`chargewire.query.id` (the statement's last execution). Bulk ingest uses the standard
 `adbc.ingest.*` options; the transaction options are the standard ones.
 
 The current catalog and schema are the standard `adbc.connection.catalog` and
@@ -316,11 +332,11 @@ use the standard ADBC `GetOption` and `SetOption` methods.
 
 ### Reading the access token
 
-`GetOption("adbc.chargewire.auth.access_token")`, on the database or a connection, returns the
+`GetOption("chargewire.auth.access_token")`, on the database or a connection, returns the
 token the driver sends: the one a password sign-in, token exchange or browser sign-in got
 (renewed first when it is about to expire, so a token read after a renewal is the new one), or
-the caller's own `adbc.chargewire.auth.access_token` as given; `""` before a password database's
-first connection. `adbc.chargewire.auth.access_token_expires_at` says until when it works. Use it to
+the caller's own `chargewire.auth.access_token` as given; `""` before a password database's
+first connection. `chargewire.auth.access_token_expires_at` says until when it works. Use it to
 hand a signed-in identity to another process, for instance with a session to attach to
 (below), or to call the server's HTTP API directly (`Authorization: Bearer <token>`).
 
@@ -332,8 +348,8 @@ memory or store it encrypted, pass it only over TLS, and never log it or put it 
 A session (its open transaction, temporary tables and settings) can outlive the connection
 that created it and be picked up by another process: a job runner that begins a transaction
 in one step and commits it in the next, or a client that reconnects after a restart. The
-first connection sets `adbc.chargewire.session.close_on_release=false`, so closing it leaves the
-session on the server, and passes on `adbc.chargewire.session.id` (read it from the connection).
+first connection sets `chargewire.session.close_on_release=false`, so closing it leaves the
+session on the server, and passes on `chargewire.session.id` (read it from the connection).
 The second sets that id on its database, with credentials for the same user (the session
 belongs to the user who created it, spec §9.2), typically the first one's access token,
 read from its connection:
@@ -399,7 +415,7 @@ Route by something both clients send, or connect both to the instance's own addr
   are (length -1) are copied, not decompressed. Message bodies come from a recycler
   over the C library's allocator, so large results don't fault in fresh pages for every
   batch.
-- **Partitioned ingest** (by default; `adbc.chargewire.ingest.parts` above 1, on a server with
+- **Partitioned ingest** (by default; `chargewire.ingest.parts` above 1, on a server with
   the `partitioned_ingest` capability, spec §8.3): batches over 16,384 rows are sent as
   zero-copy slices of that size (the server's insert threads then share the work
   evenly), and an upload of more than one slice is opened once, sent in parts at once,
@@ -407,7 +423,7 @@ Route by something both clients send, or connect both to the instance's own addr
   the next slice from the bound stream, then committed as one. It is all or nothing: if a
   part fails (the bound reader breaks, the server refuses a batch, a connection drops), the
   driver aborts the ingest and nothing is written. The rows land in no defined order; set
-  `adbc.chargewire.ingest.parts=1` to keep the upload's order. A one-slice upload, or a server
+  `chargewire.ingest.parts=1` to keep the upload's order. A one-slice upload, or a server
   without the capability, gets one stream (§8.1). Each part keeps up to 4 MiB in memory so a
   part whose answer was lost can be sent again with its `Idempotency-Key`.
 - **Broken downloads** of a retained result resume from the next batch (up to five times).
@@ -469,7 +485,7 @@ Route by something both clients send, or connect both to the instance's own addr
   back a transaction left idle past its `idle_in_transaction_timeout_s`) are replaced by a new
   session with the options the driver set (and set up by the connection's new-session hook, if
   it has one, before anything else runs there), and the loss is reported, not hidden: a warning is
-  logged, `adbc.chargewire.session.replacements` counts it, and errors from work in the
+  logged, `chargewire.session.replacements` counts it, and errors from work in the
   replacement say it ran there. When a transaction was, or may have been, open in the lost
   session, nothing runs on the replacement (in autocommit it would commit on its own what was
   meant as part of a transaction whose earlier work was rolled back): the operation fails with
@@ -493,7 +509,7 @@ Route by something both clients send, or connect both to the instance's own addr
   restore SQL state in a new-session hook and execute the statements that set it with
   `chargewire.WithSessionStateRestored(ctx)`. A prepared
   statement is prepared again (outside a transaction); a retained result is gone. With
-  `adbc.chargewire.session.reconnect=false` the connection stays broken. A session ended for
+  `chargewire.session.reconnect=false` the connection stays broken. A session ended for
   any other reason (`killed` by an administrator, credentials changed, …) is an error with the
   reason, and is not replaced.
 - **Cancel** (`AdbcStatementCancel`, Python's `adbc_cancel()` and Ctrl+C, closing the

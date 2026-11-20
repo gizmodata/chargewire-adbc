@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=84.0.0", "wheel"]
+requires = ["setuptools>=84.2.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -10,7 +10,7 @@ adbc_driver_chargewire = ["libadbc_driver_chargewire.*", "THIRD_PARTY_NOTICES"]
 
 [project]
 name = "adbc-driver-chargewire"
-version = "2.4.2"
+version = "2.5.0"
 description = "Python ADBC driver for the Chargewire protocol (SQL over HTTP with Arrow), backed by a native Go driver"
 readme = "README.md"
 license = "Apache-2.0"
@@ -53,7 +53,7 @@ test = [
     "cryptography>=50.0.2",
 ]
 dev = [
-    "ruff>=0.17.4",
+    "ruff>=0.17.6",
     "build>=1.6.1",
 ]
 

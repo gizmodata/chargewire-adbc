@@ -26,6 +26,9 @@ const defaultMaxAttempts = 4
 type databaseImpl struct {
 	driverbase.DatabaseImplBase
 
+	// host is the driver built on this one that opened the database, or nil.
+	host *Host
+
 	uri         string
 	credentials protocol.Credentials
 	tls         tlsOptions
@@ -63,7 +66,7 @@ type tlsOptions struct {
 	serverName            string
 }
 
-func newDatabase(ctx context.Context, driver *driverbase.DriverImplBase, opts map[string]string) (*databaseImpl, error) {
+func newDatabase(ctx context.Context, driver *driverbase.DriverImplBase, host *Host, opts map[string]string) (*databaseImpl, error) {
 	base, err := driverbase.NewDatabaseImplBase(ctx, driver, driverbase.TracingOptions{
 		ExporterName:      opts[adbc.OptionKeyTelemetryTracesExporter],
 		TracingFolderPath: opts[adbc.OptionKeyTelemetryTracesFolderPath],
@@ -73,10 +76,10 @@ func newDatabase(ctx context.Context, driver *driverbase.DriverImplBase, opts ma
 	}
 	// Each database learns its own server's vendor name and version.
 	base.DriverInfo = cloneDriverInfo(driver.DriverInfo)
-	db := &databaseImpl{DatabaseImplBase: base, maxAttempts: defaultMaxAttempts,
+	db := &databaseImpl{DatabaseImplBase: base, host: host, maxAttempts: defaultMaxAttempts,
 		resumeTimeout: protocol.DefaultResumeTimeout, reconnect: true,
 		defaults: defaultExecOptions()}
-	for key, value := range currentOptions(opts) {
+	for key, value := range host.CurrentOptions(opts) {
 		if err := db.SetOption(ctx, key, value); err != nil {
 			return nil, err
 		}
@@ -98,7 +101,7 @@ func (d *databaseImpl) opened() bool {
 }
 
 func (d *databaseImpl) SetOption(ctx context.Context, key, value string) error {
-	key = currentOptionKey(key)
+	key = d.host.CurrentOptionKey(key)
 	switch key {
 	case adbc.OptionKeyTelemetryTracesExporter, adbc.OptionKeyTelemetryTracesFolderPath:
 		return nil // read when the database was created
@@ -230,7 +233,7 @@ var databaseOptionKeys = map[string]bool{
 }
 
 func (d *databaseImpl) GetOption(ctx context.Context, key string) (string, error) {
-	key = currentOptionKey(key)
+	key = d.host.CurrentOptionKey(key)
 	if value, ok := d.defaults.get(key); ok {
 		return value, nil
 	}

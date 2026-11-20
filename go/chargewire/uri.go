@@ -30,7 +30,9 @@ func parseURI(raw string) (*url.URL, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("invalid uri %q: %w", raw, err)
+		// Neither the uri nor Go's error (which quotes it, or the bad escape)
+		// goes into the message: a uri that doesn't parse may hold a password.
+		return nil, fmt.Errorf("invalid uri: %s", URIParseProblem(err))
 	}
 	if u.User != nil {
 		return nil, fmt.Errorf("invalid uri %q: credentials do not belong in the uri; use the username and password options", u.Redacted())
@@ -78,4 +80,25 @@ func sortedKeys(values url.Values) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+// URIParseProblem describes why url.Parse refused a uri without quoting any
+// of it: a uri that doesn't parse may hold a password (a raw % in it is
+// enough), and Go's error quotes the uri or the bad escape. For drivers
+// built on this one too.
+func URIParseProblem(err error) string {
+	text := err.Error()
+	switch {
+	case strings.Contains(text, "invalid URL escape"):
+		return "a % that doesn't start a two-digit hex escape (write a literal % as %25)"
+	case strings.Contains(text, "invalid port"):
+		return "the port is not a number"
+	case strings.Contains(text, "invalid control character"):
+		return "it contains a control character"
+	case strings.Contains(text, "missing protocol scheme"), strings.Contains(text, "first path segment in URL cannot contain colon"):
+		return "it has no scheme, e.g. chargewire://host:port"
+	case strings.Contains(text, "invalid character"):
+		return "it contains a character a host name can't have"
+	}
+	return "it is not a valid URL"
 }

@@ -1,8 +1,8 @@
 """A resuming server through the built shared library (``make -C go lib``), with a stub
 server and no real one: the driver sends the sign-in again while the server answers
 ``server_resuming``, and ``resume_timeout`` (the ``connect()`` argument, or the
-``adbc.chargewire.resume_timeout`` option in ``db_kwargs``, as wrappers that load this
-library pass it) reaches the driver."""
+``chargewire.retry.resume_timeout_seconds`` option in ``db_kwargs``, as wrappers that load
+this library pass it, or its old name ``adbc.chargewire.resume_timeout``) reaches the driver."""
 
 from __future__ import annotations
 
@@ -146,9 +146,10 @@ def test_sign_in_waits_for_a_resuming_server(resuming_four_times, resume_timeout
     [
         {"resume_timeout": 0},
         {"db_kwargs": {DatabaseOptions.RESUME_TIMEOUT.value: "0"}},
+        {"db_kwargs": {"chargewire.retry.resume_timeout_seconds": "0"}},
         {"db_kwargs": {"adbc.chargewire.resume_timeout": "0"}},
     ],
-    ids=["argument", "enum", "option key"],
+    ids=["argument", "enum", "option key", "old option key"],
 )
 def test_resume_timeout_zero_reaches_the_driver(always_resuming, kwargs):
     with pytest.raises(adbc_driver_manager.OperationalError) as caught:

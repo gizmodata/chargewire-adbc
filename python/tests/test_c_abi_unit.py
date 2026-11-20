@@ -5,6 +5,9 @@ These need the library (``make -C go lib``) but no server."""
 from __future__ import annotations
 
 import socket
+import subprocess
+import sys
+import textwrap
 
 import adbc_driver_manager
 import pytest
@@ -88,3 +91,42 @@ def test_auth_type_reads_back():
         **{DatabaseOptions.AUTH_TYPE.value: "password"},
     ) as db:
         assert db.get_option(key=DatabaseOptions.AUTH_TYPE.value) == "password"
+
+
+def test_old_option_names_work_and_warn_once_on_stderr():
+    """Names from before the ADBC style guide still set and read the option, and the
+    library says once per process, on stderr, which name to use instead; never a value."""
+    secret = "s3cr3t-never-printed"
+    script = textwrap.dedent(
+        f"""
+        import adbc_driver_manager
+        from adbc_driver_chargewire._driver import _driver_path
+        for _ in range(3):
+            with adbc_driver_manager.AdbcDatabase(
+                driver=_driver_path(),
+                uri="chargewire://127.0.0.1:1?tls=false",
+                **{{
+                    "adbc.chargewire.statement.timeout_seconds": "2.5",
+                    "adbc.warp.retry.max_attempts": "4",
+                    "adbc.chargewire.auth.access_token": "{secret}",
+                }},
+            ) as db:
+                assert db.get_option(key="chargewire.query.timeout_seconds") == "2.5"
+                assert db.get_option(key="adbc.chargewire.statement.timeout_seconds") == "2.5"
+                assert db.get_option(key="chargewire.retry.max_attempts") == "4"
+        """
+    )
+    done = subprocess.run(
+        args=[sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr
+    assert secret not in done.stderr
+    lines = sorted(done.stderr.splitlines())
+    assert lines == [
+        '[chargewire] option "adbc.chargewire.auth.access_token" is deprecated; '
+        'use "chargewire.auth.access_token"',
+        '[chargewire] option "adbc.chargewire.statement.timeout_seconds" is deprecated; '
+        'use "chargewire.query.timeout_seconds"',
+        '[chargewire] option "adbc.warp.retry.max_attempts" is deprecated; '
+        'use "chargewire.retry.max_attempts"',
+    ]

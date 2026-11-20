@@ -90,7 +90,7 @@ type BrowserSignInResult struct {
 }
 
 // BrowserSignIn runs a browser sign-in against the server the options name:
-// the uri, the adbc.chargewire.tls.* options and OptionResumeTimeout, as for
+// the uri, the chargewire.tls.* options and OptionResumeTimeout, as for
 // a database. It fails with
 // StatusUnauthenticated when the server doesn't offer browser sign-in, the
 // person or the identity provider refused, or the server refused who signed
@@ -98,7 +98,14 @@ type BrowserSignInResult struct {
 // default); StatusCancelled when ctx is done.
 func BrowserSignIn(ctx context.Context, options map[string]string, open BrowserOpener,
 	timeout time.Duration) (*BrowserSignInResult, error) {
-	options = currentOptions(options)
+	return (*Host)(nil).BrowserSignIn(ctx, options, open, timeout)
+}
+
+// BrowserSignIn is the package's BrowserSignIn for a driver built on this
+// one: options may spell this driver's options the host's way.
+func (h *Host) BrowserSignIn(ctx context.Context, options map[string]string, open BrowserOpener,
+	timeout time.Duration) (*BrowserSignInResult, error) {
+	options = h.CurrentOptions(options)
 	base, err := parseURI(options[adbc.OptionKeyURI])
 	if err != nil {
 		return nil, adbc.Error{Code: adbc.StatusInvalidArgument, Msg: fmt.Sprintf("[%s] %v", driverName, err)}

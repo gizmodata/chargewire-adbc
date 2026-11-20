@@ -59,7 +59,7 @@ from adbc_driver_manager.dbapi import (  # noqa: F401
 )
 
 from ._driver import _driver_path
-from ._options import DatabaseOptions
+from ._options import DatabaseOptions, _set_default
 
 PemSource = Union[str, bytes, "os.PathLike[str]"]
 
@@ -228,7 +228,7 @@ def connect(
         db_schema: Schema to make current for the session: one schema name in
             ``catalog`` (in the server's default catalog without it), never a
             ``catalog.schema`` path (a dot can be part of a schema's name).
-        db_kwargs: Extra ADBC database options (``adbc.chargewire.*``, telemetry).
+        db_kwargs: Extra ADBC database options (``chargewire.*``, telemetry).
         conn_kwargs: Extra ADBC connection options.
         autocommit: Enable autocommit (default True).
 
@@ -256,19 +256,23 @@ def connect(
     }
     for key, value in credentials.items():
         if value is not None:
-            db_kwargs.setdefault(key, value)
+            _set_default(options=db_kwargs, key=key, value=value)
     if open_browser is False:
-        db_kwargs.setdefault(DatabaseOptions.OAUTH_BROWSER.value, "none")
+        _set_default(options=db_kwargs, key=DatabaseOptions.OAUTH_BROWSER.value, value="none")
     elif isinstance(open_browser, str):
-        db_kwargs.setdefault(DatabaseOptions.OAUTH_BROWSER.value, open_browser)
+        _set_default(options=db_kwargs, key=DatabaseOptions.OAUTH_BROWSER.value, value=open_browser)
     if oauth_timeout_seconds is not None:
-        db_kwargs.setdefault(
-            DatabaseOptions.OAUTH_TIMEOUT_SECONDS.value, str(oauth_timeout_seconds)
+        _set_default(
+            options=db_kwargs,
+            key=DatabaseOptions.OAUTH_TIMEOUT_SECONDS.value,
+            value=str(oauth_timeout_seconds),
         )
     if resume_timeout is not None:
-        db_kwargs.setdefault(DatabaseOptions.RESUME_TIMEOUT.value, str(resume_timeout))
+        _set_default(
+            options=db_kwargs, key=DatabaseOptions.RESUME_TIMEOUT.value, value=str(resume_timeout)
+        )
     if tls_skip_verify:
-        db_kwargs.setdefault(DatabaseOptions.TLS_SKIP_VERIFY.value, "true")
+        _set_default(options=db_kwargs, key=DatabaseOptions.TLS_SKIP_VERIFY.value, value="true")
     pem_options = {
         DatabaseOptions.TLS_ROOT_CERTS.value: tls_root_certs,
         DatabaseOptions.TLS_CLIENT_CERT.value: tls_client_cert,
@@ -276,7 +280,7 @@ def connect(
     }
     for key, value in pem_options.items():
         if value is not None:
-            db_kwargs.setdefault(key, _pem(value=value))
+            _set_default(options=db_kwargs, key=key, value=_pem(value=value))
 
     conn_options = adbc_driver_manager.ConnectionOptions
     if catalog is not None:
